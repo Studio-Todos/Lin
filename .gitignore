@@ -1,0 +1,33 @@
+# Build directories
+build/
+build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.ninja
+.ninja_deps
+.ninja_log
+
+# Compiled object files
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# TableGen generated files
+*.inc
+*.inc.tmp
+
+# Nix files
+result
+result-*
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
