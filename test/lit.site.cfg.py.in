@@ -1,0 +1,46 @@
+@LIT_SITE_CFG_IN_HEADER@
+
+import sys
+import os
+
+config.llvm_src_root = "@LLVM_SOURCE_DIR@"
+config.llvm_obj_root = "@LLVM_BINARY_DIR@"
+config.llvm_tools_dir = "@LLVM_TOOLS_BINARY_DIR@"
+config.llvm_lib_dir = "@LLVM_LIBRARY_DIR@"
+config.llvm_shlib_dir = "@SHLIBDIR@"
+config.llvm_shlib_ext = "@SHLIBEXT@"
+config.llvm_exe_ext = "@EXEEXT@"
+config.lit_tools_dir = "@LLVM_LIT_TOOLS_DIR@"
+config.python_executable = "@Python3_EXECUTABLE@"
+config.gold_executable = "@GOLD_EXECUTABLE@"
+config.ld64_executable = "@LD64_EXECUTABLE@"
+config.enable_shared = 1
+config.enable_assertions = 1
+config.targets_to_build = "@TARGETS_TO_BUILD@"
+config.native_target = "@LLVM_NATIVE_ARCH@"
+config.llvm_bindings = "@LLVM_BINDINGS@".split(' ')
+config.host_os = "@HOST_OS@"
+config.host_cc = "@HOST_CC@"
+config.host_cxx = "@HOST_CXX@"
+config.enable_libcxx = "@LLVM_ENABLE_LIBCXX@"
+config.host_ldflags = "@HOST_LDFLAGS@"
+config.llvm_use_sanitizer = "@LLVM_USE_SANITIZER@"
+config.llvm_host_triple = '@LLVM_HOST_TRIPLE@'
+config.host_arch = "@HOST_ARCH@"
+config.lin_src_root = "@CMAKE_SOURCE_DIR@"
+config.lin_obj_root = "@CMAKE_BINARY_DIR@"
+config.mlir_runner_utils_dir = "@MLIR_RUNNER_UTILS_DIR@"
+config.mlir_c_runner_utils_dir = "@MLIR_C_RUNNER_UTILS_DIR@"
+
+# Support substitution of the tools_dir with user parameters. This is
+# used when we can't determine the tool dir at configuration time.
+try:
+    config.llvm_tools_dir = config.llvm_tools_dir % lit_config.params
+    config.llvm_shlib_dir = config.llvm_shlib_dir % lit_config.params
+except KeyError:
+    e = sys.exc_info()[1]
+    key, = e.args
+    lit_config.fatal("unable to find %r parameter, use '--param=%s=VALUE'" % (key,key))
+
+# Let the main config do the real work.
+lit_config.load_config(config, "@CMAKE_SOURCE_DIR@/test/lit.cfg.py")
