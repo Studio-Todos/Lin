@@ -1,7 +1,14 @@
-add_executable(lin main.c)
+add_executable(lin main.cpp Parser.c Lowering.c)
 
 target_link_libraries(lin PRIVATE
   InetDialect
+  MLIRIR
+  MLIRParser
+  MLIRPass
+  MLIRExecutionEngine
+  MLIRTargetLLVMIRExport
+  MLIRBuiltinToLLVMIRTranslation
+  MLIRExecutionEngineUtils
   MLIRCAPIIR
   MLIRCAPIRegisterEverything
 )

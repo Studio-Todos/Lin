@@ -1,0 +1,22 @@
+// RUN: %lin %s | FileCheck %s
+
+// CHECK: Parsing Source:
+// CHECK: fib: func [
+// CHECK: Generated MLIR (before lowering):
+// CHECK: Lowering pass successful. Generated LLVM IR:
+// CHECK: Executing JIT function fib_inet(1)...
+// CHECK: JIT execution successful. Result: 1
+// CHECK: "inet.num"() <{value = 2 : i32}>
+// CHECK: "inet.op"() <{opName = "lt"}>
+// CHECK: llvm.func @fib_inet(%arg0: i32) -> i32
+
+fib: func [
+    n [i32!]
+    return: [i32!]
+][
+    either n < 2 [
+        n
+    ][
+        (fib n - 1) + (fib n - 2)
+    ]
+]

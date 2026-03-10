@@ -8,10 +8,10 @@
 #define INET_DIALECT
 
 include "mlir/IR/OpBase.td"
-
-//===----------------------------------------------------------------------===//
-// Inet dialect definition.
-//===----------------------------------------------------------------------===//
+include "mlir/IR/SymbolInterfaces.td"
+include "mlir/Interfaces/CallInterfaces.td"
+include "mlir/IR/EnumAttr.td"
+include "mlir/IR/BuiltinAttributes.td"
 
 def Inet_Dialect : Dialect {
   let name = "inet";
@@ -22,7 +22,13 @@ def Inet_Dialect : Dialect {
     optimization process before lowering to native machine code.
   }];
   let cppNamespace = "::mlir::inet";
+  let useDefaultTypePrinterParser = 1;
 }
+
+//===----------------------------------------------------------------------===//
+// Inet Types.
+//===----------------------------------------------------------------------===//
+def Inet_PortType : DialectType<Inet_Dialect, CPred<"$_self.isa<::mlir::inet::PortType>()">, "inet.port type">;
 
 //===----------------------------------------------------------------------===//
 // Base inet operation definition.
@@ -35,14 +41,54 @@ class Inet_Op<string mnemonic, list<Trait> traits = []> :
 // Inet Operations.
 //===----------------------------------------------------------------------===//
 
-def Inet_NodeOp : Inet_Op<"node"> {
-  let summary = "Defines an interaction net node.";
+def Inet_ConOp : Inet_Op<"con"> {
+  let summary = "Constructor node (Con)";
   let description = [{
-    The `inet.node` operation defines a basic interaction net node.
+    A Constructor node with a principal port and two auxiliary ports.
   }];
+  let results = (outs Inet_PortType:$p0, Inet_PortType:$p1, Inet_PortType:$p2);
+}
 
-  let arguments = (ins AnyType:$kind);
-  let results = (outs AnyType:$out);
+def Inet_DupOp : Inet_Op<"dup"> {
+  let summary = "Duplicator node (Dup)";
+  let description = [{
+    A Duplicator node. Like Con, but for copying/sharing.
+  }];
+  let results = (outs Inet_PortType:$p0, Inet_PortType:$p1, Inet_PortType:$p2);
+}
+
+def Inet_EraOp : Inet_Op<"era"> {
+  let summary = "Eraser node (Era)";
+  let description = [{
+    An Eraser node. Has a single principal port, representing dropped values.
+  }];
+  let results = (outs Inet_PortType:$p0);
+}
+
+def Inet_NumOp : Inet_Op<"num"> {
+  let summary = "Number node (Num)";
+  let description = [{
+    An unboxed 32-bit integer primitive value.
+  }];
+  let arguments = (ins I32Attr:$value);
+  let results = (outs Inet_PortType:$p0);
+}
+
+def Inet_OpNodeOp : Inet_Op<"op"> {
+  let summary = "General Operation node (Op)";
+  let description = [{
+    A general operation node, like Add, Sub, Eq, etc.
+  }];
+  let arguments = (ins Builtin_StringAttr:$opName);
+  let results = (outs Inet_PortType:$p0, Inet_PortType:$p1, Inet_PortType:$p2);
+}
+
+def Inet_LinkOp : Inet_Op<"link"> {
+  let summary = "Links two ports together";
+  let description = [{
+    Creates a wire between two interaction net ports.
+  }];
+  let arguments = (ins Inet_PortType:$a, Inet_PortType:$b);
 }
 
 #endif // INET_DIALECT
