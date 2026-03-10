@@ -1,0 +1,10 @@
+fib: func [
+    n [i32!]
+    return: [i32!]
+][
+    either n < 2 [
+        n
+    ][
+        (fib n - 1) + (fib n - 2)
+    ]
+]
