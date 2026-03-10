@@ -20,6 +20,7 @@ typedef enum {
     TOKEN_LESS,         // <
     TOKEN_GREATER,      // >
     TOKEN_BANG,         // !
+    TOKEN_STRING,       // "..."
     // Keywords
     TOKEN_FUNC,
     TOKEN_RETURN,
@@ -51,7 +52,9 @@ typedef enum {
     AST_CALL,
     AST_EITHER,
     AST_BLOCK,
-    AST_FUNC_DECL
+    AST_FUNC_DECL,
+    AST_STRING,
+    AST_ASSIGNMENT
 } AstNodeType;
 
 typedef struct AstNode {
@@ -64,6 +67,8 @@ typedef struct AstNode {
         struct { struct AstNode *condition; struct AstNode *true_branch; struct AstNode *false_branch; } either;
         struct { struct AstNode **statements; int count; } block;
         struct { const char *name; int name_len; const char *arg_name; int arg_name_len; struct AstNode *body; } func_decl;
+        struct { const char *value; int length; } string;
+        struct { const char *name; int name_len; struct AstNode *value; } assignment;
     } as;
 } AstNode;
 
