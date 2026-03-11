@@ -29,8 +29,8 @@ add_mlir_dialect_library(PicDialects
   PicReduceDialect.cpp
   PicRuntimeDialect.cpp
   PicDialectsCAPI.cpp
-  LowerToLLVM.cpp
-  LowerToLLVMCAPI.cpp
+  LoweringPasses.cpp
+
 
   DEPENDS
   PicDialectsIncGen

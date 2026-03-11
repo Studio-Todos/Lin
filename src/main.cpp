@@ -28,7 +28,7 @@
 #include "PicGraphDialect.h"
 #include "PicReduceDialect.h"
 #include "PicRuntimeDialect.h"
-#include "lin/LowerToLLVM.h"
+#include "lin/LoweringPasses.h"
 
 extern "C" {
 #include "lin/Parser.h"
@@ -108,7 +108,9 @@ int main(int argc, char **argv) {
       optimizeInteractionNetWithEGraphs(cModule);
 
       PassManager pm(&context);
-      pm.addPass(createInetToLLVMLoweringPass());
+      pm.addPass(createPicGraphToReducePass());
+      pm.addPass(createPicReduceToRuntimePass());
+      pm.addPass(createPicRuntimeToLLVMPass());
 
       if (mlir::failed(pm.run(module))) {
           std::cerr << "Lowering pass failed.\n";
@@ -167,13 +169,10 @@ int main(int argc, char **argv) {
 
       std::cout << "Successfully emitted object file to " << objFile << "\n";
 
-      // Link the object file with runtime.c
+      // Link the object file into a binary (linking against libc is standard)
       std::cout << "Linking into binary '" << outputBinary << "'...\n";
 
-      // Need an absolute or project-relative path. Assuming the binary is run near the root.
-      // A better way is to pass it via cmake definition or use an env var, but for MVP:
-      std::string runtimePath = "/app/lib/runtime/runtime.c";
-      std::string linkCmd = "gcc " + objFile + " " + runtimePath + " -o " + outputBinary;
+      std::string linkCmd = "gcc " + objFile + " -o " + outputBinary;
       int res = system(linkCmd.c_str());
       if (res != 0) {
           std::cerr << "Linking failed.\n";
