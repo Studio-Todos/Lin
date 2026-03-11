@@ -83,6 +83,18 @@ def Inet_OpNodeOp : Inet_Op<"op"> {
   let results = (outs Inet_PortType:$p0, Inet_PortType:$p1, Inet_PortType:$p2);
 }
 
+def Inet_ExtOpNodeOp : Inet_Op<"ext_op"> {
+  let summary = "External MLIR Operation node";
+  let description = [{
+    An extensible operation node that can encapsulate any standard MLIR operation.
+    This prevents us from having to manually define a custom inet op for every
+    possible arithmetic or library function.
+  }];
+  let arguments = (ins Builtin_StringAttr:$mlirOpName);
+  // Ext nodes act like standard Op nodes: p0=result/evaluate, p1=arg1, p2=arg2
+  let results = (outs Inet_PortType:$p0, Inet_PortType:$p1, Inet_PortType:$p2);
+}
+
 def Inet_LinkOp : Inet_Op<"link"> {
   let summary = "Links two ports together";
   let description = [{

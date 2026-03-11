@@ -165,10 +165,28 @@ static AstNode* parsePrimary(Parser *parser) {
     }
 
     if (parser->current.type == TOKEN_IDENTIFIER) {
-        AstNode *node = createNode(AST_IDENTIFIER);
-        node->as.identifier.name = parser->current.start;
-        node->as.identifier.length = parser->current.length;
+        Token ident = parser->current;
         parserAdvance(parser);
+
+        // Check for variable assignment: `word: value`
+        if (parser->current.type == TOKEN_COLON) {
+            const char* next_word = parser->lexer.current;
+            while (*next_word == ' ' || *next_word == '\n' || *next_word == '\t' || *next_word == '\r') next_word++;
+
+            bool is_func = (strncmp(next_word, "func", 4) == 0);
+            if (!is_func) {
+                parserAdvance(parser); // consume colon
+                AstNode *node = createNode(AST_ASSIGNMENT);
+                node->as.assignment.name = ident.start;
+                node->as.assignment.name_len = ident.length;
+                node->as.assignment.value = parseExpression(parser);
+                return node;
+            }
+        }
+
+        AstNode *node = createNode(AST_IDENTIFIER);
+        node->as.identifier.name = ident.start;
+        node->as.identifier.length = ident.length;
         return node;
     }
 
@@ -310,10 +328,26 @@ AstNode* parse(const char *source) {
     parserAdvance(&parser);
 
     if (parser.current.type == TOKEN_IDENTIFIER) {
+        Token ident = parser.current;
         parserAdvance(&parser);
-        if (parser.current.type == TOKEN_COLON && peekNext(&parser.lexer) == 'f') {
+
+        bool is_func_decl = false;
+        if (parser.current.type == TOKEN_COLON) {
+            const char* next_word = parser.lexer.current;
+            while (*next_word == ' ' || *next_word == '\n' || *next_word == '\t' || *next_word == '\r') next_word++;
+            if (strncmp(next_word, "func", 4) == 0) {
+                is_func_decl = true;
+            }
+        }
+
+        if (is_func_decl) {
+            parser.previous = ident; // reset to allow parseFuncDecl to get name
             return parseFuncDecl(&parser);
         }
+
+        // Rewind if not func decl so normal block parsing can run
+        initLexer(&parser.lexer, source);
+        parserAdvance(&parser);
     }
 
     AstNode *block = createNode(AST_BLOCK);
