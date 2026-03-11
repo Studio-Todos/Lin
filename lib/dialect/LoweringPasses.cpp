@@ -60,10 +60,14 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
         if (nodeTypeEnum == 3 && op.getValue()) {
            valOrOpCode = op.getValue().value();
         } else if (nodeTypeEnum == 4) {
-           if (label == "add") valOrOpCode = 0;
-           else if (label == "sub") valOrOpCode = 1;
-           else if (label == "mul") valOrOpCode = 2;
-           else if (label == "lt") valOrOpCode = 4;
+           // Dynamic opcode assignment based on string label
+           static llvm::StringMap<uint32_t> opcodeMap;
+           static uint32_t nextOpcode = 1; // 0 reserved or invalid
+
+           if (!opcodeMap.count(label)) {
+               opcodeMap[label] = nextOpcode++;
+           }
+           valOrOpCode = opcodeMap[label];
         }
 
         auto allocOp = builder.create<pic::runtime::AllocNodeOp>(
