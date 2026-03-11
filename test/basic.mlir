@@ -1,4 +1,4 @@
-// RUN: lin 2>&1 | FileCheck %s
+// RUN: %linc 2>&1 | FileCheck %s
 
 // CHECK: module {
 // CHECK: }
