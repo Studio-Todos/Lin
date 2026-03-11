@@ -1,5 +1,7 @@
-#include "InetDialect.h"
-#include "InetDialectOps.h.inc"
+#include "lin/LowerToLLVM.h"
+#include "PicGraphDialect.h"
+#include "PicReduceDialect.h"
+#include "PicRuntimeDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -105,59 +107,44 @@ struct InetToLLVMLoweringPass : public PassWrapper<InetToLLVMLoweringPass, Opera
         // Traverse all operations inside the original function
         funcOp.walk([&](Operation *op) {
             Location loc = op->getLoc();
-            if (op->getName().getStringRef() == "inet.num") {
-                Value typeVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(3)); // NODE_NUM
+            if (op->getName().getStringRef() == "pic_graph.agent") {
+                StringRef agentType = op->getAttrOfType<StringAttr>("agentType").getValue();
+                StringRef label = op->getAttrOfType<StringAttr>("label").getValue();
+
+                int nodeTypeEnum = 0; // NODE_ERA
+                if (agentType == "gamma_plus") nodeTypeEnum = 1; // NODE_CON
+                else if (agentType == "gamma_minus") nodeTypeEnum = 1; // NODE_CON for now
+                else if (agentType == "delta") nodeTypeEnum = 2; // NODE_DUP
+                else if (agentType == "omega") {
+                    if (label == "num") nodeTypeEnum = 3; // NODE_NUM
+                    else nodeTypeEnum = 4; // NODE_OP
+                }
+
+                Value typeVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(nodeTypeEnum));
                 auto callOp = builder.create<LLVM::CallOp>(loc, TypeRange{i32Type}, "inet_alloc_node", ValueRange{typeVal});
                 Value nodeIdx = callOp.getResult();
 
-                int32_t val = op->getAttrOfType<IntegerAttr>("value").getInt();
-                Value numVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(val));
-                builder.create<LLVM::CallOp>(loc, std::nullopt, "inet_set_value", ValueRange{nodeIdx, numVal});
+                if (nodeTypeEnum == 3) {
+                    if (auto valAttr = op->getAttrOfType<IntegerAttr>("value")) {
+                        int32_t val = valAttr.getInt();
+                        Value numVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(val));
+                        builder.create<LLVM::CallOp>(loc, std::nullopt, "inet_set_value", ValueRange{nodeIdx, numVal});
+                    }
+                } else if (nodeTypeEnum == 4) {
+                    int32_t opCode = 0; // OP_ADD
+                    if (label == "sub") opCode = 1;
+                    else if (label == "lt") opCode = 4;
+                    // Mock scf.if as era op or something? We'll leave it as OP_ADD for MVP to avoid crash
 
-                valueToPort[op->getResult(0)] = makePort(builder, loc, nodeIdx, 0);
-            }
-            else if (op->getName().getStringRef() == "inet.era") {
-                Value typeVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0)); // NODE_ERA
-                auto callOp = builder.create<LLVM::CallOp>(loc, TypeRange{i32Type}, "inet_alloc_node", ValueRange{typeVal});
-                Value nodeIdx = callOp.getResult();
-                valueToPort[op->getResult(0)] = makePort(builder, loc, nodeIdx, 0);
-            }
-            else if (op->getName().getStringRef() == "inet.dup") {
-                Value typeVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(2)); // NODE_DUP
-                auto callOp = builder.create<LLVM::CallOp>(loc, TypeRange{i32Type}, "inet_alloc_node", ValueRange{typeVal});
-                Value nodeIdx = callOp.getResult();
-
-                valueToPort[op->getResult(0)] = makePort(builder, loc, nodeIdx, 0);
-                valueToPort[op->getResult(1)] = makePort(builder, loc, nodeIdx, 1);
-                valueToPort[op->getResult(2)] = makePort(builder, loc, nodeIdx, 2);
-            }
-            else if (op->getName().getStringRef() == "inet.op") {
-                Value typeVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(4)); // NODE_OP
-                auto callOp = builder.create<LLVM::CallOp>(loc, TypeRange{i32Type}, "inet_alloc_node", ValueRange{typeVal});
-                Value nodeIdx = callOp.getResult();
-
-                StringRef opName = op->getAttrOfType<StringAttr>("opName").getValue();
-                int32_t opCode = 0; // OP_ADD
-                if (opName == "sub") opCode = 1;
-                else if (opName == "lt") opCode = 4;
-
-                Value opCodeVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opCode));
-                builder.create<LLVM::CallOp>(loc, std::nullopt, "inet_set_op_type", ValueRange{nodeIdx, opCodeVal});
+                    Value opCodeVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opCode));
+                    builder.create<LLVM::CallOp>(loc, std::nullopt, "inet_set_op_type", ValueRange{nodeIdx, opCodeVal});
+                }
 
                 valueToPort[op->getResult(0)] = makePort(builder, loc, nodeIdx, 0);
                 valueToPort[op->getResult(1)] = makePort(builder, loc, nodeIdx, 1);
                 valueToPort[op->getResult(2)] = makePort(builder, loc, nodeIdx, 2);
             }
-            else if (op->getName().getStringRef() == "inet.ext_op") {
-                Value typeVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0)); // Mocking ext as ERA for MVP
-                auto callOp = builder.create<LLVM::CallOp>(loc, TypeRange{i32Type}, "inet_alloc_node", ValueRange{typeVal});
-                Value nodeIdx = callOp.getResult();
-
-                valueToPort[op->getResult(0)] = makePort(builder, loc, nodeIdx, 0);
-                valueToPort[op->getResult(1)] = makePort(builder, loc, nodeIdx, 1);
-                valueToPort[op->getResult(2)] = makePort(builder, loc, nodeIdx, 2);
-            }
-            else if (op->getName().getStringRef() == "inet.link") {
+            else if (op->getName().getStringRef() == "pic_graph.link") {
                 Value a = valueToPort[op->getOperand(0)];
                 Value b = valueToPort[op->getOperand(1)];
                 if (a && b) {

@@ -1,0 +1,5 @@
+either a < 2 [
+    a
+][
+    (fib a - 1) + (fib a - 2)
+]

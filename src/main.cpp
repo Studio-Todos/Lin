@@ -25,7 +25,9 @@
 #include "mlir/CAPI/IR.h"
 #include "mlir/CAPI/Wrap.h"
 
-#include "InetDialect.h"
+#include "PicGraphDialect.h"
+#include "PicReduceDialect.h"
+#include "PicRuntimeDialect.h"
 #include "lin/LowerToLLVM.h"
 
 extern "C" {
@@ -74,7 +76,9 @@ int main(int argc, char **argv) {
   std::cout << "\nInitializing Lin Compiler..." << std::endl;
 
   mlir::DialectRegistry registry;
-  registry.insert<mlir::inet::InetDialect>();
+  registry.insert<mlir::pic::graph::PicGraphDialect>();
+  registry.insert<mlir::pic::reduce::PicReduceDialect>();
+  registry.insert<mlir::pic::runtime::PicRuntimeDialect>();
   registry.insert<mlir::func::FuncDialect>();
   registry.insert<mlir::arith::ArithDialect>();
   registry.insert<mlir::LLVM::LLVMDialect>();
@@ -88,7 +92,7 @@ int main(int argc, char **argv) {
   mlir::MLIRContext context(registry);
   context.loadAllAvailableDialects();
 
-  std::cout << "Inet dialect registered successfully.\n" << std::endl;
+  std::cout << "PIC dialects registered successfully.\n" << std::endl;
 
   if (ast) {
       // Lower AST to MLIR C types

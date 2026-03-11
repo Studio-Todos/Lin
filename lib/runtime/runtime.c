@@ -218,26 +218,32 @@ static void interact(uint32_t a, uint32_t b) {
         uint8_t ttemp = ta; ta = tb; tb = ttemp;
     }
 
+    // PIC Rules
     if (ta == NODE_ERA && tb == NODE_ERA) {
-        rule_era_era(a, b);
-    } else if (ta == NODE_ERA && (tb == NODE_CON || tb == NODE_DUP)) {
-        rule_era_con(a, b);
+        rule_era_era(a, b); // Rule 3 (Era-Era propagates and vanishes)
+    } else if (ta == NODE_ERA && (tb == NODE_CON || tb == NODE_DUP || tb == NODE_OP)) {
+        rule_era_con(a, b); // Rule 3 (Erasure Propagation on all auxiliary ports)
     } else if (ta == NODE_ERA && tb == NODE_NUM) {
-        rule_num_era(b, a);
+        rule_num_era(b, a); // Rule 3 (Erasure Propagation on number)
     } else if (ta == NODE_CON && tb == NODE_CON) {
-        rule_annihilation(a, b);
+        rule_annihilation(a, b); // Rule 1 (Annihilation γ⁺ ⋈ γ⁻ or γ⁺ ⋈ γ⁺ depending on what we mapped it to)
     } else if (ta == NODE_CON && tb == NODE_DUP) {
-        rule_commutation(a, b);
+        rule_commutation(a, b); // Rule 2 (Duplication δ ⋈ γ⁺)
     } else if (ta == NODE_DUP && tb == NODE_DUP) {
-        rule_annihilation(a, b);
+        rule_annihilation(a, b); // Rule 1 (Annihilation on matching dup ports)
     } else if (ta == NODE_DUP && tb == NODE_NUM) {
         rule_num_dup(b, a);
+    } else if (ta == NODE_DUP && tb == NODE_OP) {
+        rule_commutation(b, a); // Ops commute with Dups like Con
     } else if (ta == NODE_NUM && tb == NODE_OP) {
         if (net[b].op_type >= 100) {
             rule_op_partial_num(b, a);
         } else {
             rule_op_num(b, a);
         }
+    } else if (ta == NODE_OP && tb == NODE_OP) {
+        // Op annihilation (not implemented here fully for side effects, just clear)
+        rule_annihilation(a, b);
     }
 }
 
