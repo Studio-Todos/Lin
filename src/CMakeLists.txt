@@ -1,7 +1,7 @@
 add_executable(lin main.cpp Parser.c Lowering.c)
 
 target_link_libraries(lin PRIVATE
-  InetDialect
+  PicDialects
   MLIRIR
   MLIRParser
   MLIRPass

@@ -3,6 +3,6 @@
 // CHECK: module {
 // CHECK: }
 // CHECK: Initializing Lin Compiler...
-// CHECK: Inet dialect registered successfully.
+// CHECK: PIC dialects registered successfully.
 // CHECK: Dumping empty module:
 // CHECK: Compilation complete.

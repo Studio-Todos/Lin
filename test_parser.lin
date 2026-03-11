@@ -1,8 +1,4 @@
-x: 5
-y: "hello world"
-z: x + 10
-either x < 10 [
-    z
-][
-    0
+[
+  a: 5
+  b: a + 1
 ]
