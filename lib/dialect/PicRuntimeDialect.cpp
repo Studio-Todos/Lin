@@ -1,5 +1,6 @@
 //===- PicRuntimeDialect.cpp - PIC Runtime dialect implementation ------===//
 #include "PicRuntimeDialect.h"
+#include "mlir/IR/Builders.h"
 
 using namespace mlir;
 using namespace mlir::pic::runtime;

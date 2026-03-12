@@ -1,0 +1,15 @@
+// example.lin
+// This program implicitly references external standard library operations.
+// When compiled, the operations (add, mul) are assigned dynamic opcodes and evaluated
+// as native MLIR `arith` instructions during graph reduction.
+
+fib: func [
+    n [i32!]
+    return: [i32!]
+][
+    either n < 2 [
+        n
+    ][
+        (fib n - 1) + (fib n - 2)
+    ]
+]

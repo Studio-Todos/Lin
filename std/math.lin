@@ -1,0 +1,38 @@
+// std/math.lin
+// Standard mathematical operations defined as external interactions for the lin runtime.
+// The `mlir-op` declaration parses the interface types `[...]` and accepts the raw MLIR payload inside `{...}`.
+
+add: mlir-op [
+    inputs:  [a [i32!] b [i32!]]
+    outputs: [res [i32!]]
+] {
+    %res = arith.addi %a, %b : i32
+}
+
+sub: mlir-op [
+    inputs:  [a [i32!] b [i32!]]
+    outputs: [res [i32!]]
+] {
+    %res = arith.subi %a, %b : i32
+}
+
+mul: mlir-op [
+    inputs:  [a [i32!] b [i32!]]
+    outputs: [res [i32!]]
+] {
+    %res = arith.muli %a, %b : i32
+}
+
+div: mlir-op [
+    inputs:  [a [i32!] b [i32!]]
+    outputs: [res [i32!]]
+] {
+    %res = arith.divsi %a, %b : i32
+}
+
+lt: mlir-op [
+    inputs:  [a [i32!] b [i32!]]
+    outputs: [res [i1!]]
+] {
+    %res = arith.cmpi slt, %a, %b : i32
+}

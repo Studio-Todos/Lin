@@ -8,7 +8,7 @@ def PicRuntime_Dialect : Dialect {
   let name = "pic_runtime";
   let summary = "Polarized Interaction Combinator Runtime Dialect";
   let description = [{
-    Lowers into target-specific runtimes (CPU/GPU).
+    Lowers into target-specific runtimes (CPU/GPU) using a flat array memory model.
   }];
   let cppNamespace = "::mlir::pic::runtime";
   let useDefaultTypePrinterParser = 0;
@@ -17,8 +17,40 @@ def PicRuntime_Dialect : Dialect {
 class PicRuntime_Op<string mnemonic, list<Trait> traits = []> :
     Op<PicRuntime_Dialect, mnemonic, traits>;
 
-def PicRuntime_CpuDispatchOp : PicRuntime_Op<"cpu_dispatch"> {}
-def PicRuntime_GpuBatchOp : PicRuntime_Op<"gpu_batch"> {}
-def PicRuntime_SyncPointOp : PicRuntime_Op<"sync_point"> {}
+// Types
+def PicRuntime_PortType : DialectType<PicRuntime_Dialect, CPred<"$_self.isa<::mlir::pic::runtime::PortType>()">, "pic_runtime.port type">;
+
+// Operations for array-based graph manipulation
+def PicRuntime_AllocNodeOp : PicRuntime_Op<"alloc_node"> {
+  let summary = "Allocates a node in the 128-bit atomic array";
+  let arguments = (ins I8Attr:$type, I32Attr:$label_or_val);
+  let results = (outs I32:$index);
+}
+
+def PicRuntime_SetPortOp : PicRuntime_Op<"set_port"> {
+  let summary = "Sets a port on a node";
+  let arguments = (ins I32:$node_index, I8Attr:$port_index, I64:$port_value);
+}
+
+def PicRuntime_GetPortOp : PicRuntime_Op<"get_port"> {
+  let summary = "Gets a port on a node";
+  let arguments = (ins I32:$node_index, I8Attr:$port_index);
+  let results = (outs I64:$port_value);
+}
+
+def PicRuntime_LinkOp : PicRuntime_Op<"link"> {
+  let summary = "Links two ports together, potentially creating a redex";
+  let arguments = (ins I64:$port_a, I64:$port_b);
+}
+
+def PicRuntime_PushRedexOp : PicRuntime_Op<"push_redex"> {
+  let summary = "Pushes an active pair to the thread-local or global redex queue";
+  let arguments = (ins I32:$node_a, I32:$node_b);
+}
+
+def PicRuntime_PopRedexOp : PicRuntime_Op<"pop_redex"> {
+  let summary = "Pops an active pair from the redex queue";
+  let results = (outs I1:$valid, I32:$node_a, I32:$node_b);
+}
 
 #endif // PIC_RUNTIME_DIALECT
