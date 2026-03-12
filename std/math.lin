@@ -1,15 +1,38 @@
 // std/math.lin
 // Standard mathematical operations defined as external interactions for the lin runtime.
+// The `mlir-op` declaration parses the interface types `[...]` and accepts the raw MLIR payload inside `{...}`.
 
-add: func [a b] [
-    // In a fully implemented MLIR runtime, this resolves to the dynamically mapped "std.math.add" omega op
-    // Since we map string labels to opcodes in LoweringPasses.cpp, this provides the abstract hook.
-]
+add: mlir-op [
+    inputs:  [a [i32!] b [i32!]]
+    outputs: [res [i32!]]
+] {
+    %res = arith.addi %a, %b : i32
+}
 
-sub: func [a b] [
-    // Maps to "std.math.sub"
-]
+sub: mlir-op [
+    inputs:  [a [i32!] b [i32!]]
+    outputs: [res [i32!]]
+] {
+    %res = arith.subi %a, %b : i32
+}
 
-mul: func [a b] [
-    // Maps to "std.math.mul"
-]
+mul: mlir-op [
+    inputs:  [a [i32!] b [i32!]]
+    outputs: [res [i32!]]
+] {
+    %res = arith.muli %a, %b : i32
+}
+
+div: mlir-op [
+    inputs:  [a [i32!] b [i32!]]
+    outputs: [res [i32!]]
+] {
+    %res = arith.divsi %a, %b : i32
+}
+
+lt: mlir-op [
+    inputs:  [a [i32!] b [i32!]]
+    outputs: [res [i1!]]
+] {
+    %res = arith.cmpi slt, %a, %b : i32
+}
