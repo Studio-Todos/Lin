@@ -1,0 +1,8 @@
+import "std/math.lin"
+
+test: mlir-op [
+    inputs:  [a [i32!] b [i32!]]
+    outputs: [res [i32!]]
+] {
+    %res = arith.addi %a, %b : i32
+}

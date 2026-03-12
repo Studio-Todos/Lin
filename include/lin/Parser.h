@@ -25,7 +25,11 @@ typedef enum {
     TOKEN_FUNC,
     TOKEN_RETURN,
     TOKEN_EITHER,
-    TOKEN_I32
+    TOKEN_I32,
+    TOKEN_IMPORT,
+    TOKEN_MLIR_OP,
+    TOKEN_LBRACE,
+    TOKEN_RBRACE
 } TokenType;
 
 typedef struct {
@@ -54,7 +58,9 @@ typedef enum {
     AST_BLOCK,
     AST_FUNC_DECL,
     AST_STRING,
-    AST_ASSIGNMENT
+    AST_ASSIGNMENT,
+    AST_MLIR_OP,
+    AST_IMPORT
 } AstNodeType;
 
 typedef struct AstNode {
@@ -69,6 +75,8 @@ typedef struct AstNode {
         struct { const char *name; int name_len; const char *arg_name; int arg_name_len; struct AstNode *body; } func_decl;
         struct { const char *value; int length; } string;
         struct { const char *name; int name_len; struct AstNode *value; } assignment;
+        struct { const char *name; int name_len; const char *inputs; int inputs_len; const char *outputs; int outputs_len; const char *mlir_payload; int payload_len; } mlir_op;
+        struct { const char *path; int length; struct AstNode *module_block; } import_stmt;
     } as;
 } AstNode;
 
