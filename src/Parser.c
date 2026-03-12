@@ -63,10 +63,28 @@ static TokenType identifierType(Lexer *lexer) {
     switch (lexer->start[0]) {
         case 'e': return checkKeyword(lexer, 1, 5, "ither", TOKEN_EITHER);
         case 'f': return checkKeyword(lexer, 1, 3, "unc", TOKEN_FUNC);
-        case 'i': return checkKeyword(lexer, 1, 2, "32", TOKEN_I32);
+        case 'i':
+            if (lexer->current - lexer->start > 1) {
+                switch (lexer->start[1]) {
+                    case '3': return checkKeyword(lexer, 2, 1, "2", TOKEN_I32);
+                    case 'm': return checkKeyword(lexer, 2, 4, "port", TOKEN_IMPORT);
+                }
+            }
+            break;
+        case 'm': return checkKeyword(lexer, 1, 6, "lir-op", TOKEN_MLIR_OP);
         case 'r': return checkKeyword(lexer, 1, 5, "eturn", TOKEN_RETURN);
     }
     return TOKEN_IDENTIFIER;
+}
+
+static Token string(Lexer *lexer) {
+    while (peek(lexer) != '"' && !isAtEnd(lexer)) {
+        if (peek(lexer) == '\n') lexer->line++;
+        advance(lexer);
+    }
+    if (isAtEnd(lexer)) return makeToken(lexer, TOKEN_EOF);
+    advance(lexer);
+    return makeToken(lexer, TOKEN_STRING);
 }
 
 static Token identifier(Lexer *lexer) {
@@ -91,6 +109,7 @@ Token scanToken(Lexer *lexer) {
     if (isdigit(c)) return number(lexer);
 
     switch (c) {
+        case '"': return string(lexer);
         case ':': return makeToken(lexer, TOKEN_COLON);
         case '[': return makeToken(lexer, TOKEN_LBRACKET);
         case ']': return makeToken(lexer, TOKEN_RBRACKET);
@@ -103,6 +122,12 @@ Token scanToken(Lexer *lexer) {
         case '<': return makeToken(lexer, TOKEN_LESS);
         case '>': return makeToken(lexer, TOKEN_GREATER);
         case '!': return makeToken(lexer, TOKEN_BANG);
+        case '{': return makeToken(lexer, TOKEN_LBRACE);
+        case '}': return makeToken(lexer, TOKEN_RBRACE);
+        case '%': return makeToken(lexer, TOKEN_IDENTIFIER);
+        case '.': return makeToken(lexer, TOKEN_IDENTIFIER);
+        case ',': return makeToken(lexer, TOKEN_IDENTIFIER);
+        case '=': return makeToken(lexer, TOKEN_IDENTIFIER);
     }
 
     return makeToken(lexer, TOKEN_EOF);
@@ -164,6 +189,24 @@ static AstNode* parsePrimary(Parser *parser) {
         return node;
     }
 
+    if (parser->current.type == TOKEN_STRING) {
+        AstNode *node = createNode(AST_STRING);
+        node->as.string.value = parser->current.start + 1;
+        node->as.string.length = parser->current.length - 2;
+        parserAdvance(parser);
+        return node;
+    }
+
+    if (parser->current.type == TOKEN_IMPORT) {
+        parserAdvance(parser);
+        consume(parser, TOKEN_STRING, "Expect string path after 'import'.");
+        AstNode *node = createNode(AST_IMPORT);
+        node->as.import_stmt.path = parser->previous.start + 1;
+        node->as.import_stmt.length = parser->previous.length - 2;
+        node->as.import_stmt.module_block = NULL;
+        return node;
+    }
+
     if (parser->current.type == TOKEN_IDENTIFIER) {
         Token ident = parser->current;
         parserAdvance(parser);
@@ -174,7 +217,47 @@ static AstNode* parsePrimary(Parser *parser) {
             while (*next_word == ' ' || *next_word == '\n' || *next_word == '\t' || *next_word == '\r') next_word++;
 
             bool is_func = (strncmp(next_word, "func", 4) == 0);
-            if (!is_func) {
+            bool is_mlir_op = (strncmp(next_word, "mlir-op", 7) == 0);
+
+            if (is_mlir_op) {
+                parserAdvance(parser); // consume colon
+                consume(parser, TOKEN_MLIR_OP, "Expect 'mlir-op'.");
+
+                Token inputs_outputs_start = parser->current;
+                consume(parser, TOKEN_LBRACKET, "Expect '[' for mlir-op interface.");
+                int bracket_count = 1;
+                while (bracket_count > 0 && parser->current.type != TOKEN_EOF) {
+                    if (parser->current.type == TOKEN_LBRACKET) bracket_count++;
+                    else if (parser->current.type == TOKEN_RBRACKET) bracket_count--;
+                    parserAdvance(parser);
+                }
+                Token inputs_outputs_end = parser->previous;
+
+                Token payload_start = parser->current;
+                consume(parser, TOKEN_LBRACE, "Expect '{' for mlir-op payload.");
+                int brace_count = 1;
+                while (brace_count > 0 && parser->current.type != TOKEN_EOF) {
+                    if (parser->current.type == TOKEN_LBRACE) brace_count++;
+                    else if (parser->current.type == TOKEN_RBRACE) brace_count--;
+                    parserAdvance(parser);
+                }
+                Token payload_end = parser->previous;
+
+                AstNode *node = createNode(AST_MLIR_OP);
+                node->as.mlir_op.name = ident.start;
+                node->as.mlir_op.name_len = ident.length;
+                node->as.mlir_op.inputs = inputs_outputs_start.start;
+                node->as.mlir_op.inputs_len = (int)(inputs_outputs_end.start + inputs_outputs_end.length - inputs_outputs_start.start);
+                node->as.mlir_op.mlir_payload = payload_start.start + 1; // Skip `{`
+                node->as.mlir_op.payload_len = (int)(payload_end.start - payload_start.start - 1); // Skip `{` and `}`
+
+                while (node->as.mlir_op.payload_len > 0 && (*node->as.mlir_op.mlir_payload == '\n' || *node->as.mlir_op.mlir_payload == '\r')) {
+                    node->as.mlir_op.mlir_payload++;
+                    node->as.mlir_op.payload_len--;
+                }
+
+                return node;
+            } else if (!is_func) {
                 parserAdvance(parser); // consume colon
                 AstNode *node = createNode(AST_ASSIGNMENT);
                 node->as.assignment.name = ident.start;
@@ -305,6 +388,8 @@ void freeAst(AstNode *node) {
     if (node->type == AST_BINARY) {
         freeAst(node->as.binary.left);
         freeAst(node->as.binary.right);
+    } else if (node->type == AST_ASSIGNMENT) {
+        freeAst(node->as.assignment.value);
     } else if (node->type == AST_CALL) {
         for (int i=0; i<node->as.call.arg_count; i++) freeAst(node->as.call.args[i]);
         free(node->as.call.args);
@@ -317,6 +402,8 @@ void freeAst(AstNode *node) {
         free(node->as.block.statements);
     } else if (node->type == AST_FUNC_DECL) {
         freeAst(node->as.func_decl.body);
+    } else if (node->type == AST_IMPORT) {
+        freeAst(node->as.import_stmt.module_block);
     }
     free(node);
 }
@@ -368,6 +455,7 @@ void printAst(AstNode *node, int depth) {
 
     switch (node->type) {
         case AST_NUMBER: printf("Number(%d)\n", node->as.number.value); break;
+        case AST_STRING: printf("String(%.*s)\n", node->as.string.length, node->as.string.value); break;
         case AST_IDENTIFIER: printf("Ident(%.*s)\n", node->as.identifier.length, node->as.identifier.name); break;
         case AST_BINARY:
             printf("Binary(%d)\n", node->as.binary.op);
@@ -391,6 +479,19 @@ void printAst(AstNode *node, int depth) {
         case AST_FUNC_DECL:
             printf("FuncDecl(%.*s, arg: %.*s)\n", node->as.func_decl.name_len, node->as.func_decl.name, node->as.func_decl.arg_name_len, node->as.func_decl.arg_name);
             printAst(node->as.func_decl.body, depth + 1);
+            break;
+        case AST_MLIR_OP:
+            printf("MlirOp(%.*s)\n", node->as.mlir_op.name_len, node->as.mlir_op.name);
+            break;
+        case AST_IMPORT:
+            printf("Import(%.*s)\n", node->as.import_stmt.length, node->as.import_stmt.path);
+            if (node->as.import_stmt.module_block) {
+                printAst(node->as.import_stmt.module_block, depth + 1);
+            }
+            break;
+        case AST_ASSIGNMENT:
+            printf("Assignment(%.*s)\n", node->as.assignment.name_len, node->as.assignment.name);
+            printAst(node->as.assignment.value, depth + 1);
             break;
     }
 }
