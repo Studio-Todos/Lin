@@ -1,0 +1,15 @@
+// std/math.lin
+// Standard mathematical operations defined as external interactions for the lin runtime.
+
+add: func [a b] [
+    // In a fully implemented MLIR runtime, this resolves to the dynamically mapped "std.math.add" omega op
+    // Since we map string labels to opcodes in LoweringPasses.cpp, this provides the abstract hook.
+]
+
+sub: func [a b] [
+    // Maps to "std.math.sub"
+]
+
+mul: func [a b] [
+    // Maps to "std.math.mul"
+]
