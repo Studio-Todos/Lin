@@ -1,4 +1,4 @@
-// RUN: %lin build %s -o test_fib_bin | FileCheck %s
+// RUN: %linc build %s -o test_fib_bin | FileCheck %s
 
 // CHECK: Parsing Source:
 // CHECK: fib: func [

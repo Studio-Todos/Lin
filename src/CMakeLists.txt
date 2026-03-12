@@ -1,6 +1,6 @@
-add_executable(lin main.cpp Parser.c Lowering.c)
+add_executable(linc main.cpp Parser.c Lowering.c)
 
-target_link_libraries(lin PRIVATE
+target_link_libraries(linc PRIVATE
   PicDialects
   MLIRIR
   MLIRParser
@@ -13,6 +13,6 @@ target_link_libraries(lin PRIVATE
   MLIRCAPIRegisterEverything
 )
 
-target_include_directories(lin PUBLIC
+target_include_directories(linc PUBLIC
   ${CMAKE_SOURCE_DIR}/include
 )

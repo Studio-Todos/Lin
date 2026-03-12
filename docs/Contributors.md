@@ -41,19 +41,21 @@ To run the test suite:
 cd build
 lit ../test
 # Or, if lit is configured via CMake:
-ninja check-lin
+ninja check-linc
 ```
+
+*Note: In the future, a built-in checkstyle test will run automatically for projects executing `linc test`.*
 
 ## Project Structure
 
-- `src/`: Core C/C++ source code. Contains the parser (`Parser.c`), AST definition, compiler driver (`main.cpp`), and C-to-MLIR lowering logic (`Lowering.c`).
+- `src/`: Core C/C++ source code. Contains the parser (`Parser.c`), AST definition, compiler driver (`main.cpp`), and C-to-MLIR lowering logic (`Lowering.c`). Code is mostly C, utilizing C++ mainly for MLIR/LLVM integrations.
 - `include/lin/`: Headers for the parser and lowering modules.
-- `lib/dialect/`: TableGen definitions (`.td` files) and C++ implementations for the `PicGraph`, `PicReduce`, and `PicRuntime` MLIR dialects.
-- `lib/runtime/`: C runtime implementation (linked with compiled Lin binaries).
+- `lib/dialect/`: TableGen definitions (`.td` files) and C++ implementations for the `pic.graph`, `pic.reduce`, and `pic.runtime` MLIR dialects. These form the Polarized Interaction Combinators graph rules.
+- `lib/runtime/`: C runtime implementation (linked with compiled `.line` Lin binaries).
 - `test/`: `lit` test configuration and `.lin` test files.
 
 ## Contribution Guidelines
 
 1. **AST & Parser changes:** If modifying syntax, update `src/Parser.c` and add corresponding test files in `test/`. Ensure `lit` catches any syntax errors.
 2. **MLIR changes:** Modifications to the Interaction Net representation should be made in `lib/dialect/`. Re-run `ninja` to trigger TableGen and regenerate headers.
-3. **C++ Standard:** The backend uses C++17. The frontend parser uses C11.
+3. **C++ Standard:** The backend uses C++17. The frontend parser uses C11. Stick to C for general compiler logic where possible, relying on C++ for LLVM API boundaries.

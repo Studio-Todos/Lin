@@ -1,6 +1,20 @@
 # User Guide
 
-Welcome to the Lin programming language! Lin is designed to be highly expressive, borrowing structural concepts from Red/Rebol, while being completely statically typed and compiled via MLIR.
+Welcome to the Lin programming language! Lin is a "General Purpose Heterogeneous Programming Language" designed to be highly expressive, borrowing structural concepts from Red/Rebol, while being completely statically typed and compiled via MLIR for massively parallel Optimal Evaluation.
+
+Because Lin compiles to a Polarized Interaction Combinator (PIC) graph, the runtime inherently scales with your hardware.
+
+## Quick Start
+
+The compiler executable is named **`linc`** (pronounced "link"). It compiles Lin source code into a `.line` (Lin executable) static binary.
+
+To build and test:
+```bash
+linc build main.lin -o main.line
+./main.line
+```
+
+Lin will also feature a built-in `checkstyle` equivalent for all projects running `linc test`.
 
 ## Current Syntax
 
@@ -55,14 +69,23 @@ fib: func [
 
 While Lin currently supports a minimal core, it is fundamentally a multi-paradigm language. The following features are planned for future releases:
 
-1. **Rich Type System Expansion:**
+1. **Stochastic/Accuracy System:**
+   Part of the standard library will include a stochastic accuracy system, similar to EnerJ, Rely, or Microsoft’s `Uncertain<T>`. This allows programmers to focus on correctness and let the compiler utilize LLVM approximate passes (like PUMPKIN). Not every function needs to be completely accurate.
+
+   ```lin
+   add-noise/accuracy 0.95 [img kernel]
+   blur/exact img
+   convolve/within 0.01 kernel img   ; within ±0.01 absolute error
+   ```
+
+2. **Rich Type System Expansion:**
    - More primitives (`f32`, `f64`, `bool`, `str`).
    - Complex structured types (Objects/Structs, Arrays).
    - Polymorphism and type inference.
-2. **Advanced Control Flow:**
+3. **Advanced Control Flow:**
    - Loop constructs (`while`, `foreach`).
    - Pattern matching and algebraic data types.
-3. **First-Class Concurrency Constructs:**
+4. **First-Class Concurrency Constructs:**
    - Given the massively parallel Interaction Net backend, future syntax will expose elegant ways to spawn and manage parallel workloads inherently, requiring zero manual lock management from the developer.
-4. **Homoiconic Metaprogramming:**
+5. **Homoiconic Metaprogramming:**
    - Embracing its Red/Rebol roots, future Lin versions aim to treat code as data, allowing for powerful macros and DSL creation directly in the language.
