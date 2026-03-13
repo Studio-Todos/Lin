@@ -119,15 +119,28 @@ Token scanToken(Lexer *lexer) {
         case '-': return makeToken(lexer, TOKEN_MINUS);
         case '*': return makeToken(lexer, TOKEN_STAR);
         case '/': return makeToken(lexer, TOKEN_SLASH);
-        case '<': return makeToken(lexer, TOKEN_LESS);
-        case '>': return makeToken(lexer, TOKEN_GREATER);
-        case '!': return makeToken(lexer, TOKEN_BANG);
+        case '<':
+            if (match(lexer, '=')) return makeToken(lexer, TOKEN_LESS_EQUAL);
+            if (match(lexer, '<')) return makeToken(lexer, TOKEN_SHL);
+            return makeToken(lexer, TOKEN_LESS);
+        case '>':
+            if (match(lexer, '=')) return makeToken(lexer, TOKEN_GREATER_EQUAL);
+            if (match(lexer, '>')) return makeToken(lexer, TOKEN_SHR);
+            return makeToken(lexer, TOKEN_GREATER);
+        case '!':
+            if (match(lexer, '=')) return makeToken(lexer, TOKEN_BANG_EQUAL);
+            return makeToken(lexer, TOKEN_BANG);
+        case '=':
+            if (match(lexer, '=')) return makeToken(lexer, TOKEN_EQUAL_EQUAL);
+            return makeToken(lexer, TOKEN_IDENTIFIER);
         case '{': return makeToken(lexer, TOKEN_LBRACE);
         case '}': return makeToken(lexer, TOKEN_RBRACE);
-        case '%': return makeToken(lexer, TOKEN_IDENTIFIER);
+        case '%': return makeToken(lexer, TOKEN_MOD);
+        case '&': return makeToken(lexer, TOKEN_AND);
+        case '|': return makeToken(lexer, TOKEN_OR);
+        case '^': return makeToken(lexer, TOKEN_XOR);
         case '.': return makeToken(lexer, TOKEN_IDENTIFIER);
         case ',': return makeToken(lexer, TOKEN_IDENTIFIER);
-        case '=': return makeToken(lexer, TOKEN_IDENTIFIER);
     }
 
     return makeToken(lexer, TOKEN_EOF);
@@ -306,7 +319,14 @@ static AstNode* parseExpression(Parser *parser) {
     AstNode *left = parsePrimary(parser);
 
     while (parser->current.type == TOKEN_PLUS || parser->current.type == TOKEN_MINUS ||
-           parser->current.type == TOKEN_LESS || parser->current.type == TOKEN_GREATER) {
+           parser->current.type == TOKEN_STAR || parser->current.type == TOKEN_SLASH ||
+           parser->current.type == TOKEN_MOD ||
+           parser->current.type == TOKEN_LESS || parser->current.type == TOKEN_GREATER ||
+           parser->current.type == TOKEN_LESS_EQUAL || parser->current.type == TOKEN_GREATER_EQUAL ||
+           parser->current.type == TOKEN_EQUAL_EQUAL || parser->current.type == TOKEN_BANG_EQUAL ||
+           parser->current.type == TOKEN_SHL || parser->current.type == TOKEN_SHR ||
+           parser->current.type == TOKEN_AND || parser->current.type == TOKEN_OR ||
+           parser->current.type == TOKEN_XOR) {
         TokenType op = parser->current.type;
         parserAdvance(parser);
         AstNode *right = parsePrimary(parser);

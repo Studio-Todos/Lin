@@ -223,9 +223,25 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         MlirOperationState state = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
 
         const char *opName = "unknown";
-        if (expr->as.binary.op == TOKEN_PLUS) opName = "add";
-        else if (expr->as.binary.op == TOKEN_MINUS) opName = "sub";
-        else if (expr->as.binary.op == TOKEN_LESS) opName = "lt";
+        switch (expr->as.binary.op) {
+            case TOKEN_PLUS: opName = "add"; break;
+            case TOKEN_MINUS: opName = "sub"; break;
+            case TOKEN_STAR: opName = "mul"; break;
+            case TOKEN_SLASH: opName = "div"; break;
+            case TOKEN_MOD: opName = "rem"; break;
+            case TOKEN_LESS: opName = "lt"; break;
+            case TOKEN_GREATER: opName = "gt"; break;
+            case TOKEN_LESS_EQUAL: opName = "le"; break;
+            case TOKEN_GREATER_EQUAL: opName = "ge"; break;
+            case TOKEN_EQUAL_EQUAL: opName = "eq"; break;
+            case TOKEN_BANG_EQUAL: opName = "neq"; break;
+            case TOKEN_SHL: opName = "shl"; break;
+            case TOKEN_SHR: opName = "shr"; break;
+            case TOKEN_AND: opName = "and"; break;
+            case TOKEN_OR: opName = "or"; break;
+            case TOKEN_XOR: opName = "xor"; break;
+            default: break;
+        }
 
         MlirAttribute typeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("omega"));
         MlirNamedAttribute typeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), typeAttr);

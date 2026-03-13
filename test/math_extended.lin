@@ -1,0 +1,44 @@
+// RUN: %linc build %s -o test_math_extended_bin | FileCheck %s
+
+// CHECK: Parsing Source:
+// CHECK: test_math: func [
+// CHECK: Generated MLIR (before lowering):
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "add", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "sub", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "mul", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "div", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "rem", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "lt", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "gt", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "le", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "ge", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "eq", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "neq", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "shl", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "shr", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "and", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "or", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "xor", polarity = "-"}>
+
+test_math: func [
+    n [i32!]
+    return: [i32!]
+][
+    (n + 1)
+    (n - 1)
+    (n * 2)
+    (n / 2)
+    (n % 3)
+    (n < 4)
+    (n > 5)
+    (n <= 6)
+    (n >= 7)
+    (n == 8)
+    (n != 9)
+    (n << 1)
+    (n >> 1)
+    (n & 1)
+    (n | 1)
+    (n ^ 1)
+    n
+]
