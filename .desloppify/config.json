@@ -1,0 +1,16 @@
+{
+  "target_strict_score": 95,
+  "exclude": [
+    "build"
+  ],
+  "languages": {
+    "cxx": {
+      "fix_cmd": null,
+      "tier": 2,
+      "cmd": "cppcheck --project=build/compile_commands.json --template='{file}:{line}: {severity}: {message}' --enable=all --quiet",
+      "fmt": "gnu",
+      "id": "cppcheck_issue",
+      "label": "cppcheck"
+    }
+  }
+}

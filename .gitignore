@@ -31,3 +31,8 @@ result-*
 *.swp
 *~
 .DS_Store
+.desloppify/subagents/
+.desloppify/external_review_sessions/
+.desloppify/review_packets/
+.desloppify/state*.json
+scorecard.png
