@@ -16,6 +16,7 @@ Makefile
 *.dylib
 *.dll
 *.exe
+*_bin
 
 # TableGen generated files
 *.inc

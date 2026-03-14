@@ -1,0 +1,22 @@
+// RUN: %linc build %s -o test_fmath_bin | FileCheck %s
+
+// CHECK: Parsing Source:
+// CHECK: test_fmath: func [
+// CHECK: Generated MLIR (before lowering):
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "fadd", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "fsub", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "fmul", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "fdiv", polarity = "-"}>
+
+import "std/math.lin"
+
+test_fmath: func [
+    n [f32!]
+    return: [f32!]
+][
+    (fadd n n)
+    (fsub n n)
+    (fmul n n)
+    (fdiv n n)
+    n
+]
