@@ -3,19 +3,20 @@
 // CHECK: Parsing Source:
 // CHECK: fib: func [
 // CHECK: Generated MLIR (before lowering):
-// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "num", polarity = "+", value = 2 : i32}>
-// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "lt", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "epsilon", label = "era", polarity = "*"}>
 // CHECK: Lowering pass successful. Generated LLVM IR:
 // CHECK: llvm.call @malloc
 // CHECK: Successfully compiled and linked to 'test_fib_bin'
+
+import "std/math.lin"
 
 fib: func [
     n [i32!]
     return: [i32!]
 ][
-    either n < 2 [
+    either (lt n 2) [
         n
     ][
-        (fib n - 1) + (fib n - 2)
+        (add (fib (sub n 1)) (fib (sub n 2)))
     ]
 ]
