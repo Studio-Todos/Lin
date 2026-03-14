@@ -115,30 +115,11 @@ Token scanToken(Lexer *lexer) {
         case ']': return makeToken(lexer, TOKEN_RBRACKET);
         case '(': return makeToken(lexer, TOKEN_LPAREN);
         case ')': return makeToken(lexer, TOKEN_RPAREN);
-        case '+': return makeToken(lexer, TOKEN_PLUS);
-        case '-': return makeToken(lexer, TOKEN_MINUS);
-        case '*': return makeToken(lexer, TOKEN_STAR);
-        case '/': return makeToken(lexer, TOKEN_SLASH);
-        case '<':
-            if (match(lexer, '=')) return makeToken(lexer, TOKEN_LESS_EQUAL);
-            if (match(lexer, '<')) return makeToken(lexer, TOKEN_SHL);
-            return makeToken(lexer, TOKEN_LESS);
-        case '>':
-            if (match(lexer, '=')) return makeToken(lexer, TOKEN_GREATER_EQUAL);
-            if (match(lexer, '>')) return makeToken(lexer, TOKEN_SHR);
-            return makeToken(lexer, TOKEN_GREATER);
-        case '!':
-            if (match(lexer, '=')) return makeToken(lexer, TOKEN_BANG_EQUAL);
-            return makeToken(lexer, TOKEN_BANG);
-        case '=':
-            if (match(lexer, '=')) return makeToken(lexer, TOKEN_EQUAL_EQUAL);
-            return makeToken(lexer, TOKEN_IDENTIFIER);
+        case '!': return makeToken(lexer, TOKEN_BANG);
         case '{': return makeToken(lexer, TOKEN_LBRACE);
         case '}': return makeToken(lexer, TOKEN_RBRACE);
-        case '%': return makeToken(lexer, TOKEN_MOD);
-        case '&': return makeToken(lexer, TOKEN_AND);
-        case '|': return makeToken(lexer, TOKEN_OR);
-        case '^': return makeToken(lexer, TOKEN_XOR);
+        case '%': return makeToken(lexer, TOKEN_IDENTIFIER);
+        case '=': return makeToken(lexer, TOKEN_IDENTIFIER);
         case '.': return makeToken(lexer, TOKEN_IDENTIFIER);
         case ',': return makeToken(lexer, TOKEN_IDENTIFIER);
     }
@@ -288,7 +269,7 @@ static AstNode* parsePrimary(Parser *parser) {
 
     if (parser->current.type == TOKEN_LPAREN) {
         parserAdvance(parser);
-        if (parser->current.type == TOKEN_IDENTIFIER && peek(&parser->lexer) != '+' && peek(&parser->lexer) != '-') {
+        if (parser->current.type == TOKEN_IDENTIFIER) {
             AstNode *call = createNode(AST_CALL);
             call->as.call.callee = parser->current.start;
             call->as.call.callee_len = parser->current.length;
@@ -316,28 +297,7 @@ static AstNode* parsePrimary(Parser *parser) {
 }
 
 static AstNode* parseExpression(Parser *parser) {
-    AstNode *left = parsePrimary(parser);
-
-    while (parser->current.type == TOKEN_PLUS || parser->current.type == TOKEN_MINUS ||
-           parser->current.type == TOKEN_STAR || parser->current.type == TOKEN_SLASH ||
-           parser->current.type == TOKEN_MOD ||
-           parser->current.type == TOKEN_LESS || parser->current.type == TOKEN_GREATER ||
-           parser->current.type == TOKEN_LESS_EQUAL || parser->current.type == TOKEN_GREATER_EQUAL ||
-           parser->current.type == TOKEN_EQUAL_EQUAL || parser->current.type == TOKEN_BANG_EQUAL ||
-           parser->current.type == TOKEN_SHL || parser->current.type == TOKEN_SHR ||
-           parser->current.type == TOKEN_AND || parser->current.type == TOKEN_OR ||
-           parser->current.type == TOKEN_XOR) {
-        TokenType op = parser->current.type;
-        parserAdvance(parser);
-        AstNode *right = parsePrimary(parser);
-        AstNode *binary = createNode(AST_BINARY);
-        binary->as.binary.left = left;
-        binary->as.binary.op = op;
-        binary->as.binary.right = right;
-        left = binary;
-    }
-
-    return left;
+    return parsePrimary(parser);
 }
 
 static AstNode* parseBlock(Parser *parser) {
@@ -423,7 +383,7 @@ void freeAst(AstNode *node) {
     } else if (node->type == AST_FUNC_DECL) {
         freeAst(node->as.func_decl.body);
     } else if (node->type == AST_IMPORT) {
-        freeAst(node->as.import_stmt.module_block);
+        // do nothing for imported AST root nodes to avoid double free
     }
     free(node);
 }
@@ -434,37 +394,40 @@ AstNode* parse(const char *source) {
     parser.hadError = false;
     parserAdvance(&parser);
 
-    if (parser.current.type == TOKEN_IDENTIFIER) {
-        Token ident = parser.current;
-        parserAdvance(&parser);
-
-        bool is_func_decl = false;
-        if (parser.current.type == TOKEN_COLON) {
-            const char* next_word = parser.lexer.current;
-            while (*next_word == ' ' || *next_word == '\n' || *next_word == '\t' || *next_word == '\r') next_word++;
-            if (strncmp(next_word, "func", 4) == 0) {
-                is_func_decl = true;
-            }
-        }
-
-        if (is_func_decl) {
-            parser.previous = ident; // reset to allow parseFuncDecl to get name
-            return parseFuncDecl(&parser);
-        }
-
-        // Rewind if not func decl so normal block parsing can run
-        initLexer(&parser.lexer, source);
-        parserAdvance(&parser);
-    }
-
     AstNode *block = createNode(AST_BLOCK);
     block->as.block.statements = NULL;
     block->as.block.count = 0;
     while (parser.current.type != TOKEN_EOF) {
+        if (parser.current.type == TOKEN_IDENTIFIER && peek(&parser.lexer) == ':') {
+             // Handle func decl or assignment at root level
+             Token ident = parser.current;
+             parserAdvance(&parser);
+
+             const char* next_word = parser.lexer.current;
+             while (*next_word == ' ' || *next_word == '\n' || *next_word == '\t' || *next_word == '\r') next_word++;
+
+             if (strncmp(next_word, "func", 4) == 0) {
+                  parser.previous = ident;
+                  AstNode *func = parseFuncDecl(&parser);
+                  block->as.block.count++;
+                  block->as.block.statements = (AstNode**)realloc(block->as.block.statements, sizeof(AstNode*) * block->as.block.count);
+                  block->as.block.statements[block->as.block.count - 1] = func;
+                  continue;
+             } else {
+                  // Revert ident advance so primary can handle assignment or mlir-op
+                  // Hack for MVP, we rely on primary parser doing it properly
+                  parser.current = ident;
+                  parser.lexer.current = ident.start;
+                  parserAdvance(&parser);
+             }
+        }
+
         AstNode *stmt = parseStatement(&parser);
-        block->as.block.count++;
-        block->as.block.statements = (AstNode**)realloc(block->as.block.statements, sizeof(AstNode*) * block->as.block.count);
-        block->as.block.statements[block->as.block.count - 1] = stmt;
+        if (stmt) {
+             block->as.block.count++;
+             block->as.block.statements = (AstNode**)realloc(block->as.block.statements, sizeof(AstNode*) * block->as.block.count);
+             block->as.block.statements[block->as.block.count - 1] = stmt;
+        }
     }
     return block;
 }

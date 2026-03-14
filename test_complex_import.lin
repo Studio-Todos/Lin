@@ -1,0 +1,8 @@
+import "std/math.lin"
+test: func [
+    n [i32!]
+    return: [i32!]
+][
+    add n 1
+]
+import "std/math.lin"

@@ -9,6 +9,7 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/Parser/Parser.h"
 
 using namespace mlir;
 
@@ -148,6 +149,21 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
     auto printfType = LLVM::LLVMFunctionType::get(i32Type, {ptrType}, true);
     builder.create<LLVM::LLVMFuncOp>(module.getLoc(), "printf", printfType);
 
+    // Collect registry payloads and erase them so they don't break LLVM translation
+    llvm::StringMap<std::string> opPayloads;
+    SmallVector<Operation*> registryOps;
+    module.walk([&](Operation *op) {
+        if (op->getName().getStringRef() == "pic_graph.registry") {
+            StringAttr nameAttr = op->getAttrOfType<StringAttr>("op_name");
+            StringAttr payloadAttr = op->getAttrOfType<StringAttr>("payload");
+            if (nameAttr && payloadAttr) {
+                opPayloads[nameAttr.getValue()] = payloadAttr.getValue().str();
+                registryOps.push_back(op);
+            }
+        }
+    });
+    for (auto* op : registryOps) op->erase();
+
     SmallVector<func::FuncOp> funcsToConvert;
     module.walk([&](func::FuncOp funcOp) {
         funcsToConvert.push_back(funcOp);
@@ -192,10 +208,106 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         // For MVP, we use a basic while loop that pops from our allocated queue
         // A full implementation requires thread pooling and cmpxchg atomic swaps.
 
-        // Return 0
-        builder.setInsertionPointToEnd(entryBlock);
-        Value zero = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0));
-        builder.create<LLVM::ReturnOp>(funcOp.getLoc(), ValueRange{zero});
+        // In MVP, we just demonstrate that the mlir-ops from the standard library can be linked
+        // dynamically by generating dummy calls/switches.
+
+        // Iterate opPayloads to construct a switch statement simulating dynamic resolution
+        if (!opPayloads.empty()) {
+            SmallVector<int32_t> caseValues;
+            SmallVector<Block*> caseDestinations;
+            SmallVector<ValueRange> caseOperands;
+
+            int32_t caseIdx = 1;
+            for (auto &pair : opPayloads) {
+                Block *caseBlock = llvmFunc.addBlock();
+                builder.setInsertionPointToStart(caseBlock);
+
+                // Construct a small module with the payload and parse it
+                std::string payloadModule = "func.func @dummy() {\n";
+                // Inject dummy args so payload parses correctly if it references %a, %b
+                payloadModule += "  %a = arith.constant 0 : i32\n";
+                payloadModule += "  %b = arith.constant 0 : i32\n";
+                payloadModule += pair.second;
+                payloadModule += "  return\n}\n";
+
+                // For a functional runtime MVP, we need to extract operands from the array
+                // The net array pointer is netPtr. Let's compute offsets.
+                Value oneC = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1));
+                Value twoC = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(2));
+                Value threeC = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(3));
+
+                // Assuming current working node index is 'allocCount' (just for demo pointer wiring)
+                Value p1Offset = builder.create<LLVM::AddOp>(funcOp.getLoc(), allocCount, oneC);
+                Value p2Offset = builder.create<LLVM::AddOp>(funcOp.getLoc(), allocCount, twoC);
+                Value outOffset = builder.create<LLVM::AddOp>(funcOp.getLoc(), allocCount, threeC);
+
+                Value p1GEP = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{p1Offset});
+                Value p2GEP = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{p2Offset});
+                Value outGEP = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{outOffset});
+
+                Value argA = builder.create<LLVM::LoadOp>(funcOp.getLoc(), i32Type, p1GEP);
+                Value argB = builder.create<LLVM::LoadOp>(funcOp.getLoc(), i32Type, p2GEP);
+
+                auto parsedMod = parseSourceString<ModuleOp>(payloadModule, module.getContext());
+                if (parsedMod) {
+                    Value dummyA = nullptr;
+                    Value dummyB = nullptr;
+                    Value resultVal = nullptr;
+
+                    parsedMod->walk([&](func::FuncOp dummyFunc) {
+                        int constCount = 0;
+                        for (auto &op : llvm::make_early_inc_range(dummyFunc.getBody().front().getOperations())) {
+                            if (isa<arith::ConstantOp>(op)) {
+                                if (constCount == 0) dummyA = op.getResult(0);
+                                else if (constCount == 1) dummyB = op.getResult(0);
+                                constCount++;
+                            } else if (!isa<func::ReturnOp>(op)) {
+                                // Before moving, swap uses of dummy args with loaded args
+                                if (dummyA) op.replaceUsesOfWith(dummyA, argA);
+                                if (dummyB) op.replaceUsesOfWith(dummyB, argB);
+
+                                op.remove();
+                                builder.insert(&op);
+                                if (op.getNumResults() > 0) {
+                                    resultVal = op.getResult(0);
+                                }
+                            }
+                        }
+                    });
+
+                    if (resultVal) {
+                        // Cast i1 to i32 if it was a comparison
+                        if (resultVal.getType().isInteger(1)) {
+                            resultVal = builder.create<LLVM::ZExtOp>(funcOp.getLoc(), i32Type, resultVal);
+                        }
+                        builder.create<LLVM::StoreOp>(funcOp.getLoc(), resultVal, outGEP);
+                    }
+                    // Do not call parsedMod->erase(); OwningOpRef handles destruction automatically,
+                    // calling erase causes a double-free segfault!
+                }
+
+                Value zeroCase = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0));
+                builder.create<LLVM::ReturnOp>(funcOp.getLoc(), ValueRange{zeroCase});
+
+                caseValues.push_back(caseIdx++);
+                caseDestinations.push_back(caseBlock);
+                caseOperands.push_back(ValueRange{});
+            }
+
+            // create a default block since entryBlock cannot be jumped to
+            Block *defaultBlock = llvmFunc.addBlock();
+            builder.setInsertionPointToStart(defaultBlock);
+            builder.create<LLVM::ReturnOp>(funcOp.getLoc(), ValueRange{builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0)).getResult()});
+
+            builder.setInsertionPointToEnd(entryBlock);
+            Value opcodeVal = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1)); // dummy opcode
+            builder.create<LLVM::SwitchOp>(funcOp.getLoc(), opcodeVal, defaultBlock, ValueRange{}, caseValues, caseDestinations, caseOperands);
+        } else {
+            // Return 0
+            builder.setInsertionPointToEnd(entryBlock);
+            Value zero = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0));
+            builder.create<LLVM::ReturnOp>(funcOp.getLoc(), ValueRange{zero});
+        }
     }
 
     for (auto funcOp : funcsToConvert) {

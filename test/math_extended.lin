@@ -20,25 +20,27 @@
 // CHECK: "pic_graph.agent"() <{agentType = "omega", label = "or", polarity = "-"}>
 // CHECK: "pic_graph.agent"() <{agentType = "omega", label = "xor", polarity = "-"}>
 
+import "std/math.lin"
+
 test_math: func [
     n [i32!]
     return: [i32!]
 ][
-    (n + 1)
-    (n - 1)
-    (n * 2)
-    (n / 2)
-    (n % 3)
-    (n < 4)
-    (n > 5)
-    (n <= 6)
-    (n >= 7)
-    (n == 8)
-    (n != 9)
-    (n << 1)
-    (n >> 1)
-    (n & 1)
-    (n | 1)
-    (n ^ 1)
+    (add n 1)
+    (sub n 1)
+    (mul n 2)
+    (div n 2)
+    (rem n 3)
+    (lt n 4)
+    (gt n 5)
+    (le n 6)
+    (ge n 7)
+    (eq n 8)
+    (neq n 9)
+    (shl n 1)
+    (shr n 1)
+    (and n 1)
+    (or n 1)
+    (xor n 1)
     n
 ]

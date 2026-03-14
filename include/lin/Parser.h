@@ -13,23 +13,7 @@ typedef enum {
     TOKEN_RBRACKET,     // ]
     TOKEN_LPAREN,       // (
     TOKEN_RPAREN,       // )
-    TOKEN_PLUS,         // +
-    TOKEN_MINUS,        // -
-    TOKEN_STAR,         // *
-    TOKEN_SLASH,        // /
-    TOKEN_LESS,         // <
-    TOKEN_GREATER,      // >
     TOKEN_BANG,         // !
-    TOKEN_MOD,          // %
-    TOKEN_EQUAL_EQUAL,  // ==
-    TOKEN_BANG_EQUAL,   // !=
-    TOKEN_GREATER_EQUAL,// >=
-    TOKEN_LESS_EQUAL,   // <=
-    TOKEN_AND,          // && or and
-    TOKEN_OR,           // || or or
-    TOKEN_XOR,          // ^ or xor
-    TOKEN_SHL,          // <<
-    TOKEN_SHR,          // >>
     TOKEN_STRING,       // "..."
     // Keywords
     TOKEN_FUNC,

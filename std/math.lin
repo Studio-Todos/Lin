@@ -6,110 +6,110 @@ add: mlir-op [
     inputs:  [a [i32!] b [i32!]]
     outputs: [res [i32!]]
 ] {
-    %res = arith.addi %a, %b : i32
+    %res = llvm.add %a, %b : i32
 }
 
 sub: mlir-op [
     inputs:  [a [i32!] b [i32!]]
     outputs: [res [i32!]]
 ] {
-    %res = arith.subi %a, %b : i32
+    %res = llvm.sub %a, %b : i32
 }
 
 mul: mlir-op [
     inputs:  [a [i32!] b [i32!]]
     outputs: [res [i32!]]
 ] {
-    %res = arith.muli %a, %b : i32
+    %res = llvm.mul %a, %b : i32
 }
 
 div: mlir-op [
     inputs:  [a [i32!] b [i32!]]
     outputs: [res [i32!]]
 ] {
-    %res = arith.divsi %a, %b : i32
+    %res = llvm.sdiv %a, %b : i32
 }
 
 lt: mlir-op [
     inputs:  [a [i32!] b [i32!]]
     outputs: [res [i1!]]
 ] {
-    %res = arith.cmpi slt, %a, %b : i32
+    %res = llvm.icmp "slt" %a, %b : i32
 }
 
 rem: mlir-op [
     inputs:  [a [i32!] b [i32!]]
     outputs: [res [i32!]]
 ] {
-    %res = arith.remsi %a, %b : i32
+    %res = llvm.srem %a, %b : i32
 }
 
 eq: mlir-op [
     inputs:  [a [i32!] b [i32!]]
     outputs: [res [i1!]]
 ] {
-    %res = arith.cmpi eq, %a, %b : i32
+    %res = llvm.icmp "eq" %a, %b : i32
 }
 
 neq: mlir-op [
     inputs:  [a [i32!] b [i32!]]
     outputs: [res [i1!]]
 ] {
-    %res = arith.cmpi ne, %a, %b : i32
+    %res = llvm.icmp "ne" %a, %b : i32
 }
 
 gt: mlir-op [
     inputs:  [a [i32!] b [i32!]]
     outputs: [res [i1!]]
 ] {
-    %res = arith.cmpi sgt, %a, %b : i32
+    %res = llvm.icmp "sgt" %a, %b : i32
 }
 
 ge: mlir-op [
     inputs:  [a [i32!] b [i32!]]
     outputs: [res [i1!]]
 ] {
-    %res = arith.cmpi sge, %a, %b : i32
+    %res = llvm.icmp "sge" %a, %b : i32
 }
 
 le: mlir-op [
     inputs:  [a [i32!] b [i32!]]
     outputs: [res [i1!]]
 ] {
-    %res = arith.cmpi sle, %a, %b : i32
+    %res = llvm.icmp "sle" %a, %b : i32
 }
 
 and: mlir-op [
     inputs:  [a [i32!] b [i32!]]
     outputs: [res [i32!]]
 ] {
-    %res = arith.andi %a, %b : i32
+    %res = llvm.and %a, %b : i32
 }
 
 or: mlir-op [
     inputs:  [a [i32!] b [i32!]]
     outputs: [res [i32!]]
 ] {
-    %res = arith.ori %a, %b : i32
+    %res = llvm.or %a, %b : i32
 }
 
 xor: mlir-op [
     inputs:  [a [i32!] b [i32!]]
     outputs: [res [i32!]]
 ] {
-    %res = arith.xori %a, %b : i32
+    %res = llvm.xor %a, %b : i32
 }
 
 shl: mlir-op [
     inputs:  [a [i32!] b [i32!]]
     outputs: [res [i32!]]
 ] {
-    %res = arith.shli %a, %b : i32
+    %res = llvm.shl %a, %b : i32
 }
 
 shr: mlir-op [
     inputs:  [a [i32!] b [i32!]]
     outputs: [res [i32!]]
 ] {
-    %res = arith.shrsi %a, %b : i32
+    %res = llvm.ashr %a, %b : i32
 }
