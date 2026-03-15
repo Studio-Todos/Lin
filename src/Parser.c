@@ -62,11 +62,24 @@ static TokenType checkKeyword(Lexer *lexer, int start, int length, const char *r
 static TokenType identifierType(Lexer *lexer) {
     switch (lexer->start[0]) {
         case 'e': return checkKeyword(lexer, 1, 5, "ither", TOKEN_EITHER);
-        case 'f': return checkKeyword(lexer, 1, 3, "unc", TOKEN_FUNC);
+        case 'f':
+            if (lexer->current - lexer->start > 1) {
+                switch (lexer->start[1]) {
+                    case 'u': return checkKeyword(lexer, 2, 2, "nc", TOKEN_FUNC);
+                    case '3': return checkKeyword(lexer, 2, 1, "2", TOKEN_F32);
+                    case '6': return checkKeyword(lexer, 2, 1, "4", TOKEN_F64);
+                }
+            }
+            break;
         case 'i':
             if (lexer->current - lexer->start > 1) {
                 switch (lexer->start[1]) {
+                    case '1':
+                        if (lexer->current - lexer->start == 2) return TOKEN_I1;
+                        return checkKeyword(lexer, 2, 1, "6", TOKEN_I16);
                     case '3': return checkKeyword(lexer, 2, 1, "2", TOKEN_I32);
+                    case '6': return checkKeyword(lexer, 2, 1, "4", TOKEN_I64);
+                    case '8': return checkKeyword(lexer, 2, 0, "", TOKEN_I8);
                     case 'm': return checkKeyword(lexer, 2, 4, "port", TOKEN_IMPORT);
                 }
             }
@@ -339,14 +352,28 @@ static AstNode* parseFuncDecl(Parser *parser) {
     Token argName = parser->current;
     consume(parser, TOKEN_IDENTIFIER, "Expect argument name.");
     consume(parser, TOKEN_LBRACKET, "Expect '[' for arg type.");
-    consume(parser, TOKEN_I32, "Expect 'i32'.");
+    if (parser->current.type == TOKEN_I1 || parser->current.type == TOKEN_I8 ||
+        parser->current.type == TOKEN_I16 || parser->current.type == TOKEN_I32 ||
+        parser->current.type == TOKEN_I64 || parser->current.type == TOKEN_F32 ||
+        parser->current.type == TOKEN_F64) {
+        parserAdvance(parser);
+    } else {
+        errorAt(parser, &parser->current, "Expect type (i1, i8, i16, i32, i64, f32, f64).");
+    }
     consume(parser, TOKEN_BANG, "Expect '!'.");
     consume(parser, TOKEN_RBRACKET, "Expect ']' after arg type.");
 
     consume(parser, TOKEN_RETURN, "Expect 'return'.");
     consume(parser, TOKEN_COLON, "Expect ':' after return.");
     consume(parser, TOKEN_LBRACKET, "Expect '[' for return type.");
-    consume(parser, TOKEN_I32, "Expect 'i32'.");
+    if (parser->current.type == TOKEN_I1 || parser->current.type == TOKEN_I8 ||
+        parser->current.type == TOKEN_I16 || parser->current.type == TOKEN_I32 ||
+        parser->current.type == TOKEN_I64 || parser->current.type == TOKEN_F32 ||
+        parser->current.type == TOKEN_F64) {
+        parserAdvance(parser);
+    } else {
+        errorAt(parser, &parser->current, "Expect type (i1, i8, i16, i32, i64, f32, f64).");
+    }
     consume(parser, TOKEN_BANG, "Expect '!'.");
     consume(parser, TOKEN_RBRACKET, "Expect ']' after return type.");
 

@@ -113,3 +113,31 @@ shr: mlir-op [
 ] {
     %res = llvm.ashr %a, %b : i32
 }
+
+fadd: mlir-op [
+    inputs:  [a [f32!] b [f32!]]
+    outputs: [res [f32!]]
+] {
+    %res = llvm.fadd %a, %b : f32
+}
+
+fsub: mlir-op [
+    inputs:  [a [f32!] b [f32!]]
+    outputs: [res [f32!]]
+] {
+    %res = llvm.fsub %a, %b : f32
+}
+
+fmul: mlir-op [
+    inputs:  [a [f32!] b [f32!]]
+    outputs: [res [f32!]]
+] {
+    %res = llvm.fmul %a, %b : f32
+}
+
+fdiv: mlir-op [
+    inputs:  [a [f32!] b [f32!]]
+    outputs: [res [f32!]]
+] {
+    %res = llvm.fdiv %a, %b : f32
+}
