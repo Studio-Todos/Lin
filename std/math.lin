@@ -141,3 +141,59 @@ fdiv: mlir-op [
 ] {
     %res = llvm.fdiv %a, %b : f32
 }
+
+flt: mlir-op [
+    inputs:  [a [f32!] b [f32!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.fcmp "olt" %a, %b : f32
+}
+
+fgt: mlir-op [
+    inputs:  [a [f32!] b [f32!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.fcmp "ogt" %a, %b : f32
+}
+
+fle: mlir-op [
+    inputs:  [a [f32!] b [f32!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.fcmp "ole" %a, %b : f32
+}
+
+fge: mlir-op [
+    inputs:  [a [f32!] b [f32!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.fcmp "oge" %a, %b : f32
+}
+
+feq: mlir-op [
+    inputs:  [a [f32!] b [f32!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.fcmp "oeq" %a, %b : f32
+}
+
+fneq: mlir-op [
+    inputs:  [a [f32!] b [f32!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.fcmp "one" %a, %b : f32
+}
+
+i32_to_f32: mlir-op [
+    inputs:  [a [i32!]]
+    outputs: [res [f32!]]
+] {
+    %res = llvm.sitofp %a : i32 to f32
+}
+
+f32_to_i32: mlir-op [
+    inputs:  [a [f32!]]
+    outputs: [res [i32!]]
+] {
+    %res = llvm.fptosi %a : f32 to i32
+}

@@ -1,0 +1,19 @@
+// RUN: %linc build %s -o test_cast_bin | FileCheck %s
+
+// CHECK: Parsing Source:
+// CHECK: test_cast: func [
+// CHECK: Generated MLIR (before lowering):
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "i32_to_f32", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "f32_to_i32", polarity = "-"}>
+
+import "std/math.lin"
+
+test_cast: func [
+    n [i32!]
+    f [f32!]
+    return: [i32!]
+][
+    (i32_to_f32 n)
+    (f32_to_i32 f)
+    n
+]

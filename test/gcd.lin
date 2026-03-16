@@ -1,0 +1,20 @@
+// RUN: %linc build %s -o test_gcd_bin | FileCheck %s
+
+// CHECK: Parsing Source:
+// CHECK: gcd: func [
+// CHECK: Generated MLIR (before lowering):
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "rem", polarity = "-"}>
+// CHECK: Successfully compiled and linked to 'test_gcd_bin'
+
+import "std/math.lin"
+
+gcd: func [
+    a [i32!] b [i32!]
+    return: [i32!]
+][
+    either (eq b 0) [
+        a
+    ][
+        (gcd b (rem a b))
+    ]
+]

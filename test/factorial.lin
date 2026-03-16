@@ -1,0 +1,20 @@
+// RUN: %linc build %s -o test_factorial_bin | FileCheck %s
+
+// CHECK: Parsing Source:
+// CHECK: factorial: func [
+// CHECK: Generated MLIR (before lowering):
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "mul", polarity = "-"}>
+// CHECK: Successfully compiled and linked to 'test_factorial_bin'
+
+import "std/math.lin"
+
+factorial: func [
+    n [i32!]
+    return: [i32!]
+][
+    either (lt n 2) [
+        1
+    ][
+        (mul n (factorial (sub n 1)))
+    ]
+]
