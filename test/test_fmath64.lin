@@ -1,0 +1,36 @@
+// RUN: %linc build %s -o test_fmath64_bin | FileCheck %s
+
+// CHECK: Parsing Source:
+// CHECK: test_fmath64: func [
+// CHECK: Generated MLIR (before lowering):
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "fadd64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "fsub64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "fmul64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "fdiv64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "frem64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "flt64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "fgt64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "fle64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "fge64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "feq64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "fneq64", polarity = "-"}>
+
+import "std/math.lin"
+
+test_fmath64: func [
+    n [f64!]
+    return: [f64!]
+][
+    (fadd64 n n)
+    (fsub64 n n)
+    (fmul64 n n)
+    (fdiv64 n n)
+    (frem64 n n)
+    (flt64 n n)
+    (fgt64 n n)
+    (fle64 n n)
+    (fge64 n n)
+    (feq64 n n)
+    (fneq64 n n)
+    n
+]
