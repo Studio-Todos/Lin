@@ -69,9 +69,9 @@ typedef struct AstNode {
         struct { int32_t value; } number;
         struct { const char *name; int length; } identifier;
         struct { struct AstNode *left; TokenType op; struct AstNode *right; } binary;
-        struct { const char *callee; int callee_len; struct AstNode **args; int arg_count; } call;
+        struct { const char *callee; int callee_len; struct AstNode **args; int arg_count; int capacity; } call;
         struct { struct AstNode *condition; struct AstNode *true_branch; struct AstNode *false_branch; } either;
-        struct { struct AstNode **statements; int count; } block;
+        struct { struct AstNode **statements; int count; int capacity; } block;
         struct { const char *name; int name_len; const char *arg_name; int arg_name_len; struct AstNode *body; } func_decl;
         struct { const char *value; int length; } string;
         struct { const char *name; int name_len; struct AstNode *value; } assignment;

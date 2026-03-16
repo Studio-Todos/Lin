@@ -290,11 +290,14 @@ static AstNode* parsePrimary(Parser *parser) {
 
             call->as.call.args = NULL;
             call->as.call.arg_count = 0;
+            call->as.call.capacity = 0;
             while (parser->current.type != TOKEN_RPAREN && parser->current.type != TOKEN_EOF) {
                 AstNode *arg = parseExpression(parser);
-                call->as.call.arg_count++;
-                call->as.call.args = (AstNode**)realloc(call->as.call.args, sizeof(AstNode*) * call->as.call.arg_count);
-                call->as.call.args[call->as.call.arg_count - 1] = arg;
+                if (call->as.call.arg_count >= call->as.call.capacity) {
+                    call->as.call.capacity = call->as.call.capacity < 8 ? 8 : call->as.call.capacity * 2;
+                    call->as.call.args = (AstNode**)realloc(call->as.call.args, sizeof(AstNode*) * call->as.call.capacity);
+                }
+                call->as.call.args[call->as.call.arg_count++] = arg;
             }
             consume(parser, TOKEN_RPAREN, "Expect ')' after arguments.");
             return call;
@@ -318,12 +321,15 @@ static AstNode* parseBlock(Parser *parser) {
     AstNode *block = createNode(AST_BLOCK);
     block->as.block.statements = NULL;
     block->as.block.count = 0;
+    block->as.block.capacity = 0;
 
     while (parser->current.type != TOKEN_RBRACKET && parser->current.type != TOKEN_EOF) {
         AstNode *stmt = parseStatement(parser);
-        block->as.block.count++;
-        block->as.block.statements = (AstNode**)realloc(block->as.block.statements, sizeof(AstNode*) * block->as.block.count);
-        block->as.block.statements[block->as.block.count - 1] = stmt;
+        if (block->as.block.count >= block->as.block.capacity) {
+            block->as.block.capacity = block->as.block.capacity < 8 ? 8 : block->as.block.capacity * 2;
+            block->as.block.statements = (AstNode**)realloc(block->as.block.statements, sizeof(AstNode*) * block->as.block.capacity);
+        }
+        block->as.block.statements[block->as.block.count++] = stmt;
     }
 
     consume(parser, TOKEN_RBRACKET, "Expect ']' after block.");
@@ -424,6 +430,7 @@ AstNode* parse(const char *source) {
     AstNode *block = createNode(AST_BLOCK);
     block->as.block.statements = NULL;
     block->as.block.count = 0;
+    block->as.block.capacity = 0;
     while (parser.current.type != TOKEN_EOF) {
         if (parser.current.type == TOKEN_IDENTIFIER && peek(&parser.lexer) == ':') {
              // Handle func decl or assignment at root level
@@ -436,9 +443,11 @@ AstNode* parse(const char *source) {
              if (strncmp(next_word, "func", 4) == 0) {
                   parser.previous = ident;
                   AstNode *func = parseFuncDecl(&parser);
-                  block->as.block.count++;
-                  block->as.block.statements = (AstNode**)realloc(block->as.block.statements, sizeof(AstNode*) * block->as.block.count);
-                  block->as.block.statements[block->as.block.count - 1] = func;
+                  if (block->as.block.count >= block->as.block.capacity) {
+                      block->as.block.capacity = block->as.block.capacity < 8 ? 8 : block->as.block.capacity * 2;
+                      block->as.block.statements = (AstNode**)realloc(block->as.block.statements, sizeof(AstNode*) * block->as.block.capacity);
+                  }
+                  block->as.block.statements[block->as.block.count++] = func;
                   continue;
              } else {
                   // Revert ident advance so primary can handle assignment or mlir-op
@@ -451,9 +460,11 @@ AstNode* parse(const char *source) {
 
         AstNode *stmt = parseStatement(&parser);
         if (stmt) {
-             block->as.block.count++;
-             block->as.block.statements = (AstNode**)realloc(block->as.block.statements, sizeof(AstNode*) * block->as.block.count);
-             block->as.block.statements[block->as.block.count - 1] = stmt;
+             if (block->as.block.count >= block->as.block.capacity) {
+                 block->as.block.capacity = block->as.block.capacity < 8 ? 8 : block->as.block.capacity * 2;
+                 block->as.block.statements = (AstNode**)realloc(block->as.block.statements, sizeof(AstNode*) * block->as.block.capacity);
+             }
+             block->as.block.statements[block->as.block.count++] = stmt;
         }
     }
     return block;
