@@ -1,0 +1,46 @@
+// RUN: %linc build %s -o test_math64_bin | FileCheck %s
+
+// CHECK: Parsing Source:
+// CHECK: test_math64: func [
+// CHECK: Generated MLIR (before lowering):
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "add64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "sub64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "mul64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "div64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "rem64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "lt64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "gt64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "le64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "ge64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "eq64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "neq64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "shl64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "shr64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "and64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "or64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "xor64", polarity = "-"}>
+
+import "std/math.lin"
+
+test_math64: func [
+    n [i64!]
+    return: [i64!]
+][
+    (add64 n n)
+    (sub64 n n)
+    (mul64 n n)
+    (div64 n n)
+    (rem64 n n)
+    (lt64 n n)
+    (gt64 n n)
+    (le64 n n)
+    (ge64 n n)
+    (eq64 n n)
+    (neq64 n n)
+    (shl64 n n)
+    (shr64 n n)
+    (and64 n n)
+    (or64 n n)
+    (xor64 n n)
+    n
+]

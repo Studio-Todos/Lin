@@ -141,3 +141,241 @@ fdiv: mlir-op [
 ] {
     %res = llvm.fdiv %a, %b : f32
 }
+
+frem: mlir-op [
+    inputs:  [a [f32!] b [f32!]]
+    outputs: [res [f32!]]
+] {
+    %res = llvm.frem %a, %b : f32
+}
+
+flt: mlir-op [
+    inputs:  [a [f32!] b [f32!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.fcmp "olt" %a, %b : f32
+}
+
+fgt: mlir-op [
+    inputs:  [a [f32!] b [f32!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.fcmp "ogt" %a, %b : f32
+}
+
+fle: mlir-op [
+    inputs:  [a [f32!] b [f32!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.fcmp "ole" %a, %b : f32
+}
+
+fge: mlir-op [
+    inputs:  [a [f32!] b [f32!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.fcmp "oge" %a, %b : f32
+}
+
+feq: mlir-op [
+    inputs:  [a [f32!] b [f32!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.fcmp "oeq" %a, %b : f32
+}
+
+fneq: mlir-op [
+    inputs:  [a [f32!] b [f32!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.fcmp "one" %a, %b : f32
+}
+
+add64: mlir-op [
+    inputs:  [a [i64!] b [i64!]]
+    outputs: [res [i64!]]
+] {
+    %res = llvm.add %a, %b : i64
+}
+
+sub64: mlir-op [
+    inputs:  [a [i64!] b [i64!]]
+    outputs: [res [i64!]]
+] {
+    %res = llvm.sub %a, %b : i64
+}
+
+mul64: mlir-op [
+    inputs:  [a [i64!] b [i64!]]
+    outputs: [res [i64!]]
+] {
+    %res = llvm.mul %a, %b : i64
+}
+
+div64: mlir-op [
+    inputs:  [a [i64!] b [i64!]]
+    outputs: [res [i64!]]
+] {
+    %res = llvm.sdiv %a, %b : i64
+}
+
+lt64: mlir-op [
+    inputs:  [a [i64!] b [i64!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.icmp "slt" %a, %b : i64
+}
+
+rem64: mlir-op [
+    inputs:  [a [i64!] b [i64!]]
+    outputs: [res [i64!]]
+] {
+    %res = llvm.srem %a, %b : i64
+}
+
+eq64: mlir-op [
+    inputs:  [a [i64!] b [i64!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.icmp "eq" %a, %b : i64
+}
+
+neq64: mlir-op [
+    inputs:  [a [i64!] b [i64!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.icmp "ne" %a, %b : i64
+}
+
+gt64: mlir-op [
+    inputs:  [a [i64!] b [i64!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.icmp "sgt" %a, %b : i64
+}
+
+ge64: mlir-op [
+    inputs:  [a [i64!] b [i64!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.icmp "sge" %a, %b : i64
+}
+
+le64: mlir-op [
+    inputs:  [a [i64!] b [i64!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.icmp "sle" %a, %b : i64
+}
+
+and64: mlir-op [
+    inputs:  [a [i64!] b [i64!]]
+    outputs: [res [i64!]]
+] {
+    %res = llvm.and %a, %b : i64
+}
+
+or64: mlir-op [
+    inputs:  [a [i64!] b [i64!]]
+    outputs: [res [i64!]]
+] {
+    %res = llvm.or %a, %b : i64
+}
+
+xor64: mlir-op [
+    inputs:  [a [i64!] b [i64!]]
+    outputs: [res [i64!]]
+] {
+    %res = llvm.xor %a, %b : i64
+}
+
+shl64: mlir-op [
+    inputs:  [a [i64!] b [i64!]]
+    outputs: [res [i64!]]
+] {
+    %res = llvm.shl %a, %b : i64
+}
+
+shr64: mlir-op [
+    inputs:  [a [i64!] b [i64!]]
+    outputs: [res [i64!]]
+] {
+    %res = llvm.ashr %a, %b : i64
+}
+
+fadd64: mlir-op [
+    inputs:  [a [f64!] b [f64!]]
+    outputs: [res [f64!]]
+] {
+    %res = llvm.fadd %a, %b : f64
+}
+
+fsub64: mlir-op [
+    inputs:  [a [f64!] b [f64!]]
+    outputs: [res [f64!]]
+] {
+    %res = llvm.fsub %a, %b : f64
+}
+
+fmul64: mlir-op [
+    inputs:  [a [f64!] b [f64!]]
+    outputs: [res [f64!]]
+] {
+    %res = llvm.fmul %a, %b : f64
+}
+
+fdiv64: mlir-op [
+    inputs:  [a [f64!] b [f64!]]
+    outputs: [res [f64!]]
+] {
+    %res = llvm.fdiv %a, %b : f64
+}
+
+frem64: mlir-op [
+    inputs:  [a [f64!] b [f64!]]
+    outputs: [res [f64!]]
+] {
+    %res = llvm.frem %a, %b : f64
+}
+
+flt64: mlir-op [
+    inputs:  [a [f64!] b [f64!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.fcmp "olt" %a, %b : f64
+}
+
+fgt64: mlir-op [
+    inputs:  [a [f64!] b [f64!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.fcmp "ogt" %a, %b : f64
+}
+
+fle64: mlir-op [
+    inputs:  [a [f64!] b [f64!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.fcmp "ole" %a, %b : f64
+}
+
+fge64: mlir-op [
+    inputs:  [a [f64!] b [f64!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.fcmp "oge" %a, %b : f64
+}
+
+feq64: mlir-op [
+    inputs:  [a [f64!] b [f64!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.fcmp "oeq" %a, %b : f64
+}
+
+fneq64: mlir-op [
+    inputs:  [a [f64!] b [f64!]]
+    outputs: [res [i1!]]
+] {
+    %res = llvm.fcmp "one" %a, %b : f64
+}
