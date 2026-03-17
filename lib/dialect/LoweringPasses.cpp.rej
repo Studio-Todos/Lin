@@ -1,0 +1,12 @@
+--- LoweringPasses.cpp
++++ LoweringPasses.cpp
+@@ -243,6 +321,8 @@
+     });
+     for (auto* op : registryOps) op->erase();
+
++    builder.setInsertionPointToEnd(module.getBody());
++
+     SmallVector<func::FuncOp> funcsToConvert;
+     module.walk([&](func::FuncOp funcOp) {
+-        funcsToConvert.push_back(funcOp);
++        if (funcOp.getName() != "worker_thread") {
