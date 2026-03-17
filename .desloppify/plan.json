@@ -1,0 +1,1712 @@
+{
+  "version": 8,
+  "created": "2026-03-17T03:19:34+00:00",
+  "updated": "2026-03-17T03:33:33+00:00",
+  "queue_order": [
+    "subjective::abstraction_fitness",
+    "subjective::ai_generated_debt",
+    "subjective::api_surface_coherence",
+    "subjective::authorization_consistency",
+    "subjective::contract_coherence",
+    "subjective::convention_outlier",
+    "subjective::cross_module_architecture",
+    "subjective::dependency_health",
+    "subjective::design_coherence",
+    "subjective::error_consistency",
+    "subjective::high_level_elegance",
+    "subjective::incomplete_migration",
+    "subjective::initialization_coupling",
+    "subjective::logic_clarity",
+    "subjective::low_level_elegance",
+    "subjective::mid_level_elegance",
+    "subjective::naming_quality",
+    "subjective::package_organization",
+    "subjective::test_strategy",
+    "subjective::type_safety"
+  ],
+  "deferred": [],
+  "skipped": {},
+  "active_cluster": null,
+  "overrides": {
+    "cppcheck_issue::include/lin/LowerToLLVM.h::cppcheck_issue::4::b4bf54e8": {
+      "issue_id": "cppcheck_issue::include/lin/LowerToLLVM.h::cppcheck_issue::4::b4bf54e8",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::include/lin/LowerToLLVM.h::cppcheck_issue::5::93f2bfef": {
+      "issue_id": "cppcheck_issue::include/lin/LowerToLLVM.h::cppcheck_issue::5::93f2bfef",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::include/lin/LowerToLLVM.h::cppcheck_issue::7::57b646cb": {
+      "issue_id": "cppcheck_issue::include/lin/LowerToLLVM.h::cppcheck_issue::7::57b646cb",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::include/lin/LowerToLLVMCAPI.h::cppcheck_issue::4::47eb9e4e": {
+      "issue_id": "cppcheck_issue::include/lin/LowerToLLVMCAPI.h::cppcheck_issue::4::47eb9e4e",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::include/lin/Lowering.h::cppcheck_issue::4::96906fdd": {
+      "issue_id": "cppcheck_issue::include/lin/Lowering.h::cppcheck_issue::4::96906fdd",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::include/lin/Lowering.h::cppcheck_issue::5::2ed43807": {
+      "issue_id": "cppcheck_issue::include/lin/Lowering.h::cppcheck_issue::5::2ed43807",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::include/lin/LoweringPasses.h::cppcheck_issue::4::b4bf54e8": {
+      "issue_id": "cppcheck_issue::include/lin/LoweringPasses.h::cppcheck_issue::4::b4bf54e8",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::include/lin/LoweringPasses.h::cppcheck_issue::5::93f2bfef": {
+      "issue_id": "cppcheck_issue::include/lin/LoweringPasses.h::cppcheck_issue::5::93f2bfef",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::include/lin/LoweringPasses.h::cppcheck_issue::7::57b646cb": {
+      "issue_id": "cppcheck_issue::include/lin/LoweringPasses.h::cppcheck_issue::7::57b646cb",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::include/lin/Parser.h::cppcheck_issue::4::8d6b16d9": {
+      "issue_id": "cppcheck_issue::include/lin/Parser.h::cppcheck_issue::4::8d6b16d9",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::include/lin/Parser.h::cppcheck_issue::5::aad8841e": {
+      "issue_id": "cppcheck_issue::include/lin/Parser.h::cppcheck_issue::5::aad8841e",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::include/lin/PicDialectsCAPI.h::cppcheck_issue::5::96906fdd": {
+      "issue_id": "cppcheck_issue::include/lin/PicDialectsCAPI.h::cppcheck_issue::5::96906fdd",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::1::48f42758": {
+      "issue_id": "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::1::48f42758",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::5::937f8984": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::5::937f8984",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::6::6862e287": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::6::6862e287",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::7::0e87934c": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::7::0e87934c",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::8::4ce0e1cc": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::8::4ce0e1cc",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::9::e5aab0f0": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::9::e5aab0f0",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::10::d65a77d1": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::10::d65a77d1",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::11::35e43628": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::11::35e43628",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::12::301bd841": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::12::301bd841",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::15::021a23ac": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::15::021a23ac",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::18::fdd1cb25": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::18::fdd1cb25",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicReduceDialect.h::cppcheck_issue::5::937f8984": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicReduceDialect.h::cppcheck_issue::5::937f8984",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicReduceDialect.h::cppcheck_issue::6::6862e287": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicReduceDialect.h::cppcheck_issue::6::6862e287",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicReduceDialect.h::cppcheck_issue::7::0e87934c": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicReduceDialect.h::cppcheck_issue::7::0e87934c",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicReduceDialect.h::cppcheck_issue::8::e5aab0f0": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicReduceDialect.h::cppcheck_issue::8::e5aab0f0",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicReduceDialect.h::cppcheck_issue::10::0bcdbdb6": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicReduceDialect.h::cppcheck_issue::10::0bcdbdb6",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicReduceDialect.h::cppcheck_issue::13::42f48413": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicReduceDialect.h::cppcheck_issue::13::42f48413",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicRuntimeDialect.h::cppcheck_issue::5::937f8984": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicRuntimeDialect.h::cppcheck_issue::5::937f8984",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicRuntimeDialect.h::cppcheck_issue::6::6862e287": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicRuntimeDialect.h::cppcheck_issue::6::6862e287",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicRuntimeDialect.h::cppcheck_issue::7::0e87934c": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicRuntimeDialect.h::cppcheck_issue::7::0e87934c",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicRuntimeDialect.h::cppcheck_issue::8::e5aab0f0": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicRuntimeDialect.h::cppcheck_issue::8::e5aab0f0",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicRuntimeDialect.h::cppcheck_issue::10::e8f010e3": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicRuntimeDialect.h::cppcheck_issue::10::e8f010e3",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicRuntimeDialect.h::cppcheck_issue::13::7d5a0c2f": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicRuntimeDialect.h::cppcheck_issue::13::7d5a0c2f",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::5::958c0add": {
+      "issue_id": "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::5::958c0add",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::6::0efc312a": {
+      "issue_id": "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::6::0efc312a",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::7::cf0fdf7f": {
+      "issue_id": "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::7::cf0fdf7f",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::8::4bc588d1": {
+      "issue_id": "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::8::4bc588d1",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::9::6a674142": {
+      "issue_id": "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::9::6a674142",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::10::b338102b": {
+      "issue_id": "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::10::b338102b",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::11::8b7ddb0d": {
+      "issue_id": "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::11::8b7ddb0d",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::12::8c943b1b": {
+      "issue_id": "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::12::8c943b1b",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::13::3f5d3258": {
+      "issue_id": "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::13::3f5d3258",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::14::4a287d39": {
+      "issue_id": "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::14::4a287d39",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::15::93f2bfef": {
+      "issue_id": "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::15::93f2bfef",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::16::e51558ef": {
+      "issue_id": "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::16::e51558ef",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::17::a239062d": {
+      "issue_id": "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::17::a239062d",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::18::7aa7ea82": {
+      "issue_id": "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::18::7aa7ea82",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::19::11da38c9": {
+      "issue_id": "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::19::11da38c9",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::71::9d7616e9": {
+      "issue_id": "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::71::9d7616e9",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LowerToLLVMCAPI.cpp::cppcheck_issue::1::f485bc25": {
+      "issue_id": "cppcheck_issue::lib/dialect/LowerToLLVMCAPI.cpp::cppcheck_issue::1::f485bc25",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LowerToLLVMCAPI.cpp::cppcheck_issue::2::48f42758": {
+      "issue_id": "cppcheck_issue::lib/dialect/LowerToLLVMCAPI.cpp::cppcheck_issue::2::48f42758",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LowerToLLVMCAPI.cpp::cppcheck_issue::3::35ea1d26": {
+      "issue_id": "cppcheck_issue::lib/dialect/LowerToLLVMCAPI.cpp::cppcheck_issue::3::35ea1d26",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LowerToLLVMCAPI.cpp::cppcheck_issue::4::6e779d2d": {
+      "issue_id": "cppcheck_issue::lib/dialect/LowerToLLVMCAPI.cpp::cppcheck_issue::4::6e779d2d",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::1::20a2c178": {
+      "issue_id": "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::1::20a2c178",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::5::cf0fdf7f": {
+      "issue_id": "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::5::cf0fdf7f",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::6::3f5d3258": {
+      "issue_id": "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::6::3f5d3258",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::7::958c0add": {
+      "issue_id": "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::7::958c0add",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::8::0efc312a": {
+      "issue_id": "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::8::0efc312a",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::9::93f2bfef": {
+      "issue_id": "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::9::93f2bfef",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::10::7aa7ea82": {
+      "issue_id": "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::10::7aa7ea82",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::11::189b6faa": {
+      "issue_id": "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::11::189b6faa",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::12::5eff2200": {
+      "issue_id": "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::12::5eff2200",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::19::9d7616e9": {
+      "issue_id": "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::19::9d7616e9",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicDialectsCAPI.cpp::cppcheck_issue::2::40d8c0a3": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicDialectsCAPI.cpp::cppcheck_issue::2::40d8c0a3",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicDialectsCAPI.cpp::cppcheck_issue::6::b158e189": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicDialectsCAPI.cpp::cppcheck_issue::6::b158e189",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicDialectsCAPI.cpp::cppcheck_issue::7::c2036a4a": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicDialectsCAPI.cpp::cppcheck_issue::7::c2036a4a",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicDialectsCAPI.cpp::cppcheck_issue::14::3dbe3ba1": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicDialectsCAPI.cpp::cppcheck_issue::14::3dbe3ba1",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicGraphDialect.cpp::cppcheck_issue::3::7aa7ea82": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicGraphDialect.cpp::cppcheck_issue::3::7aa7ea82",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicGraphDialect.cpp::cppcheck_issue::4::0a0df5ee": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicGraphDialect.cpp::cppcheck_issue::4::0a0df5ee",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicGraphDialect.cpp::cppcheck_issue::9::a0b57c6a": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicGraphDialect.cpp::cppcheck_issue::9::a0b57c6a",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicGraphDialect.cpp::cppcheck_issue::12::686f5da2": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicGraphDialect.cpp::cppcheck_issue::12::686f5da2",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicGraphDialect.cpp::cppcheck_issue::18::686f5da2": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicGraphDialect.cpp::cppcheck_issue::18::686f5da2",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::20::031f287c": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::20::031f287c",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicReduceDialect.cpp::cppcheck_issue::7::471aa1e9": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicReduceDialect.cpp::cppcheck_issue::7::471aa1e9",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicReduceDialect.cpp::cppcheck_issue::10::169ad6e4": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicReduceDialect.cpp::cppcheck_issue::10::169ad6e4",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicReduceDialect.cpp::cppcheck_issue::15::169ad6e4": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicReduceDialect.cpp::cppcheck_issue::15::169ad6e4",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicRuntimeDialect.cpp::cppcheck_issue::3::7aa7ea82": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicRuntimeDialect.cpp::cppcheck_issue::3::7aa7ea82",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicRuntimeDialect.cpp::cppcheck_issue::8::d3d5a4a8": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicRuntimeDialect.cpp::cppcheck_issue::8::d3d5a4a8",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicRuntimeDialect.cpp::cppcheck_issue::11::8f598565": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicRuntimeDialect.cpp::cppcheck_issue::11::8f598565",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/PicRuntimeDialect.cpp::cppcheck_issue::16::8f598565": {
+      "issue_id": "cppcheck_issue::lib/dialect/PicRuntimeDialect.cpp::cppcheck_issue::16::8f598565",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/Lowering.c::cppcheck_issue::1::284ff38b": {
+      "issue_id": "cppcheck_issue::src/Lowering.c::cppcheck_issue::1::284ff38b",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/Lowering.c::cppcheck_issue::2::6c02c0cd": {
+      "issue_id": "cppcheck_issue::src/Lowering.c::cppcheck_issue::2::6c02c0cd",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/Lowering.c::cppcheck_issue::3::3775d4a9": {
+      "issue_id": "cppcheck_issue::src/Lowering.c::cppcheck_issue::3::3775d4a9",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/Lowering.c::cppcheck_issue::4::7902a3e9": {
+      "issue_id": "cppcheck_issue::src/Lowering.c::cppcheck_issue::4::7902a3e9",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/Lowering.c::cppcheck_issue::5::96906fdd": {
+      "issue_id": "cppcheck_issue::src/Lowering.c::cppcheck_issue::5::96906fdd",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/Lowering.c::cppcheck_issue::6::79ff999a": {
+      "issue_id": "cppcheck_issue::src/Lowering.c::cppcheck_issue::6::79ff999a",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/Lowering.c::cppcheck_issue::7::e02fa5ab": {
+      "issue_id": "cppcheck_issue::src/Lowering.c::cppcheck_issue::7::e02fa5ab",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/Lowering.c::cppcheck_issue::8::31c75881": {
+      "issue_id": "cppcheck_issue::src/Lowering.c::cppcheck_issue::8::31c75881",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/Lowering.c::cppcheck_issue::222::0df67206": {
+      "issue_id": "cppcheck_issue::src/Lowering.c::cppcheck_issue::222::0df67206",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/Lowering.c::cppcheck_issue::223::0b23a4ff": {
+      "issue_id": "cppcheck_issue::src/Lowering.c::cppcheck_issue::223::0b23a4ff",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/Lowering.c::cppcheck_issue::315::6a6c25fd": {
+      "issue_id": "cppcheck_issue::src/Lowering.c::cppcheck_issue::315::6a6c25fd",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/Parser.c::cppcheck_issue::1::2ed43807": {
+      "issue_id": "cppcheck_issue::src/Parser.c::cppcheck_issue::1::2ed43807",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/Parser.c::cppcheck_issue::2::79ff999a": {
+      "issue_id": "cppcheck_issue::src/Parser.c::cppcheck_issue::2::79ff999a",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/Parser.c::cppcheck_issue::3::e02fa5ab": {
+      "issue_id": "cppcheck_issue::src/Parser.c::cppcheck_issue::3::e02fa5ab",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/Parser.c::cppcheck_issue::4::31c75881": {
+      "issue_id": "cppcheck_issue::src/Parser.c::cppcheck_issue::4::31c75881",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/Parser.c::cppcheck_issue::5::68d48111": {
+      "issue_id": "cppcheck_issue::src/Parser.c::cppcheck_issue::5::68d48111",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/Parser.c::cppcheck_issue::40::227f20b7": {
+      "issue_id": "cppcheck_issue::src/Parser.c::cppcheck_issue::40::227f20b7",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/Parser.c::cppcheck_issue::54::227f20b7": {
+      "issue_id": "cppcheck_issue::src/Parser.c::cppcheck_issue::54::227f20b7",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/Parser.c::cppcheck_issue::150::55ec6fd7": {
+      "issue_id": "cppcheck_issue::src/Parser.c::cppcheck_issue::150::55ec6fd7",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/Parser.c::cppcheck_issue::167::33a056e1": {
+      "issue_id": "cppcheck_issue::src/Parser.c::cppcheck_issue::167::33a056e1",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::1::b5c0d0e4": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::1::b5c0d0e4",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::2::b4bf54e8": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::2::b4bf54e8",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::4::a44757ee": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::4::a44757ee",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::5::189b6faa": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::5::189b6faa",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::6::3d28d00b": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::6::3d28d00b",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::7::5eff2200": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::7::5eff2200",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::8::605608e6": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::8::605608e6",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::9::be60292e": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::9::be60292e",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::10::1a9e196f": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::10::1a9e196f",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::11::db8d239a": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::11::db8d239a",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::12::dd8e3020": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::12::dd8e3020",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::13::9c7315da": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::13::9c7315da",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::14::6a56b4d8": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::14::6a56b4d8",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::15::e1466271": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::15::e1466271",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::16::b26f2913": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::16::b26f2913",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::17::a8a5e310": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::17::a8a5e310",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::18::653db2ae": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::18::653db2ae",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::19::4e950a78": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::19::4e950a78",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::20::cf0fdf7f": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::20::cf0fdf7f",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::21::3f5d3258": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::21::3f5d3258",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::22::958c0add": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::22::958c0add",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::24::96906fdd": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::24::96906fdd",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::25::b158e189": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::25::b158e189",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::26::6e779d2d": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::26::6e779d2d",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::28::e9b4e435": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::28::e9b4e435",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::29::e747f471": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::29::e747f471",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::30::c0aca4e8": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::30::c0aca4e8",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::31::20a2c178": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::31::20a2c178",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::34::2ed43807": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::34::2ed43807",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::35::284ff38b": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::35::284ff38b",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::40::0a940c29": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::40::0a940c29",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::41::b06cf012": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::41::b06cf012",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::104::d9b7fdf0": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::104::d9b7fdf0",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::117::d9b7fdf0": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::117::d9b7fdf0",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::78::2f0a56f0": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::78::2f0a56f0",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::104::2f0a56f0": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::104::2f0a56f0",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::117::2f0a56f0": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::117::2f0a56f0",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::178::bc502ddc": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::178::bc502ddc",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/main.cpp::cppcheck_issue::178::6a313de5": {
+      "issue_id": "cppcheck_issue::src/main.cpp::cppcheck_issue::178::6a313de5",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::lib/dialect/LowerToLLVMCAPI.cpp::cppcheck_issue::6::4f0357e2": {
+      "issue_id": "cppcheck_issue::lib/dialect/LowerToLLVMCAPI.cpp::cppcheck_issue::6::4f0357e2",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::src/Parser.c::cppcheck_issue::14::b3b1a7bd": {
+      "issue_id": "cppcheck_issue::src/Parser.c::cppcheck_issue::14::b3b1a7bd",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "cppcheck_issue::nofile::cppcheck_issue::0::b4eb88df": {
+      "issue_id": "cppcheck_issue::nofile::cppcheck_issue::0::b4eb88df",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/cppcheck_issue",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "test_coverage::src/Parser.c": {
+      "issue_id": "test_coverage::src/Parser.c",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "test_coverage::src/Lowering.c": {
+      "issue_id": "test_coverage::src/Lowering.c",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "test_coverage::lib/dialect/LoweringPasses.cpp": {
+      "issue_id": "test_coverage::lib/dialect/LoweringPasses.cpp",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "test_coverage::src/main.cpp": {
+      "issue_id": "test_coverage::src/main.cpp",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "test_coverage::lib/dialect/LowerToLLVM.cpp": {
+      "issue_id": "test_coverage::lib/dialect/LowerToLLVM.cpp",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "test_coverage::include/lin/Parser.h": {
+      "issue_id": "test_coverage::include/lin/Parser.h",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "test_coverage::lib/dialect/PicGraphDialect.h": {
+      "issue_id": "test_coverage::lib/dialect/PicGraphDialect.h",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "test_coverage::lib/dialect/PicGraphDialect.cpp": {
+      "issue_id": "test_coverage::lib/dialect/PicGraphDialect.cpp",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "test_coverage::include/lin/PicDialectsCAPI.h": {
+      "issue_id": "test_coverage::include/lin/PicDialectsCAPI.h",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "test_coverage::lib/dialect/PicDialectsCAPI.cpp": {
+      "issue_id": "test_coverage::lib/dialect/PicDialectsCAPI.cpp",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "test_coverage::lib/dialect/PicRuntimeDialect.cpp": {
+      "issue_id": "test_coverage::lib/dialect/PicRuntimeDialect.cpp",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "test_coverage::lib/dialect/PicReduceDialect.cpp": {
+      "issue_id": "test_coverage::lib/dialect/PicReduceDialect.cpp",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "test_coverage::include/lin/LowerToLLVMCAPI.h": {
+      "issue_id": "test_coverage::include/lin/LowerToLLVMCAPI.h",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "test_coverage::include/lin/Lowering.h": {
+      "issue_id": "test_coverage::include/lin/Lowering.h",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/test_coverage-untested_module",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "subjective::abstraction_fitness": {
+      "issue_id": "subjective::abstraction_fitness",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "subjective::ai_generated_debt": {
+      "issue_id": "subjective::ai_generated_debt",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "subjective::api_surface_coherence": {
+      "issue_id": "subjective::api_surface_coherence",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "subjective::authorization_consistency": {
+      "issue_id": "subjective::authorization_consistency",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "subjective::contract_coherence": {
+      "issue_id": "subjective::contract_coherence",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "subjective::convention_outlier": {
+      "issue_id": "subjective::convention_outlier",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "subjective::cross_module_architecture": {
+      "issue_id": "subjective::cross_module_architecture",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "subjective::dependency_health": {
+      "issue_id": "subjective::dependency_health",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "subjective::design_coherence": {
+      "issue_id": "subjective::design_coherence",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "subjective::error_consistency": {
+      "issue_id": "subjective::error_consistency",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "subjective::high_level_elegance": {
+      "issue_id": "subjective::high_level_elegance",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "subjective::incomplete_migration": {
+      "issue_id": "subjective::incomplete_migration",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "subjective::initialization_coupling": {
+      "issue_id": "subjective::initialization_coupling",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "subjective::logic_clarity": {
+      "issue_id": "subjective::logic_clarity",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "subjective::low_level_elegance": {
+      "issue_id": "subjective::low_level_elegance",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "subjective::mid_level_elegance": {
+      "issue_id": "subjective::mid_level_elegance",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "subjective::naming_quality": {
+      "issue_id": "subjective::naming_quality",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "subjective::package_organization": {
+      "issue_id": "subjective::package_organization",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "subjective::test_strategy": {
+      "issue_id": "subjective::test_strategy",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    },
+    "subjective::type_safety": {
+      "issue_id": "subjective::type_safety",
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "cluster": "auto/initial-review",
+      "updated_at": "2026-03-17T03:33:33+00:00"
+    }
+  },
+  "clusters": {
+    "auto/cppcheck_issue": {
+      "name": "auto/cppcheck_issue",
+      "description": "Fix 144 cppcheck_issue issues",
+      "issue_ids": [
+        "cppcheck_issue::include/lin/LowerToLLVM.h::cppcheck_issue::4::b4bf54e8",
+        "cppcheck_issue::include/lin/LowerToLLVM.h::cppcheck_issue::5::93f2bfef",
+        "cppcheck_issue::include/lin/LowerToLLVM.h::cppcheck_issue::7::57b646cb",
+        "cppcheck_issue::include/lin/LowerToLLVMCAPI.h::cppcheck_issue::4::47eb9e4e",
+        "cppcheck_issue::include/lin/Lowering.h::cppcheck_issue::4::96906fdd",
+        "cppcheck_issue::include/lin/Lowering.h::cppcheck_issue::5::2ed43807",
+        "cppcheck_issue::include/lin/LoweringPasses.h::cppcheck_issue::4::b4bf54e8",
+        "cppcheck_issue::include/lin/LoweringPasses.h::cppcheck_issue::5::93f2bfef",
+        "cppcheck_issue::include/lin/LoweringPasses.h::cppcheck_issue::7::57b646cb",
+        "cppcheck_issue::include/lin/Parser.h::cppcheck_issue::4::8d6b16d9",
+        "cppcheck_issue::include/lin/Parser.h::cppcheck_issue::5::aad8841e",
+        "cppcheck_issue::include/lin/PicDialectsCAPI.h::cppcheck_issue::5::96906fdd",
+        "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::1::48f42758",
+        "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::5::937f8984",
+        "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::6::6862e287",
+        "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::7::0e87934c",
+        "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::8::4ce0e1cc",
+        "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::9::e5aab0f0",
+        "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::10::d65a77d1",
+        "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::11::35e43628",
+        "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::12::301bd841",
+        "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::15::021a23ac",
+        "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::18::fdd1cb25",
+        "cppcheck_issue::lib/dialect/PicReduceDialect.h::cppcheck_issue::5::937f8984",
+        "cppcheck_issue::lib/dialect/PicReduceDialect.h::cppcheck_issue::6::6862e287",
+        "cppcheck_issue::lib/dialect/PicReduceDialect.h::cppcheck_issue::7::0e87934c",
+        "cppcheck_issue::lib/dialect/PicReduceDialect.h::cppcheck_issue::8::e5aab0f0",
+        "cppcheck_issue::lib/dialect/PicReduceDialect.h::cppcheck_issue::10::0bcdbdb6",
+        "cppcheck_issue::lib/dialect/PicReduceDialect.h::cppcheck_issue::13::42f48413",
+        "cppcheck_issue::lib/dialect/PicRuntimeDialect.h::cppcheck_issue::5::937f8984",
+        "cppcheck_issue::lib/dialect/PicRuntimeDialect.h::cppcheck_issue::6::6862e287",
+        "cppcheck_issue::lib/dialect/PicRuntimeDialect.h::cppcheck_issue::7::0e87934c",
+        "cppcheck_issue::lib/dialect/PicRuntimeDialect.h::cppcheck_issue::8::e5aab0f0",
+        "cppcheck_issue::lib/dialect/PicRuntimeDialect.h::cppcheck_issue::10::e8f010e3",
+        "cppcheck_issue::lib/dialect/PicRuntimeDialect.h::cppcheck_issue::13::7d5a0c2f",
+        "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::5::958c0add",
+        "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::6::0efc312a",
+        "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::7::cf0fdf7f",
+        "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::8::4bc588d1",
+        "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::9::6a674142",
+        "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::10::b338102b",
+        "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::11::8b7ddb0d",
+        "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::12::8c943b1b",
+        "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::13::3f5d3258",
+        "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::14::4a287d39",
+        "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::15::93f2bfef",
+        "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::16::e51558ef",
+        "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::17::a239062d",
+        "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::18::7aa7ea82",
+        "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::19::11da38c9",
+        "cppcheck_issue::lib/dialect/LowerToLLVM.cpp::cppcheck_issue::71::9d7616e9",
+        "cppcheck_issue::lib/dialect/LowerToLLVMCAPI.cpp::cppcheck_issue::1::f485bc25",
+        "cppcheck_issue::lib/dialect/LowerToLLVMCAPI.cpp::cppcheck_issue::2::48f42758",
+        "cppcheck_issue::lib/dialect/LowerToLLVMCAPI.cpp::cppcheck_issue::3::35ea1d26",
+        "cppcheck_issue::lib/dialect/LowerToLLVMCAPI.cpp::cppcheck_issue::4::6e779d2d",
+        "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::1::20a2c178",
+        "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::5::cf0fdf7f",
+        "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::6::3f5d3258",
+        "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::7::958c0add",
+        "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::8::0efc312a",
+        "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::9::93f2bfef",
+        "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::10::7aa7ea82",
+        "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::11::189b6faa",
+        "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::12::5eff2200",
+        "cppcheck_issue::lib/dialect/LoweringPasses.cpp::cppcheck_issue::19::9d7616e9",
+        "cppcheck_issue::lib/dialect/PicDialectsCAPI.cpp::cppcheck_issue::2::40d8c0a3",
+        "cppcheck_issue::lib/dialect/PicDialectsCAPI.cpp::cppcheck_issue::6::b158e189",
+        "cppcheck_issue::lib/dialect/PicDialectsCAPI.cpp::cppcheck_issue::7::c2036a4a",
+        "cppcheck_issue::lib/dialect/PicDialectsCAPI.cpp::cppcheck_issue::14::3dbe3ba1",
+        "cppcheck_issue::lib/dialect/PicGraphDialect.cpp::cppcheck_issue::3::7aa7ea82",
+        "cppcheck_issue::lib/dialect/PicGraphDialect.cpp::cppcheck_issue::4::0a0df5ee",
+        "cppcheck_issue::lib/dialect/PicGraphDialect.cpp::cppcheck_issue::9::a0b57c6a",
+        "cppcheck_issue::lib/dialect/PicGraphDialect.cpp::cppcheck_issue::12::686f5da2",
+        "cppcheck_issue::lib/dialect/PicGraphDialect.cpp::cppcheck_issue::18::686f5da2",
+        "cppcheck_issue::lib/dialect/PicGraphDialect.h::cppcheck_issue::20::031f287c",
+        "cppcheck_issue::lib/dialect/PicReduceDialect.cpp::cppcheck_issue::7::471aa1e9",
+        "cppcheck_issue::lib/dialect/PicReduceDialect.cpp::cppcheck_issue::10::169ad6e4",
+        "cppcheck_issue::lib/dialect/PicReduceDialect.cpp::cppcheck_issue::15::169ad6e4",
+        "cppcheck_issue::lib/dialect/PicRuntimeDialect.cpp::cppcheck_issue::3::7aa7ea82",
+        "cppcheck_issue::lib/dialect/PicRuntimeDialect.cpp::cppcheck_issue::8::d3d5a4a8",
+        "cppcheck_issue::lib/dialect/PicRuntimeDialect.cpp::cppcheck_issue::11::8f598565",
+        "cppcheck_issue::lib/dialect/PicRuntimeDialect.cpp::cppcheck_issue::16::8f598565",
+        "cppcheck_issue::src/Lowering.c::cppcheck_issue::1::284ff38b",
+        "cppcheck_issue::src/Lowering.c::cppcheck_issue::2::6c02c0cd",
+        "cppcheck_issue::src/Lowering.c::cppcheck_issue::3::3775d4a9",
+        "cppcheck_issue::src/Lowering.c::cppcheck_issue::4::7902a3e9",
+        "cppcheck_issue::src/Lowering.c::cppcheck_issue::5::96906fdd",
+        "cppcheck_issue::src/Lowering.c::cppcheck_issue::6::79ff999a",
+        "cppcheck_issue::src/Lowering.c::cppcheck_issue::7::e02fa5ab",
+        "cppcheck_issue::src/Lowering.c::cppcheck_issue::8::31c75881",
+        "cppcheck_issue::src/Lowering.c::cppcheck_issue::222::0df67206",
+        "cppcheck_issue::src/Lowering.c::cppcheck_issue::223::0b23a4ff",
+        "cppcheck_issue::src/Lowering.c::cppcheck_issue::315::6a6c25fd",
+        "cppcheck_issue::src/Parser.c::cppcheck_issue::1::2ed43807",
+        "cppcheck_issue::src/Parser.c::cppcheck_issue::2::79ff999a",
+        "cppcheck_issue::src/Parser.c::cppcheck_issue::3::e02fa5ab",
+        "cppcheck_issue::src/Parser.c::cppcheck_issue::4::31c75881",
+        "cppcheck_issue::src/Parser.c::cppcheck_issue::5::68d48111",
+        "cppcheck_issue::src/Parser.c::cppcheck_issue::40::227f20b7",
+        "cppcheck_issue::src/Parser.c::cppcheck_issue::54::227f20b7",
+        "cppcheck_issue::src/Parser.c::cppcheck_issue::150::55ec6fd7",
+        "cppcheck_issue::src/Parser.c::cppcheck_issue::167::33a056e1",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::1::b5c0d0e4",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::2::b4bf54e8",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::4::a44757ee",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::5::189b6faa",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::6::3d28d00b",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::7::5eff2200",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::8::605608e6",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::9::be60292e",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::10::1a9e196f",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::11::db8d239a",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::12::dd8e3020",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::13::9c7315da",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::14::6a56b4d8",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::15::e1466271",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::16::b26f2913",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::17::a8a5e310",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::18::653db2ae",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::19::4e950a78",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::20::cf0fdf7f",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::21::3f5d3258",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::22::958c0add",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::24::96906fdd",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::25::b158e189",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::26::6e779d2d",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::28::e9b4e435",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::29::e747f471",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::30::c0aca4e8",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::31::20a2c178",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::34::2ed43807",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::35::284ff38b",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::40::0a940c29",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::41::b06cf012",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::104::d9b7fdf0",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::117::d9b7fdf0",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::78::2f0a56f0",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::104::2f0a56f0",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::117::2f0a56f0",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::178::bc502ddc",
+        "cppcheck_issue::src/main.cpp::cppcheck_issue::178::6a313de5",
+        "cppcheck_issue::lib/dialect/LowerToLLVMCAPI.cpp::cppcheck_issue::6::4f0357e2",
+        "cppcheck_issue::src/Parser.c::cppcheck_issue::14::b3b1a7bd",
+        "cppcheck_issue::nofile::cppcheck_issue::0::b4eb88df"
+      ],
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "updated_at": "2026-03-17T03:19:34+00:00",
+      "auto": true,
+      "cluster_key": "detector::cppcheck_issue",
+      "action": "review and fix each issue",
+      "execution_status": "review",
+      "user_modified": false,
+      "action_type": "manual_fix",
+      "execution_policy": "planned_only"
+    },
+    "auto/test_coverage-untested_module": {
+      "name": "auto/test_coverage-untested_module",
+      "description": "Fix 14 test coverage issues",
+      "issue_ids": [
+        "test_coverage::src/Parser.c",
+        "test_coverage::src/Lowering.c",
+        "test_coverage::lib/dialect/LoweringPasses.cpp",
+        "test_coverage::src/main.cpp",
+        "test_coverage::lib/dialect/LowerToLLVM.cpp",
+        "test_coverage::include/lin/Parser.h",
+        "test_coverage::lib/dialect/PicGraphDialect.h",
+        "test_coverage::lib/dialect/PicGraphDialect.cpp",
+        "test_coverage::include/lin/PicDialectsCAPI.h",
+        "test_coverage::lib/dialect/PicDialectsCAPI.cpp",
+        "test_coverage::lib/dialect/PicRuntimeDialect.cpp",
+        "test_coverage::lib/dialect/PicReduceDialect.cpp",
+        "test_coverage::include/lin/LowerToLLVMCAPI.h",
+        "test_coverage::include/lin/Lowering.h"
+      ],
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "updated_at": "2026-03-17T03:19:34+00:00",
+      "auto": true,
+      "cluster_key": "detector::test_coverage::untested_module",
+      "action": "add tests for untested production modules",
+      "execution_status": "review",
+      "user_modified": false,
+      "action_type": "refactor",
+      "execution_policy": "planned_only"
+    },
+    "auto/initial-review": {
+      "name": "auto/initial-review",
+      "description": "Initial review of 20 unscored subjective dimensions",
+      "issue_ids": [
+        "subjective::abstraction_fitness",
+        "subjective::ai_generated_debt",
+        "subjective::api_surface_coherence",
+        "subjective::authorization_consistency",
+        "subjective::contract_coherence",
+        "subjective::convention_outlier",
+        "subjective::cross_module_architecture",
+        "subjective::dependency_health",
+        "subjective::design_coherence",
+        "subjective::error_consistency",
+        "subjective::high_level_elegance",
+        "subjective::incomplete_migration",
+        "subjective::initialization_coupling",
+        "subjective::logic_clarity",
+        "subjective::low_level_elegance",
+        "subjective::mid_level_elegance",
+        "subjective::naming_quality",
+        "subjective::package_organization",
+        "subjective::test_strategy",
+        "subjective::type_safety"
+      ],
+      "created_at": "2026-03-17T03:19:34+00:00",
+      "updated_at": "2026-03-17T03:19:34+00:00",
+      "auto": true,
+      "cluster_key": "subjective::unscored",
+      "action": "desloppify review --prepare --dimensions abstraction_fitness,ai_generated_debt,api_surface_coherence,authorization_consistency,contract_coherence,convention_outlier,cross_module_architecture,dependency_health,design_coherence,error_consistency,high_level_elegance,incomplete_migration,initialization_coupling,logic_clarity,low_level_elegance,mid_level_elegance,naming_quality,package_organization,test_strategy,type_safety",
+      "execution_status": "review",
+      "user_modified": false,
+      "action_type": "manual_fix",
+      "execution_policy": "planned_only"
+    }
+  },
+  "superseded": {},
+  "promoted_ids": [],
+  "plan_start_scores": {},
+  "refresh_state": {
+    "lifecycle_phase": "review_initial",
+    "postflight_scan_completed_at_scan_count": 7
+  },
+  "execution_log": [
+    {
+      "timestamp": "2026-03-17T03:19:34+00:00",
+      "action": "sync_subjective",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "changes": true
+      }
+    },
+    {
+      "timestamp": "2026-03-17T03:19:34+00:00",
+      "action": "auto_cluster",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "changes": true
+      }
+    },
+    {
+      "timestamp": "2026-03-17T03:19:34+00:00",
+      "action": "sync_lifecycle_phase",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "phase": "review_initial"
+      }
+    },
+    {
+      "timestamp": "2026-03-17T03:19:34+00:00",
+      "action": "complete_postflight_scan",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "scan_count": 1
+      }
+    },
+    {
+      "timestamp": "2026-03-17T03:20:03+00:00",
+      "action": "skip",
+      "issue_ids": [
+        "subjective::abstraction_fitness",
+        "subjective::ai_generated_debt",
+        "subjective::api_surface_coherence",
+        "subjective::authorization_consistency",
+        "subjective::contract_coherence",
+        "subjective::convention_outlier",
+        "subjective::cross_module_architecture",
+        "subjective::dependency_health",
+        "subjective::design_coherence",
+        "subjective::error_consistency",
+        "subjective::high_level_elegance",
+        "subjective::incomplete_migration",
+        "subjective::initialization_coupling",
+        "subjective::logic_clarity",
+        "subjective::low_level_elegance",
+        "subjective::mid_level_elegance",
+        "subjective::naming_quality",
+        "subjective::package_organization",
+        "subjective::test_strategy",
+        "subjective::type_safety"
+      ],
+      "cluster_name": null,
+      "actor": "user",
+      "note": null,
+      "detail": {
+        "kind": "temporary",
+        "reason": "working on objective issues first"
+      }
+    },
+    {
+      "timestamp": "2026-03-17T03:21:24+00:00",
+      "action": "sync_subjective",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "changes": true
+      }
+    },
+    {
+      "timestamp": "2026-03-17T03:21:24+00:00",
+      "action": "complete_postflight_scan",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "scan_count": 2
+      }
+    },
+    {
+      "timestamp": "2026-03-17T03:21:54+00:00",
+      "action": "skip",
+      "issue_ids": [
+        "subjective::abstraction_fitness",
+        "subjective::ai_generated_debt",
+        "subjective::api_surface_coherence",
+        "subjective::authorization_consistency",
+        "subjective::contract_coherence",
+        "subjective::convention_outlier",
+        "subjective::cross_module_architecture",
+        "subjective::dependency_health",
+        "subjective::design_coherence",
+        "subjective::error_consistency",
+        "subjective::high_level_elegance",
+        "subjective::incomplete_migration",
+        "subjective::initialization_coupling",
+        "subjective::logic_clarity",
+        "subjective::low_level_elegance",
+        "subjective::mid_level_elegance",
+        "subjective::naming_quality",
+        "subjective::package_organization",
+        "subjective::test_strategy",
+        "subjective::type_safety"
+      ],
+      "cluster_name": null,
+      "actor": "user",
+      "note": null,
+      "detail": {
+        "kind": "temporary",
+        "reason": "working on objective issues first"
+      }
+    },
+    {
+      "timestamp": "2026-03-17T03:23:28+00:00",
+      "action": "sync_subjective",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "changes": true
+      }
+    },
+    {
+      "timestamp": "2026-03-17T03:23:28+00:00",
+      "action": "complete_postflight_scan",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "scan_count": 3
+      }
+    },
+    {
+      "timestamp": "2026-03-17T03:23:52+00:00",
+      "action": "skip",
+      "issue_ids": [
+        "subjective::abstraction_fitness",
+        "subjective::ai_generated_debt",
+        "subjective::api_surface_coherence",
+        "subjective::authorization_consistency",
+        "subjective::contract_coherence",
+        "subjective::convention_outlier",
+        "subjective::cross_module_architecture",
+        "subjective::dependency_health",
+        "subjective::design_coherence",
+        "subjective::error_consistency",
+        "subjective::high_level_elegance",
+        "subjective::incomplete_migration",
+        "subjective::initialization_coupling",
+        "subjective::logic_clarity",
+        "subjective::low_level_elegance",
+        "subjective::mid_level_elegance",
+        "subjective::naming_quality",
+        "subjective::package_organization",
+        "subjective::test_strategy",
+        "subjective::type_safety"
+      ],
+      "cluster_name": null,
+      "actor": "user",
+      "note": null,
+      "detail": {
+        "kind": "temporary",
+        "reason": "working on objective issues first"
+      }
+    },
+    {
+      "timestamp": "2026-03-17T03:26:12+00:00",
+      "action": "sync_subjective",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "changes": true
+      }
+    },
+    {
+      "timestamp": "2026-03-17T03:26:12+00:00",
+      "action": "complete_postflight_scan",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "scan_count": 4
+      }
+    },
+    {
+      "timestamp": "2026-03-17T03:27:00+00:00",
+      "action": "skip",
+      "issue_ids": [
+        "subjective::abstraction_fitness",
+        "subjective::ai_generated_debt",
+        "subjective::api_surface_coherence",
+        "subjective::authorization_consistency",
+        "subjective::contract_coherence",
+        "subjective::convention_outlier",
+        "subjective::cross_module_architecture",
+        "subjective::dependency_health",
+        "subjective::design_coherence",
+        "subjective::error_consistency",
+        "subjective::high_level_elegance",
+        "subjective::incomplete_migration",
+        "subjective::initialization_coupling",
+        "subjective::logic_clarity",
+        "subjective::low_level_elegance",
+        "subjective::mid_level_elegance",
+        "subjective::naming_quality",
+        "subjective::package_organization",
+        "subjective::test_strategy",
+        "subjective::type_safety"
+      ],
+      "cluster_name": null,
+      "actor": "user",
+      "note": null,
+      "detail": {
+        "kind": "temporary",
+        "reason": "working on objective issues first"
+      }
+    },
+    {
+      "timestamp": "2026-03-17T03:28:47+00:00",
+      "action": "sync_subjective",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "changes": true
+      }
+    },
+    {
+      "timestamp": "2026-03-17T03:28:47+00:00",
+      "action": "complete_postflight_scan",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "scan_count": 5
+      }
+    },
+    {
+      "timestamp": "2026-03-17T03:29:16+00:00",
+      "action": "skip",
+      "issue_ids": [
+        "subjective::abstraction_fitness",
+        "subjective::ai_generated_debt",
+        "subjective::api_surface_coherence",
+        "subjective::authorization_consistency",
+        "subjective::contract_coherence",
+        "subjective::convention_outlier",
+        "subjective::cross_module_architecture",
+        "subjective::dependency_health",
+        "subjective::design_coherence",
+        "subjective::error_consistency",
+        "subjective::high_level_elegance",
+        "subjective::incomplete_migration",
+        "subjective::initialization_coupling",
+        "subjective::logic_clarity",
+        "subjective::low_level_elegance",
+        "subjective::mid_level_elegance",
+        "subjective::naming_quality",
+        "subjective::package_organization",
+        "subjective::test_strategy",
+        "subjective::type_safety"
+      ],
+      "cluster_name": null,
+      "actor": "user",
+      "note": null,
+      "detail": {
+        "kind": "temporary",
+        "reason": "working on objective issues first"
+      }
+    },
+    {
+      "timestamp": "2026-03-17T03:32:13+00:00",
+      "action": "sync_subjective",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "changes": true
+      }
+    },
+    {
+      "timestamp": "2026-03-17T03:32:13+00:00",
+      "action": "complete_postflight_scan",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "scan_count": 6
+      }
+    },
+    {
+      "timestamp": "2026-03-17T03:32:48+00:00",
+      "action": "skip",
+      "issue_ids": [
+        "subjective::abstraction_fitness",
+        "subjective::ai_generated_debt",
+        "subjective::api_surface_coherence",
+        "subjective::authorization_consistency",
+        "subjective::contract_coherence",
+        "subjective::convention_outlier",
+        "subjective::cross_module_architecture",
+        "subjective::dependency_health",
+        "subjective::design_coherence",
+        "subjective::error_consistency",
+        "subjective::high_level_elegance",
+        "subjective::incomplete_migration",
+        "subjective::initialization_coupling",
+        "subjective::logic_clarity",
+        "subjective::low_level_elegance",
+        "subjective::mid_level_elegance",
+        "subjective::naming_quality",
+        "subjective::package_organization",
+        "subjective::test_strategy",
+        "subjective::type_safety"
+      ],
+      "cluster_name": null,
+      "actor": "user",
+      "note": null,
+      "detail": {
+        "kind": "temporary",
+        "reason": "working on objective issues first"
+      }
+    },
+    {
+      "timestamp": "2026-03-17T03:33:33+00:00",
+      "action": "sync_subjective",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "changes": true
+      }
+    },
+    {
+      "timestamp": "2026-03-17T03:33:33+00:00",
+      "action": "complete_postflight_scan",
+      "issue_ids": [],
+      "cluster_name": null,
+      "actor": "system",
+      "note": null,
+      "detail": {
+        "scan_count": 7
+      }
+    }
+  ],
+  "epic_triage_meta": {},
+  "commit_log": [],
+  "uncommitted_issues": [],
+  "commit_tracking_branch": null
+}
