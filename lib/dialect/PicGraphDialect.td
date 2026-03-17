@@ -35,6 +35,16 @@ def PicGraph_LinkOp : PicGraph_Op<"link"> {
   let arguments = (ins PicGraph_PortType:$a, PicGraph_PortType:$b);
 }
 
+def PicGraph_WireOp : PicGraph_Op<"wire"> {
+  let summary = "A wire in the combinator graph";
+  let arguments = (ins PicGraph_PortType:$a, PicGraph_PortType:$b);
+}
+
+def PicGraph_ActivePairOp : PicGraph_Op<"active_pair"> {
+  let summary = "An active pair of nodes that can interact";
+  let arguments = (ins PicGraph_PortType:$p0, PicGraph_PortType:$p1);
+}
+
 // A boundary is a region in the MLIR sense
 def PicGraph_BoundaryOp : PicGraph_Op<"boundary"> {
   let summary = "Boundary region";
