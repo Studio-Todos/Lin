@@ -53,4 +53,19 @@ def PicRuntime_PopRedexOp : PicRuntime_Op<"pop_redex"> {
   let results = (outs I1:$valid, I32:$node_a, I32:$node_b);
 }
 
+// Runtime routing and synchronization
+def PicRuntime_CpuDispatchOp : PicRuntime_Op<"cpu_dispatch"> {
+  let summary = "Dispatches a redex to CPU execution pool";
+  let arguments = (ins I32:$node_a, I32:$node_b);
+}
+
+def PicRuntime_GpuBatchOp : PicRuntime_Op<"gpu_batch"> {
+  let summary = "Batches ops for execution on GPU";
+  let arguments = (ins I32:$node_a, I32:$node_b, I32Attr:$op_label);
+}
+
+def PicRuntime_SyncPointOp : PicRuntime_Op<"sync_point"> {
+  let summary = "A synchronization point between CPU and GPU tasks";
+}
+
 #endif // PIC_RUNTIME_DIALECT
