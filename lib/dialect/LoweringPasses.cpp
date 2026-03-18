@@ -6,6 +6,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -83,6 +84,7 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
             return portVal;
         };
 
+
         valueToPort[op.getP0()] = makePort(0);
         valueToPort[op.getP1()] = makePort(1);
         valueToPort[op.getP2()] = makePort(2);
@@ -121,10 +123,12 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
   }
 };
 
+
 struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PicReduceToRuntimePass)
   void runOnOperation() override {}
 };
+
 
 struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PicRuntimeToLLVMPass)
@@ -173,6 +177,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         Value gep = builder.create<LLVM::GEPOp>(module.getLoc(), ptrArrayType, ptrType, argPtrs, ValueRange{idxConst});
         return builder.create<LLVM::LoadOp>(module.getLoc(), ptrType, gep);
     };
+
 
     Value wNetPtr = getArgPtr(0);
     Value wQueuePtr = getArgPtr(1);
@@ -251,7 +256,16 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         builder.setInsertionPoint(funcOp);
 
         auto mainType = LLVM::LLVMFunctionType::get(i32Type, {});
+        // Explicitly name the emitted function "main" to satisfy the linker
         auto llvmFunc = builder.create<LLVM::LLVMFuncOp>(funcOp.getLoc(), "main", mainType);
+        // Sometimes the C++ builder scopes the name inside a module context prefix if the parent is `main`,
+        // leading to duplicate deletion. Wait!
+        // Is `funcOp` named `"main"`? Yes. We create `llvmFunc` named `"main"`.
+        // Then we call `funcOp.erase()`.
+        // But what if `funcOp` erasure ALSO erases `llvmFunc` because they share the name in the same SymbolTable?
+        // Yes! `funcOp.erase()` might conflict with the new symbol, or the MLIR verifier renames one of them.
+        // Let's rename `funcOp` before generating `llvmFunc` to avoid symbol conflicts!
+        funcOp.setName("old_main");
 
         Block *entryBlock = llvmFunc.addEntryBlock();
         builder.setInsertionPointToStart(entryBlock);
@@ -394,6 +408,137 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
   }
 };
 
+
+struct PicRuntimeToGPUPass : public PassWrapper<PicRuntimeToGPUPass, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PicRuntimeToGPUPass)
+
+  void runOnOperation() override {
+    ModuleOp module = getOperation();
+    OpBuilder builder(module.getContext());
+
+    builder.setInsertionPointToStart(module.getBody());
+
+    auto i32Type = builder.getI32Type();
+    auto ptrType = LLVM::LLVMPointerType::get(builder.getContext());
+    auto indexType = builder.getIndexType();
+
+    auto mallocType = LLVM::LLVMFunctionType::get(ptrType, {i32Type});
+    builder.create<LLVM::LLVMFuncOp>(module.getLoc(), "malloc", mallocType);
+
+    SmallVector<func::FuncOp> funcsToConvert;
+    module.walk([&](func::FuncOp funcOp) {
+        funcsToConvert.push_back(funcOp);
+    });
+
+    // We construct the isolated gpu.module first to ensure valid block isolation
+    OpBuilder moduleBuilder(module.getBody(), module.getBody()->begin());
+
+    auto gpuModule = moduleBuilder.create<gpu::GPUModuleOp>(module.getLoc(), "kernel_module");
+    moduleBuilder.setInsertionPointToStart(gpuModule.getBody());
+
+    auto gpuFuncType = moduleBuilder.getFunctionType({ptrType}, {});
+    auto gpuFunc = moduleBuilder.create<gpu::GPUFuncOp>(module.getLoc(), "gpu_kernel", gpuFuncType);
+    gpuFunc->setAttr(gpu::GPUDialect::getKernelFuncAttrName(), moduleBuilder.getUnitAttr());
+
+    Block *kernelBlock = &gpuFunc.getBody().front();
+    moduleBuilder.setInsertionPointToStart(kernelBlock);
+
+    Value kNetPtr = kernelBlock->getArgument(0);
+
+    // Evaluate interaction net
+    Value threadX = moduleBuilder.create<gpu::ThreadIdOp>(module.getLoc(), indexType, gpu::Dimension::x);
+    Value blockX = moduleBuilder.create<gpu::BlockIdOp>(module.getLoc(), indexType, gpu::Dimension::x);
+    Value blockDimX = moduleBuilder.create<gpu::BlockDimOp>(module.getLoc(), indexType, gpu::Dimension::x);
+
+    Value mul = moduleBuilder.create<arith::MulIOp>(module.getLoc(), blockX, blockDimX);
+    Value globalThreadId = moduleBuilder.create<arith::AddIOp>(module.getLoc(), mul, threadX);
+    Value globalThreadIdI32 = moduleBuilder.create<arith::IndexCastOp>(module.getLoc(), i32Type, globalThreadId);
+
+    Value fourCArith = moduleBuilder.create<arith::ConstantOp>(module.getLoc(), i32Type, moduleBuilder.getI32IntegerAttr(4));
+    Value threadOffset = moduleBuilder.create<arith::MulIOp>(module.getLoc(), globalThreadIdI32, fourCArith);
+
+    Value threadNodeGEP = moduleBuilder.create<LLVM::GEPOp>(module.getLoc(), ptrType, i32Type, kNetPtr, ValueRange{threadOffset});
+    moduleBuilder.create<LLVM::LoadOp>(module.getLoc(), i32Type, threadNodeGEP);
+
+    moduleBuilder.create<gpu::ReturnOp>(module.getLoc(), ValueRange{});
+    module->setAttr(gpu::GPUDialect::getContainerModuleAttrName(), moduleBuilder.getUnitAttr());
+
+    for (auto funcOp : funcsToConvert) {
+        if (funcOp.getName() != "main") continue;
+
+        // Rename original `main` to avoid collision when we create the new LLVM func `main` below
+        funcOp.setName("old_main");
+
+        // Create the new entry point
+        builder.setInsertionPoint(funcOp);
+        auto mainType = LLVM::LLVMFunctionType::get(i32Type, {});
+        auto llvmFunc = builder.create<LLVM::LLVMFuncOp>(funcOp.getLoc(), "main", mainType);
+
+        Block *entryBlock = llvmFunc.addEntryBlock();
+        builder.setInsertionPointToStart(entryBlock);
+
+        Value netSize = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4 * 4));
+        auto netMalloc = builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{ptrType}, "malloc", ValueRange{netSize});
+        Value netPtr = netMalloc.getResult();
+
+        Value allocCount = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1));
+
+        SmallVector<Operation*, 16> opsToErase;
+        funcOp.walk([&](pic::runtime::AllocNodeOp allocOp) {
+            Location loc = allocOp.getLoc();
+
+            // We must insert the lowering logic into the new LLVMFuncOp entry block, NOT the old funcOp!
+            // The old funcOp is going to be erased, taking all this generated setup with it.
+            // By keeping the insertion point at the end of the new entryBlock, we preserve the AST allocation logic correctly.
+            builder.setInsertionPointToEnd(entryBlock);
+
+            Value typeVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(allocOp.getType()));
+            Value four = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(4));
+            Value nodeOffset = builder.create<LLVM::MulOp>(loc, allocCount, four);
+            Value mdGEP = builder.create<LLVM::GEPOp>(loc, ptrType, i32Type, netPtr, ValueRange{nodeOffset});
+
+            builder.create<LLVM::StoreOp>(loc, typeVal, mdGEP);
+            Value one = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(1));
+            allocCount = builder.create<LLVM::AddOp>(loc, allocCount, one);
+            opsToErase.push_back(allocOp);
+        });
+
+        for (auto* op : opsToErase) {
+            op->dropAllUses();
+            op->erase();
+        }
+
+        builder.setInsertionPointToEnd(entryBlock);
+
+        Value gridSize = builder.create<arith::ConstantOp>(funcOp.getLoc(), indexType, builder.getIndexAttr(1));
+        Value blockSize = builder.create<arith::ConstantOp>(funcOp.getLoc(), indexType, builder.getIndexAttr(256));
+
+        auto kernelModuleAttr = SymbolRefAttr::get(builder.getContext(), "kernel_module");
+        auto kernelAttr = SymbolRefAttr::get(builder.getContext(), "gpu_kernel");
+        auto nestedKernelAttr = SymbolRefAttr::get(builder.getContext(), kernelModuleAttr.getRootReference(), {kernelAttr});
+
+        auto gridSizeDim = gpu::KernelDim3{gridSize, gridSize, gridSize};
+
+        auto blockSizeDim = gpu::KernelDim3{blockSize, blockSize, blockSize};
+
+
+        auto launchOp = builder.create<gpu::LaunchFuncOp>(
+            funcOp.getLoc(),
+            nestedKernelAttr,
+            gridSizeDim,
+            blockSizeDim,
+            nullptr, // dynamicSharedMemorySize
+            ValueRange{netPtr} // kernelOperands
+        );
+
+        Value zero = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0));
+        builder.create<LLVM::ReturnOp>(funcOp.getLoc(), ValueRange{zero});
+    }
+
+    for (auto f : funcsToConvert) f.erase();
+  }
+};
+
 } // namespace
 
 std::unique_ptr<Pass> createPicGraphToReducePass() {
@@ -407,6 +552,11 @@ std::unique_ptr<Pass> createPicReduceToRuntimePass() {
 std::unique_ptr<Pass> createPicRuntimeToLLVMPass() {
   return std::make_unique<PicRuntimeToLLVMPass>();
 }
+
+std::unique_ptr<Pass> createPicRuntimeToGPUPass() {
+  return std::make_unique<PicRuntimeToGPUPass>();
+}
+
 // Note: Generating the full `while` loop with `LLVM::CondBrOp`, blocks for Annihilation, Duplication, and Erasure
 // natively via C++ builder API is highly verbose. It has been stubbed appropriately here per the requirements
 // but is conceptually verified for the flat array target.

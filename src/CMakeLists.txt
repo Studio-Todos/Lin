@@ -11,6 +11,7 @@ target_link_libraries(linc PRIVATE
   MLIRExecutionEngineUtils
   MLIRCAPIIR
   MLIRCAPIRegisterEverything
+  MLIRGPUDialect
 )
 
 target_include_directories(linc PUBLIC

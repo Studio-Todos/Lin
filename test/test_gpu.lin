@@ -1,0 +1,19 @@
+// RUN: %linc build %s -gpu -o %t | FileCheck %s
+
+import "std/math.lin"
+
+main: func [
+    n [i32!]
+    return: [i32!]
+][
+    add n 3
+]
+
+// CHECK: gpu.module @kernel_module
+// CHECK: gpu.func @gpu_kernel(%arg0: !llvm.ptr) kernel
+// CHECK: gpu.thread_id  x
+// CHECK: llvm.getelementptr
+// CHECK: llvm.load
+// CHECK: gpu.return
+// CHECK: gpu.launch_func  @kernel_module::@gpu_kernel
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "add", polarity = "+"}
