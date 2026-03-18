@@ -20,6 +20,8 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/GPU/Transforms/Passes.h"
 
 #include "mlir-c/IR.h"
 #include "mlir/CAPI/IR.h"
@@ -48,11 +50,14 @@ int main(int argc, char **argv) {
 
   std::string sourceFile = argv[2];
   std::string outputBinary = "linc_out";
+  bool enableGPU = false;
 
   for (int i = 3; i < argc; ++i) {
       if (std::string(argv[i]) == "-o" && i + 1 < argc) {
           outputBinary = argv[i + 1];
           i++;
+      } else if (std::string(argv[i]) == "--gpu" || std::string(argv[i]) == "-gpu") {
+          enableGPU = true;
       }
   }
 
@@ -146,6 +151,7 @@ int main(int argc, char **argv) {
   registry.insert<mlir::func::FuncDialect>();
   registry.insert<mlir::arith::ArithDialect>();
   registry.insert<mlir::LLVM::LLVMDialect>();
+  registry.insert<mlir::gpu::GPUDialect>();
   mlir::registerBuiltinDialectTranslation(registry);
   mlir::registerLLVMDialectTranslation(registry);
 
@@ -174,7 +180,11 @@ int main(int argc, char **argv) {
       PassManager pm(&context);
       pm.addPass(createPicGraphToReducePass());
       pm.addPass(createPicReduceToRuntimePass());
-      pm.addPass(createPicRuntimeToLLVMPass());
+      pm.addPass(createPicRuntimeToLLVMPass(enableGPU));
+
+      if (enableGPU) {
+          pm.addPass(mlir::createGpuKernelOutliningPass());
+      }
 
       if (mlir::failed(pm.run(module))) {
           std::cerr << "Lowering pass failed.\n";
@@ -184,6 +194,11 @@ int main(int argc, char **argv) {
       std::cout << "\nLowering pass successful. Generated LLVM IR:\n";
       module->print(llvm::outs());
       llvm::outs() << "\n";
+
+      if (enableGPU) {
+          std::cout << "GPU MLIR generation complete. Stopping before LLVM IR translation (backend agnostic MVP).\n";
+          return 0;
+      }
 
       llvm::LLVMContext llvmContext;
       auto llvmModule = mlir::translateModuleToLLVMIR(module, llvmContext);

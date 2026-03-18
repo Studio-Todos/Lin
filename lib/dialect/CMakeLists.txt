@@ -43,6 +43,7 @@ add_mlir_dialect_library(PicDialects
   MLIRSCFToControlFlow
   MLIRFuncToLLVM
   MLIRArithToLLVM
+  MLIRGPUDialect
 )
 
 target_include_directories(PicDialects PUBLIC
