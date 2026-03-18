@@ -1,0 +1,11 @@
+// RUN: %linc build %s -S -o %t | FileCheck %s
+
+import "std/io.lin"
+import "std/sys.lin"
+
+// CHECK: module
+// CHECK: llvm.func @printf
+// CHECK: llvm.func @putchar
+// CHECK: llvm.func @getchar
+// CHECK: llvm.func @scanf
+// CHECK: llvm.func @exit

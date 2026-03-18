@@ -1,0 +1,12 @@
+// std/sys.lin
+// Standard system operations defined as external interactions for the lin runtime.
+
+// System exit
+exit: mlir-op [
+    inputs:  [state [i64!] status [i32!]]
+    outputs: [res [i64!]]
+] {
+    llvm.call @exit(%status) : (i32) -> ()
+    // This is unreachable, but we need to return something
+    %res = llvm.add %state, %state : i64
+}
