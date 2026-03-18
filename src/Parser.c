@@ -11,12 +11,6 @@ static char peekNext(Lexer *lexer) {
     if (isAtEnd(lexer)) return '\0';
     return lexer->current[1];
 }
-static bool match(Lexer *lexer, char expected) {
-    if (isAtEnd(lexer) || *lexer->current != expected) return false;
-    lexer->current++;
-    return true;
-}
-
 static void skipWhitespace(Lexer *lexer) {
     for (;;) {
         char c = peek(lexer);
@@ -37,7 +31,7 @@ static void skipWhitespace(Lexer *lexer) {
     }
 }
 
-static Token makeToken(Lexer *lexer, TokenType type) {
+static Token makeToken(const Lexer *lexer, TokenType type) {
     Token token;
     token.type = type;
     token.start = lexer->start;
@@ -51,7 +45,7 @@ static Token number(Lexer *lexer) {
     return makeToken(lexer, TOKEN_NUMBER);
 }
 
-static TokenType checkKeyword(Lexer *lexer, int start, int length, const char *rest, TokenType type) {
+static TokenType checkKeyword(const Lexer *lexer, int start, int length, const char *rest, TokenType type) {
     if (lexer->current - lexer->start == start + length &&
         memcmp(lexer->start + start, rest, length) == 0) {
         return type;
@@ -59,7 +53,7 @@ static TokenType checkKeyword(Lexer *lexer, int start, int length, const char *r
     return TOKEN_IDENTIFIER;
 }
 
-static TokenType identifierType(Lexer *lexer) {
+static TokenType identifierType(const Lexer *lexer) {
     switch (lexer->start[0]) {
         case 'e': return checkKeyword(lexer, 1, 5, "ither", TOKEN_EITHER);
         case 'f':
@@ -147,7 +141,7 @@ typedef struct {
     bool hadError;
 } Parser;
 
-static void errorAt(Parser *parser, Token *token, const char *message) {
+static void errorAt(Parser *parser, const Token *token, const char *message) {
     if (parser->hadError) return;
     fprintf(stderr, "[line %d] Error", token->line);
     if (token->type == TOKEN_EOF) {
@@ -425,6 +419,7 @@ AstNode* parse(const char *source) {
     Parser parser;
     initLexer(&parser.lexer, source);
     parser.hadError = false;
+    parser.current = makeToken(&parser.lexer, TOKEN_EOF);
     parserAdvance(&parser);
 
     AstNode *block = createNode(AST_BLOCK);

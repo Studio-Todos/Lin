@@ -75,7 +75,7 @@ int main(int argc, char **argv) {
           // We will build a completely new array of statements by appending everything in order.
           int total_count = 0;
           int capacity = 16;
-          AstNode **new_stmts = (AstNode**)malloc(sizeof(AstNode*) * capacity);
+          AstNode **new_stmts = static_cast<AstNode**>(malloc(sizeof(AstNode*) * capacity));
 
           for (int i = 0; i < ast->as.block.count; i++) {
               if (ast->as.block.statements[i]->type == AST_IMPORT) {
@@ -93,7 +93,7 @@ int main(int argc, char **argv) {
                       std::stringstream importBuffer;
                       importBuffer << importFile.rdbuf();
                       std::string importSourceStr = importBuffer.str();
-                      char *importSource = strdup(importSourceStr.c_str());
+                      const char *importSource = strdup(importSourceStr.c_str());
                       AstNode *importAst = parse(importSource);
 
                       if (importAst && importAst->type == AST_BLOCK) {
@@ -101,7 +101,12 @@ int main(int argc, char **argv) {
                           for (int j = 0; j < importAst->as.block.count; j++) {
                               if (total_count >= capacity) {
                                   capacity *= 2;
-                                  new_stmts = (AstNode**)realloc(new_stmts, sizeof(AstNode*) * capacity);
+                                  AstNode **temp = static_cast<AstNode**>(realloc(new_stmts, sizeof(AstNode*) * capacity));
+                                  if (!temp) {
+                                      free(new_stmts);
+                                      return 1;
+                                  }
+                                  new_stmts = temp;
                               }
                               new_stmts[total_count++] = importAst->as.block.statements[j];
                           }
@@ -114,7 +119,12 @@ int main(int argc, char **argv) {
               if (ast->as.block.statements[i]->type != AST_IMPORT) {
                   if (total_count >= capacity) {
                       capacity *= 2;
-                      new_stmts = (AstNode**)realloc(new_stmts, sizeof(AstNode*) * capacity);
+                      AstNode **temp = static_cast<AstNode**>(realloc(new_stmts, sizeof(AstNode*) * capacity));
+                      if (!temp) {
+                          free(new_stmts);
+                          return 1;
+                      }
+                      new_stmts = temp;
                   }
                   new_stmts[total_count++] = ast->as.block.statements[i];
               }
@@ -174,8 +184,6 @@ int main(int argc, char **argv) {
       std::cout << "\nLowering pass successful. Generated LLVM IR:\n";
       module->print(llvm::outs());
       llvm::outs() << "\n";
-
-      mlir::LLVM::LLVMDialect *llvmDialect = context.getOrLoadDialect<mlir::LLVM::LLVMDialect>();
 
       llvm::LLVMContext llvmContext;
       auto llvmModule = mlir::translateModuleToLLVMIR(module, llvmContext);
