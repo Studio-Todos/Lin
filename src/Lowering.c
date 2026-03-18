@@ -222,6 +222,9 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         MlirValue t_branch = lowerExpression(ctx, block, loc, expr->as.either.true_branch, env);
         MlirValue f_branch = lowerExpression(ctx, block, loc, expr->as.either.false_branch, env);
 
+        (void)t_branch;
+        (void)f_branch;
+
         MlirOperationState state = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
 
         MlirAttribute typeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("omega"));
@@ -313,6 +316,8 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
             MlirValue result = mlirOperationGetResult(op, 0); // result is principle
             MlirValue p1 = mlirOperationGetResult(op, 1); // lhs
             MlirValue p2 = mlirOperationGetResult(op, 2); // Unused for unary ops, handled by ERA later in reduce pass if needed
+
+            (void)p2;
 
             MlirOperationState linkLeftState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
             MlirValue leftOps[] = {p1, arg};
