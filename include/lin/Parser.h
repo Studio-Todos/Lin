@@ -72,7 +72,17 @@ typedef struct AstNode {
         struct { const char *callee; int callee_len; struct AstNode **args; int arg_count; int capacity; } call;
         struct { struct AstNode *condition; struct AstNode *true_branch; struct AstNode *false_branch; } either;
         struct { struct AstNode **statements; int count; int capacity; } block;
-        struct { const char *name; int name_len; const char *arg_name; int arg_name_len; struct AstNode *body; } func_decl;
+        struct {
+            const char *name;
+            int name_len;
+            struct AstFuncArg {
+                const char *name;
+                int name_len;
+            } *args;
+            int arg_count;
+            int arg_capacity;
+            struct AstNode *body;
+        } func_decl;
         struct { const char *value; int length; } string;
         struct { const char *name; int name_len; struct AstNode *value; } assignment;
         struct { const char *name; int name_len; const char *inputs; int inputs_len; const char *outputs; int outputs_len; const char *mlir_payload; int payload_len; } mlir_op;
