@@ -349,19 +349,33 @@ static AstNode* parseFuncDecl(Parser *parser) {
     consume(parser, TOKEN_FUNC, "Expect 'func'.");
     consume(parser, TOKEN_LBRACKET, "Expect '[' for args.");
 
-    Token argName = parser->current;
-    consume(parser, TOKEN_IDENTIFIER, "Expect argument name.");
-    consume(parser, TOKEN_LBRACKET, "Expect '[' for arg type.");
-    if (parser->current.type == TOKEN_I1 || parser->current.type == TOKEN_I8 ||
-        parser->current.type == TOKEN_I16 || parser->current.type == TOKEN_I32 ||
-        parser->current.type == TOKEN_I64 || parser->current.type == TOKEN_F32 ||
-        parser->current.type == TOKEN_F64) {
-        parserAdvance(parser);
-    } else {
-        errorAt(parser, &parser->current, "Expect type (i1, i8, i16, i32, i64, f32, f64).");
+    int arg_capacity = 4;
+    int arg_count = 0;
+    struct AstFuncArg *args = malloc(sizeof(*args) * arg_capacity);
+
+    while (parser->current.type != TOKEN_RETURN && parser->current.type != TOKEN_EOF) {
+        Token argName = parser->current;
+        consume(parser, TOKEN_IDENTIFIER, "Expect argument name.");
+        consume(parser, TOKEN_LBRACKET, "Expect '[' for arg type.");
+        if (parser->current.type == TOKEN_I1 || parser->current.type == TOKEN_I8 ||
+            parser->current.type == TOKEN_I16 || parser->current.type == TOKEN_I32 ||
+            parser->current.type == TOKEN_I64 || parser->current.type == TOKEN_F32 ||
+            parser->current.type == TOKEN_F64) {
+            parserAdvance(parser);
+        } else {
+            errorAt(parser, &parser->current, "Expect type (i1, i8, i16, i32, i64, f32, f64).");
+        }
+        consume(parser, TOKEN_BANG, "Expect '!'.");
+        consume(parser, TOKEN_RBRACKET, "Expect ']' after arg type.");
+
+        if (arg_count >= arg_capacity) {
+            arg_capacity *= 2;
+            args = realloc(args, sizeof(*args) * arg_capacity);
+        }
+        args[arg_count].name = argName.start;
+        args[arg_count].name_len = argName.length;
+        arg_count++;
     }
-    consume(parser, TOKEN_BANG, "Expect '!'.");
-    consume(parser, TOKEN_RBRACKET, "Expect ']' after arg type.");
 
     consume(parser, TOKEN_RETURN, "Expect 'return'.");
     consume(parser, TOKEN_COLON, "Expect ':' after return.");
@@ -384,8 +398,9 @@ static AstNode* parseFuncDecl(Parser *parser) {
     AstNode *func = createNode(AST_FUNC_DECL);
     func->as.func_decl.name = name.start;
     func->as.func_decl.name_len = name.length;
-    func->as.func_decl.arg_name = argName.start;
-    func->as.func_decl.arg_name_len = argName.length;
+    func->as.func_decl.args = args;
+    func->as.func_decl.arg_count = arg_count;
+    func->as.func_decl.arg_capacity = arg_capacity;
     func->as.func_decl.body = body;
     return func;
 }
@@ -409,6 +424,7 @@ void freeAst(AstNode *node) {
         free(node->as.block.statements);
     } else if (node->type == AST_FUNC_DECL) {
         freeAst(node->as.func_decl.body);
+        free(node->as.func_decl.args);
     } else if (node->type == AST_IMPORT) {
         // do nothing for imported AST root nodes to avoid double free
     }
@@ -493,7 +509,12 @@ void printAst(AstNode *node, int depth) {
             for (int i=0; i<node->as.block.count; i++) printAst(node->as.block.statements[i], depth + 1);
             break;
         case AST_FUNC_DECL:
-            printf("FuncDecl(%.*s, arg: %.*s)\n", node->as.func_decl.name_len, node->as.func_decl.name, node->as.func_decl.arg_name_len, node->as.func_decl.arg_name);
+            printf("FuncDecl(%.*s, args: [", node->as.func_decl.name_len, node->as.func_decl.name);
+            for (int j = 0; j < node->as.func_decl.arg_count; j++) {
+                printf("%.*s%s", node->as.func_decl.args[j].name_len, node->as.func_decl.args[j].name,
+                       (j < node->as.func_decl.arg_count - 1) ? ", " : "");
+            }
+            printf("])\n");
             printAst(node->as.func_decl.body, depth + 1);
             break;
         case AST_MLIR_OP:

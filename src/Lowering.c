@@ -386,29 +386,40 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
         mlirOperationStateAddAttributes(&funcState, 1, &nameNamedAttr);
 
         MlirType portType = getPicPortType(ctx);
-        MlirType types[] = {portType};
-        MlirType funcType = mlirFunctionTypeGet(ctx, 1, types, 1, types);
+        int arg_count = ast->as.func_decl.arg_count;
+        MlirType *types = (MlirType *)malloc(sizeof(MlirType) * arg_count);
+        MlirLocation *locs = (MlirLocation *)malloc(sizeof(MlirLocation) * arg_count);
+        for (int i = 0; i < arg_count; i++) {
+            types[i] = portType;
+            locs[i] = loc;
+        }
+        MlirType retTypes[] = {portType};
+        MlirType funcType = mlirFunctionTypeGet(ctx, arg_count, types, 1, retTypes);
         MlirAttribute typeAttr = mlirTypeAttrGet(funcType);
         MlirNamedAttribute typeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("function_type")), typeAttr);
         mlirOperationStateAddAttributes(&funcState, 1, &typeNamedAttr);
 
         MlirRegion region = mlirRegionCreate();
-        MlirBlock block = mlirBlockCreate(1, types, &loc);
+        MlirBlock block = mlirBlockCreate(arg_count, types, locs);
         mlirRegionAppendOwnedBlock(region, block);
         mlirOperationStateAddOwnedRegions(&funcState, 1, &region);
 
         MlirOperation funcOp = mlirOperationCreate(&funcState);
         mlirBlockAppendOwnedOperation(moduleBody, funcOp);
 
-        MlirValue argValue = mlirBlockGetArgument(block, 0);
-
-        env_add(&env, ast->as.func_decl.arg_name, ast->as.func_decl.arg_name_len, argValue);
+        for (int i = 0; i < arg_count; i++) {
+            MlirValue argValue = mlirBlockGetArgument(block, i);
+            env_add(&env, ast->as.func_decl.args[i].name, ast->as.func_decl.args[i].name_len, argValue);
+        }
 
         MlirValue result = lowerExpression(ctx, block, loc, ast->as.func_decl.body, &env);
 
         MlirOperationState retState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
         mlirOperationStateAddOperands(&retState, 1, &result);
         mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&retState));
+
+        free(types);
+        free(locs);
     } else if (ast->type == AST_BLOCK) {
         // Just evaluating an anonymous block (like test_parser.lin)
         MlirOperationState funcState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.func"), loc);
