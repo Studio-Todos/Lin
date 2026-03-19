@@ -1,4 +1,5 @@
 // RUN: %linc build %s -o test_fmath64_bin | FileCheck %s
+// RUN: %linc build %s --gpu -o test_fmath64_bin_gpu | FileCheck %s --check-prefix=GPU
 
 // CHECK: Parsing Source:
 // CHECK: test_fmath64: func [
@@ -14,6 +15,21 @@
 // CHECK: "pic_graph.agent"() <{agentType = "omega", label = "fge64", polarity = "-"}>
 // CHECK: "pic_graph.agent"() <{agentType = "omega", label = "feq64", polarity = "-"}>
 // CHECK: "pic_graph.agent"() <{agentType = "omega", label = "fneq64", polarity = "-"}>
+
+// GPU: Parsing Source:
+// GPU: test_fmath64: func [
+// GPU: Generated MLIR (before lowering):
+// GPU: "pic_graph.agent"() <{agentType = "omega", label = "fadd64", polarity = "-"}>
+// GPU: "pic_graph.agent"() <{agentType = "omega", label = "fsub64", polarity = "-"}>
+// GPU: "pic_graph.agent"() <{agentType = "omega", label = "fmul64", polarity = "-"}>
+// GPU: "pic_graph.agent"() <{agentType = "omega", label = "fdiv64", polarity = "-"}>
+// GPU: "pic_graph.agent"() <{agentType = "omega", label = "frem64", polarity = "-"}>
+// GPU: "pic_graph.agent"() <{agentType = "omega", label = "flt64", polarity = "-"}>
+// GPU: "pic_graph.agent"() <{agentType = "omega", label = "fgt64", polarity = "-"}>
+// GPU: "pic_graph.agent"() <{agentType = "omega", label = "fle64", polarity = "-"}>
+// GPU: "pic_graph.agent"() <{agentType = "omega", label = "fge64", polarity = "-"}>
+// GPU: "pic_graph.agent"() <{agentType = "omega", label = "feq64", polarity = "-"}>
+// GPU: "pic_graph.agent"() <{agentType = "omega", label = "fneq64", polarity = "-"}>
 
 import "std/math.lin"
 

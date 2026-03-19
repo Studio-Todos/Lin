@@ -1,4 +1,5 @@
 // RUN: %linc build %s -S -o %t | FileCheck %s
+// RUN: %linc build %s --gpu -S -o %t_gpu | FileCheck %s --check-prefix=GPU
 
 import "std/io.lin"
 import "std/sys.lin"
@@ -9,3 +10,10 @@ import "std/sys.lin"
 // CHECK: llvm.func @getchar
 // CHECK: llvm.func @scanf
 // CHECK: llvm.func @exit
+
+// GPU: module
+// GPU: llvm.func @printf
+// GPU: llvm.func @putchar
+// GPU: llvm.func @getchar
+// GPU: llvm.func @scanf
+// GPU: llvm.func @exit

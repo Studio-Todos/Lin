@@ -195,11 +195,6 @@ int main(int argc, char **argv) {
       module->print(llvm::outs());
       llvm::outs() << "\n";
 
-      if (enableGPU) {
-          std::cout << "GPU MLIR generation complete. Stopping before LLVM IR translation (backend agnostic MVP).\n";
-          return 0;
-      }
-
       llvm::LLVMContext llvmContext;
       auto llvmModule = mlir::translateModuleToLLVMIR(module, llvmContext);
       if (!llvmModule) {

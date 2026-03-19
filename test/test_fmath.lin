@@ -1,4 +1,5 @@
 // RUN: %linc build %s -o test_fmath_bin | FileCheck %s
+// RUN: %linc build %s --gpu -o test_fmath_bin_gpu | FileCheck %s --check-prefix=GPU
 
 // CHECK: Parsing Source:
 // CHECK: test_fmath: func [
@@ -7,6 +8,14 @@
 // CHECK: "pic_graph.agent"() <{agentType = "omega", label = "fsub", polarity = "-"}>
 // CHECK: "pic_graph.agent"() <{agentType = "omega", label = "fmul", polarity = "-"}>
 // CHECK: "pic_graph.agent"() <{agentType = "omega", label = "fdiv", polarity = "-"}>
+
+// GPU: Parsing Source:
+// GPU: test_fmath: func [
+// GPU: Generated MLIR (before lowering):
+// GPU: "pic_graph.agent"() <{agentType = "omega", label = "fadd", polarity = "-"}>
+// GPU: "pic_graph.agent"() <{agentType = "omega", label = "fsub", polarity = "-"}>
+// GPU: "pic_graph.agent"() <{agentType = "omega", label = "fmul", polarity = "-"}>
+// GPU: "pic_graph.agent"() <{agentType = "omega", label = "fdiv", polarity = "-"}>
 
 import "std/math.lin"
 
