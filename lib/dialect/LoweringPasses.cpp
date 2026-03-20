@@ -302,14 +302,14 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 funcOp.getLoc(),
                 blocks, oneIdx, oneIdx,
                 threads, oneIdx, oneIdx,
-                nullptr, /*dynamicSharedMemorySize*/
-                nullptr, /*asyncTokenType*/
+                Value(), /*dynamicSharedMemorySize*/
+                Type(), /*asyncTokenType*/
                 ValueRange{}, /*asyncDependencies*/
                 TypeRange{}, /*workgroupAttributions*/
                 TypeRange{}, /*privateAttributions*/
-                nullptr, /*clusterSizeX*/
-                nullptr, /*clusterSizeY*/
-                nullptr /*clusterSizeZ*/
+                Value(), /*clusterSizeX*/
+                Value(), /*clusterSizeY*/
+                Value() /*clusterSizeZ*/
             );
             builder.setInsertionPointToStart(&launchOp.getBody().front());
 
