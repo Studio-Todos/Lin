@@ -36,7 +36,12 @@ static void env_free(Environment *env) {
 static void env_add(Environment *env, const char *name, int name_len, MlirValue value) {
     if (env->count >= env->capacity) {
         env->capacity *= 2;
-        env->vars = (EnvVar*)realloc(env->vars, sizeof(EnvVar) * env->capacity);
+        EnvVar *tmp = (EnvVar*)realloc(env->vars, sizeof(EnvVar) * env->capacity);
+        if (!tmp) {
+            fprintf(stderr, "Out of memory\n");
+            exit(1);
+        }
+        env->vars = tmp;
     }
     env->vars[env->count].name = name;
     env->vars[env->count].name_len = name_len;
