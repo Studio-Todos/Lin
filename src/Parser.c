@@ -289,7 +289,12 @@ static AstNode* parsePrimary(Parser *parser) {
                 AstNode *arg = parseExpression(parser);
                 if (call->as.call.arg_count >= call->as.call.capacity) {
                     call->as.call.capacity = call->as.call.capacity < 8 ? 8 : call->as.call.capacity * 2;
-                    call->as.call.args = (AstNode**)realloc(call->as.call.args, sizeof(AstNode*) * call->as.call.capacity);
+                    void *tmp = realloc(call->as.call.args, sizeof(AstNode*) * call->as.call.capacity);
+                    if (!tmp) {
+                        fprintf(stderr, "Out of memory\n");
+                        exit(1);
+                    }
+                    call->as.call.args = (AstNode**)tmp;
                 }
                 call->as.call.args[call->as.call.arg_count++] = arg;
             }
@@ -321,7 +326,12 @@ static AstNode* parseBlock(Parser *parser) {
         AstNode *stmt = parseStatement(parser);
         if (block->as.block.count >= block->as.block.capacity) {
             block->as.block.capacity = block->as.block.capacity < 8 ? 8 : block->as.block.capacity * 2;
-            block->as.block.statements = (AstNode**)realloc(block->as.block.statements, sizeof(AstNode*) * block->as.block.capacity);
+            void *tmp = realloc(block->as.block.statements, sizeof(AstNode*) * block->as.block.capacity);
+            if (!tmp) {
+                fprintf(stderr, "Out of memory\n");
+                exit(1);
+            }
+            block->as.block.statements = (AstNode**)tmp;
         }
         block->as.block.statements[block->as.block.count++] = stmt;
     }
@@ -370,7 +380,12 @@ static AstNode* parseFuncDecl(Parser *parser) {
 
         if (arg_count >= arg_capacity) {
             arg_capacity *= 2;
-            args = realloc(args, sizeof(*args) * arg_capacity);
+            void *tmp = realloc(args, sizeof(*args) * arg_capacity);
+            if (!tmp) {
+                fprintf(stderr, "Out of memory\n");
+                exit(1);
+            }
+            args = tmp;
         }
         args[arg_count].name = argName.start;
         args[arg_count].name_len = argName.length;
@@ -456,7 +471,12 @@ AstNode* parse(const char *source) {
                   AstNode *func = parseFuncDecl(&parser);
                   if (block->as.block.count >= block->as.block.capacity) {
                       block->as.block.capacity = block->as.block.capacity < 8 ? 8 : block->as.block.capacity * 2;
-                      block->as.block.statements = (AstNode**)realloc(block->as.block.statements, sizeof(AstNode*) * block->as.block.capacity);
+                      void *tmp = realloc(block->as.block.statements, sizeof(AstNode*) * block->as.block.capacity);
+                      if (!tmp) {
+                          fprintf(stderr, "Out of memory\n");
+                          exit(1);
+                      }
+                      block->as.block.statements = (AstNode**)tmp;
                   }
                   block->as.block.statements[block->as.block.count++] = func;
                   continue;
@@ -473,7 +493,12 @@ AstNode* parse(const char *source) {
         if (stmt) {
              if (block->as.block.count >= block->as.block.capacity) {
                  block->as.block.capacity = block->as.block.capacity < 8 ? 8 : block->as.block.capacity * 2;
-                 block->as.block.statements = (AstNode**)realloc(block->as.block.statements, sizeof(AstNode*) * block->as.block.capacity);
+                 void *tmp = realloc(block->as.block.statements, sizeof(AstNode*) * block->as.block.capacity);
+                 if (!tmp) {
+                     fprintf(stderr, "Out of memory\n");
+                     exit(1);
+                 }
+                 block->as.block.statements = (AstNode**)tmp;
              }
              block->as.block.statements[block->as.block.count++] = stmt;
         }
