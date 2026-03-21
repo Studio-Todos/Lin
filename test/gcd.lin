@@ -1,0 +1,42 @@
+// RUN: %linc build %s -o %t | FileCheck %s
+// RUN: %t
+// RUN: %linc build %s --gpu -o %t_gpu | FileCheck %s --check-prefix=GPU
+// RUN: %t_gpu
+
+// CHECK: Parsing Source:
+// CHECK: gcd: func [
+// CHECK: Generated MLIR (before lowering):
+// CHECK: "pic_graph.agent"() <{agentType = "epsilon", label = "era", polarity = "*"}>
+// CHECK: Lowering pass successful. Generated LLVM IR:
+// CHECK: llvm.call @malloc
+// CHECK: Successfully compiled and linked to '
+
+// GPU: Parsing Source:
+// GPU: gcd: func [
+// GPU: Generated MLIR (before lowering):
+// GPU: "pic_graph.agent"() <{agentType = "epsilon", label = "era", polarity = "*"}>
+// GPU: Lowering pass successful. Generated LLVM IR:
+// GPU: Successfully compiled and linked to '
+
+import "std/math.lin"
+import "std/io.lin"
+import "std/sys.lin"
+
+gcd: func [
+    a [i32!]
+    b [i32!]
+    return: [i32!]
+][
+    either (eq b 0) [
+        a
+    ][
+        (gcd b (rem a b))
+    ]
+]
+
+main: func [
+    state [i64!]
+    return: [i64!]
+][
+    (exit (print_i32 (print_char state 10) (gcd 1071 462)) 0)
+]
