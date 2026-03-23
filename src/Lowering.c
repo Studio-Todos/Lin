@@ -34,7 +34,8 @@ static void env_free(Environment *env, MlirContext ctx, MlirBlock block, MlirLoc
     // must be connected to an Eraser (epsilon) node to satisfy the linearity property.
     for (int i = 0; i < env->count; i++) {
         if (!mlirValueIsNull(env->vars[i].value)) {
-            MlirOperationState eraState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+            if (!mlirBlockIsNull(block)) {
+                MlirOperationState eraState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
 
             MlirAttribute typeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("epsilon"));
             MlirNamedAttribute typeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), typeAttr);
@@ -50,15 +51,16 @@ static void env_free(Environment *env, MlirContext ctx, MlirBlock block, MlirLoc
             MlirType eraTypes[] = {portType, portType, portType};
             mlirOperationStateAddResults(&eraState, 3, eraTypes);
 
-            MlirOperation eraOp = mlirOperationCreate(&eraState);
-            mlirBlockAppendOwnedOperation(block, eraOp);
+                MlirOperation eraOp = mlirOperationCreate(&eraState);
+                mlirBlockAppendOwnedOperation(block, eraOp);
 
-            MlirValue eraP0 = mlirOperationGetResult(eraOp, 0);
+                MlirValue eraP0 = mlirOperationGetResult(eraOp, 0);
 
-            MlirOperationState linkState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-            MlirValue linkOps[] = {eraP0, env->vars[i].value};
-            mlirOperationStateAddOperands(&linkState, 2, linkOps);
-            mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkState));
+                MlirOperationState linkState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
+                MlirValue linkOps[] = {eraP0, env->vars[i].value};
+                mlirOperationStateAddOperands(&linkState, 2, linkOps);
+                mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkState));
+            }
         }
     }
 
@@ -446,7 +448,7 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
     Environment env;
     env_init(&env);
 
-    MlirBlock block;
+    MlirBlock block = {NULL};
     if (ast->type == AST_FUNC_DECL) {
         MlirOperationState funcState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.func"), loc);
 
