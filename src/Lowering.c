@@ -668,10 +668,9 @@ void optimizeInteractionNetWithEGraphs(MlirModule module) {
             searchOp = mlirOperationGetNextInBlock(searchOp);
         }
 
-        MlirOperation opsToDestroy[4];
-        int destroyCount = 0;
-
         if (!mlirOperationIsNull(linkOp1) && !mlirOperationIsNull(linkOp2)) {
+            MlirOperation opsToDestroy[4];
+            int destroyCount = 0;
             if (mlirValueEqual(mlirOperationGetOperand(linkOp1, 0), action.existingP0)) {
                 MlirValue otherPort = mlirOperationGetOperand(linkOp1, 1);
                 MlirOperationState newLink1 = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), action.loc);
