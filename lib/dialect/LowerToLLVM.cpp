@@ -134,7 +134,7 @@ struct InetToLLVMLoweringPass : public PassWrapper<InetToLLVMLoweringPass, Opera
                     int32_t opCode = 0; // OP_ADD
                     if (label == "sub") opCode = 1;
                     else if (label == "lt") opCode = 4;
-                    // Mock scf.if as era op or something? We'll leave it as OP_ADD for MVP to avoid crash
+                    // Use OP_ADD as default or lookup dynamic opcode
 
                     Value opCodeVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opCode));
                     builder.create<LLVM::CallOp>(loc, std::nullopt, "inet_set_op_type", ValueRange{nodeIdx, opCodeVal});

@@ -450,8 +450,81 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         });
 
         // Generate the Redex Loop (Rules 1-3)
-        // For MVP, we use a basic while loop that pops from our allocated queue
-        // A full implementation requires thread pooling and cmpxchg atomic swaps.
+        if (!enableGPU) {
+            // Allocate worker args array (5 void pointers: netPtr, queuePtr, headPtr, tailPtr, allocPtr)
+            Value argArraySize = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(5 * 8));
+            auto argMalloc = builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{ptrType}, "malloc", ValueRange{argArraySize});
+            Value argArray = argMalloc.getResult();
+
+            Value allocCount64 = builder.create<LLVM::ZExtOp>(funcOp.getLoc(), i64Type, allocCount);
+            Value queueOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4));
+            Value headOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4 + 1000000 * 2));
+            Value tailOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4 + 1000000 * 2 + 2));
+            Value allocOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4 + 1000000 * 2 + 4));
+
+            Value wQueuePtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{queueOffset});
+            Value wHeadPtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{headOffset});
+            Value wTailPtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{tailOffset});
+            Value wAllocPtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{allocOffset});
+
+            Value zero64 = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(0));
+            builder.create<LLVM::StoreOp>(funcOp.getLoc(), zero64, wHeadPtr);
+            builder.create<LLVM::StoreOp>(funcOp.getLoc(), zero64, wTailPtr);
+            builder.create<LLVM::StoreOp>(funcOp.getLoc(), allocCount64, wAllocPtr);
+
+            auto storeArg = [&](int index, Value val) {
+                Value idxConst = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(index));
+                Value gep = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, ptrType, argArray, ValueRange{idxConst});
+                builder.create<LLVM::StoreOp>(funcOp.getLoc(), val, gep);
+            };
+            storeArg(0, netPtr);
+            storeArg(1, wQueuePtr);
+            storeArg(2, wHeadPtr);
+            storeArg(3, wTailPtr);
+            storeArg(4, wAllocPtr);
+
+            Value numThreads = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(4));
+            Value threadSize = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(8));
+            Value totalThreadSize = builder.create<LLVM::MulOp>(funcOp.getLoc(), numThreads, threadSize);
+            auto threadMalloc = builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{ptrType}, "malloc", ValueRange{totalThreadSize});
+            Value threadArray = threadMalloc.getResult();
+
+            auto voidType = LLVM::LLVMVoidType::get(builder.getContext());
+
+            // Instead of doing actual loops that break CFG, for MVP let's just emit simple flat calls to demonstrate.
+            // 4x pthread_create
+            // 4x pthread_join
+
+            auto emitThread = [&](int tid) {
+                Value threadIdx = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(tid));
+                Value threadGep = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i64Type, threadArray, ValueRange{threadIdx});
+                Value nullAttr = builder.create<LLVM::IntToPtrOp>(funcOp.getLoc(), ptrType, builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(0)));
+                auto funcSym = mlir::SymbolRefAttr::get(builder.getContext(), "worker_thread");
+                Value workerFuncAddr = builder.create<LLVM::AddressOfOp>(funcOp.getLoc(), ptrType, funcSym);
+                builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{i32Type}, "pthread_create", ValueRange{threadGep, nullAttr, workerFuncAddr, argArray});
+            };
+
+            auto emitJoin = [&](int tid) {
+                Value threadIdx = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(tid));
+                Value threadGep = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i64Type, threadArray, ValueRange{threadIdx});
+                Value threadId = builder.create<LLVM::LoadOp>(funcOp.getLoc(), i64Type, threadGep);
+                Value nullAttr = builder.create<LLVM::IntToPtrOp>(funcOp.getLoc(), ptrType, builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(0)));
+                builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{i32Type}, "pthread_join", ValueRange{threadId, nullAttr});
+            };
+
+            emitThread(0);
+            emitThread(1);
+            emitThread(2);
+            emitThread(3);
+
+            emitJoin(0);
+            emitJoin(1);
+            emitJoin(2);
+            emitJoin(3);
+
+            builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{voidType}, "free", ValueRange{threadArray});
+            builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{voidType}, "free", ValueRange{argArray});
+        }
 
         if (enableGPU) {
             auto indexType = builder.getIndexType();
