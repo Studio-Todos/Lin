@@ -252,6 +252,25 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         for (int i = 0; i < expr->as.block.count; i++) {
             lastVal = lowerExpression(ctx, block, loc, expr->as.block.statements[i], env);
         }
+
+        if (mlirValueIsNull(lastVal)) {
+            MlirOperationState fallbackState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+            MlirAttribute typeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("epsilon"));
+            MlirNamedAttribute typeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), typeAttr);
+            MlirAttribute polAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("*"));
+            MlirNamedAttribute polNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), polAttr);
+            MlirAttribute labelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("era"));
+            MlirNamedAttribute labelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), labelAttr);
+            MlirNamedAttribute attrs[] = {typeNamedAttr, polNamedAttr, labelNamedAttr};
+            mlirOperationStateAddAttributes(&fallbackState, 3, attrs);
+            MlirType fbPortType = getPicPortType(ctx);
+            MlirType types[] = {fbPortType, fbPortType, fbPortType};
+            mlirOperationStateAddResults(&fallbackState, 3, types);
+            MlirOperation fbOp = mlirOperationCreate(&fallbackState);
+            mlirBlockAppendOwnedOperation(block, fbOp);
+            lastVal = mlirOperationGetResult(fbOp, 0);
+        }
+
         return lastVal;
     }
 
