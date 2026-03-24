@@ -41,25 +41,34 @@ using namespace mlir;
 
 #include <fstream>
 #include <sstream>
+#include <filesystem>
+#include <vector>
 
 int main(int argc, char **argv) {
-  if (argc < 3 || (std::string(argv[1]) != "build" && std::string(argv[1]) != "test")) {
-      std::cerr << "Usage: linc <build|test> <source_file.lin> [-o output_binary]\n";
-      return 1;
-  }
-
-  std::string command = argv[1];
-  std::string sourceFile = argv[2];
+  std::string command = "";
+  std::string sourceFile = "";
   std::string outputBinary = "linc_out";
   bool enableGPU = false;
+  std::vector<std::string> includePaths;
 
-  for (int i = 3; i < argc; ++i) {
-      if (std::string(argv[i]) == "-o" && i + 1 < argc) {
-          outputBinary = argv[i + 1];
-          i++;
-      } else if (std::string(argv[i]) == "--gpu" || std::string(argv[i]) == "-gpu") {
+  for (int i = 1; i < argc; ++i) {
+      std::string arg = argv[i];
+      if (arg == "build" || arg == "test") {
+          command = arg;
+      } else if (arg == "-o" && i + 1 < argc) {
+          outputBinary = argv[++i];
+      } else if (arg == "-I" && i + 1 < argc) {
+          includePaths.push_back(argv[++i]);
+      } else if (arg == "--gpu" || arg == "-gpu") {
           enableGPU = true;
+      } else if (sourceFile.empty()) {
+          sourceFile = arg;
       }
+  }
+
+  if (command.empty() || sourceFile.empty()) {
+      std::cerr << "Usage: linc <build|test> <source_file.lin> [-o output_binary] [-I include_path]\n";
+      return 1;
   }
 
   std::ifstream file(sourceFile);
@@ -78,6 +87,21 @@ int main(int argc, char **argv) {
   if (ast) {
       // Find imports and recursively resolve them into a flat AST block list
       if (ast->type == AST_BLOCK) {
+          // Construct search paths once
+          std::vector<std::string> searchPaths;
+          searchPaths.push_back("."); // Current working directory
+
+          // Add source file directory
+          std::filesystem::path srcPath(sourceFile);
+          if (srcPath.has_parent_path()) {
+              searchPaths.push_back(srcPath.parent_path().string());
+          }
+
+          // Add user-provided include paths
+          for (const auto& path : includePaths) {
+              searchPaths.push_back(path);
+          }
+
           // We will build a completely new array of statements by appending everything in order.
           int total_count = 0;
           int capacity = 16;
@@ -87,12 +111,11 @@ int main(int argc, char **argv) {
               if (ast->as.block.statements[i]->type == AST_IMPORT) {
                   std::string importPath = std::string(ast->as.block.statements[i]->as.import_stmt.path, ast->as.block.statements[i]->as.import_stmt.length);
 
-                  std::ifstream importFile(importPath);
-                  if (!importFile.is_open()) {
-                      importFile.open("../../" + importPath); // Hack to allow tests to run correctly from build/test
-                  }
-                  if (!importFile.is_open()) {
-                      importFile.open("../" + importPath);
+                  std::ifstream importFile;
+                  for (const auto& base : searchPaths) {
+                      std::filesystem::path fullPath = std::filesystem::path(base) / importPath;
+                      importFile.open(fullPath);
+                      if (importFile.is_open()) break;
                   }
 
                   if (importFile.is_open()) {
