@@ -182,133 +182,141 @@ static AstNode* createNode(AstNodeType type) {
     return node;
 }
 
-static AstNode* parsePrimary(Parser *parser) {
-    if (parser->current.type == TOKEN_NUMBER) {
-        AstNode *node = createNode(AST_NUMBER);
-        node->as.number.value = atoi(parser->current.start);
-        parserAdvance(parser);
-        return node;
+static AstNode* parseNumberExpr(Parser *parser) {
+    AstNode *node = createNode(AST_NUMBER);
+    node->as.number.value = atoi(parser->current.start);
+    parserAdvance(parser);
+    return node;
+}
+
+static AstNode* parseStringExpr(Parser *parser) {
+    AstNode *node = createNode(AST_STRING);
+    node->as.string.value = parser->current.start + 1;
+    node->as.string.length = parser->current.length - 2;
+    parserAdvance(parser);
+    return node;
+}
+
+static AstNode* parseImportExpr(Parser *parser) {
+    parserAdvance(parser);
+    consume(parser, TOKEN_STRING, "Expect string path after 'import'.");
+    AstNode *node = createNode(AST_IMPORT);
+    node->as.import_stmt.path = parser->previous.start + 1;
+    node->as.import_stmt.length = parser->previous.length - 2;
+    node->as.import_stmt.module_block = NULL;
+    return node;
+}
+
+static AstNode* parseIdentifierExpr(Parser *parser) {
+    Token ident = parser->current;
+    parserAdvance(parser);
+
+    // Check for variable assignment: `word: value`
+    if (parser->current.type == TOKEN_COLON) {
+        const char* next_word = parser->lexer.current;
+        while (*next_word == ' ' || *next_word == '\n' || *next_word == '\t' || *next_word == '\r') next_word++;
+
+        bool is_func = (strncmp(next_word, "func", 4) == 0);
+        bool is_mlir_op = (strncmp(next_word, "mlir-op", 7) == 0);
+
+        if (is_mlir_op) {
+            parserAdvance(parser); // consume colon
+            consume(parser, TOKEN_MLIR_OP, "Expect 'mlir-op'.");
+
+            Token inputs_outputs_start = parser->current;
+            consume(parser, TOKEN_LBRACKET, "Expect '[' for mlir-op interface.");
+            int bracket_count = 1;
+            while (bracket_count > 0 && parser->current.type != TOKEN_EOF) {
+                if (parser->current.type == TOKEN_LBRACKET) bracket_count++;
+                else if (parser->current.type == TOKEN_RBRACKET) bracket_count--;
+                parserAdvance(parser);
+            }
+            Token inputs_outputs_end = parser->previous;
+
+            Token payload_start = parser->current;
+            consume(parser, TOKEN_LBRACE, "Expect '{' for mlir-op payload.");
+            int brace_count = 1;
+            while (brace_count > 0 && parser->current.type != TOKEN_EOF) {
+                if (parser->current.type == TOKEN_LBRACE) brace_count++;
+                else if (parser->current.type == TOKEN_RBRACE) brace_count--;
+                parserAdvance(parser);
+            }
+            Token payload_end = parser->previous;
+
+            AstNode *node = createNode(AST_MLIR_OP);
+            node->as.mlir_op.name = ident.start;
+            node->as.mlir_op.name_len = ident.length;
+            node->as.mlir_op.inputs = inputs_outputs_start.start;
+            node->as.mlir_op.inputs_len = (int)(inputs_outputs_end.start + inputs_outputs_end.length - inputs_outputs_start.start);
+            node->as.mlir_op.mlir_payload = payload_start.start + 1; // Skip `{`
+            node->as.mlir_op.payload_len = (int)(payload_end.start - payload_start.start - 1); // Skip `{` and `}`
+
+            while (node->as.mlir_op.payload_len > 0 && (*node->as.mlir_op.mlir_payload == '\n' || *node->as.mlir_op.mlir_payload == '\r')) {
+                node->as.mlir_op.mlir_payload++;
+                node->as.mlir_op.payload_len--;
+            }
+
+            return node;
+        } else if (!is_func) {
+            parserAdvance(parser); // consume colon
+            AstNode *node = createNode(AST_ASSIGNMENT);
+            node->as.assignment.name = ident.start;
+            node->as.assignment.name_len = ident.length;
+            node->as.assignment.value = parseExpression(parser);
+            return node;
+        }
     }
 
-    if (parser->current.type == TOKEN_STRING) {
-        AstNode *node = createNode(AST_STRING);
-        node->as.string.value = parser->current.start + 1;
-        node->as.string.length = parser->current.length - 2;
-        parserAdvance(parser);
-        return node;
-    }
+    AstNode *node = createNode(AST_IDENTIFIER);
+    node->as.identifier.name = ident.start;
+    node->as.identifier.length = ident.length;
+    return node;
+}
 
-    if (parser->current.type == TOKEN_IMPORT) {
-        parserAdvance(parser);
-        consume(parser, TOKEN_STRING, "Expect string path after 'import'.");
-        AstNode *node = createNode(AST_IMPORT);
-        node->as.import_stmt.path = parser->previous.start + 1;
-        node->as.import_stmt.length = parser->previous.length - 2;
-        node->as.import_stmt.module_block = NULL;
-        return node;
-    }
-
+static AstNode* parseGroupingExpr(Parser *parser) {
+    parserAdvance(parser);
     if (parser->current.type == TOKEN_IDENTIFIER) {
-        Token ident = parser->current;
+        AstNode *call = createNode(AST_CALL);
+        call->as.call.callee = parser->current.start;
+        call->as.call.callee_len = parser->current.length;
         parserAdvance(parser);
 
-        // Check for variable assignment: `word: value`
-        if (parser->current.type == TOKEN_COLON) {
-            const char* next_word = parser->lexer.current;
-            while (*next_word == ' ' || *next_word == '\n' || *next_word == '\t' || *next_word == '\r') next_word++;
-
-            bool is_func = (strncmp(next_word, "func", 4) == 0);
-            bool is_mlir_op = (strncmp(next_word, "mlir-op", 7) == 0);
-
-            if (is_mlir_op) {
-                parserAdvance(parser); // consume colon
-                consume(parser, TOKEN_MLIR_OP, "Expect 'mlir-op'.");
-
-                Token inputs_outputs_start = parser->current;
-                consume(parser, TOKEN_LBRACKET, "Expect '[' for mlir-op interface.");
-                int bracket_count = 1;
-                while (bracket_count > 0 && parser->current.type != TOKEN_EOF) {
-                    if (parser->current.type == TOKEN_LBRACKET) bracket_count++;
-                    else if (parser->current.type == TOKEN_RBRACKET) bracket_count--;
-                    parserAdvance(parser);
+        call->as.call.args = NULL;
+        call->as.call.arg_count = 0;
+        call->as.call.capacity = 0;
+        while (parser->current.type != TOKEN_RPAREN && parser->current.type != TOKEN_EOF) {
+            AstNode *arg = parseExpression(parser);
+            if (call->as.call.arg_count >= call->as.call.capacity) {
+                call->as.call.capacity = call->as.call.capacity < 8 ? 8 : call->as.call.capacity * 2;
+                void *tmp = realloc(call->as.call.args, sizeof(AstNode*) * call->as.call.capacity);
+                if (!tmp) {
+                    fprintf(stderr, "Out of memory\n");
+                    exit(1);
                 }
-                Token inputs_outputs_end = parser->previous;
-
-                Token payload_start = parser->current;
-                consume(parser, TOKEN_LBRACE, "Expect '{' for mlir-op payload.");
-                int brace_count = 1;
-                while (brace_count > 0 && parser->current.type != TOKEN_EOF) {
-                    if (parser->current.type == TOKEN_LBRACE) brace_count++;
-                    else if (parser->current.type == TOKEN_RBRACE) brace_count--;
-                    parserAdvance(parser);
-                }
-                Token payload_end = parser->previous;
-
-                AstNode *node = createNode(AST_MLIR_OP);
-                node->as.mlir_op.name = ident.start;
-                node->as.mlir_op.name_len = ident.length;
-                node->as.mlir_op.inputs = inputs_outputs_start.start;
-                node->as.mlir_op.inputs_len = (int)(inputs_outputs_end.start + inputs_outputs_end.length - inputs_outputs_start.start);
-                node->as.mlir_op.mlir_payload = payload_start.start + 1; // Skip `{`
-                node->as.mlir_op.payload_len = (int)(payload_end.start - payload_start.start - 1); // Skip `{` and `}`
-
-                while (node->as.mlir_op.payload_len > 0 && (*node->as.mlir_op.mlir_payload == '\n' || *node->as.mlir_op.mlir_payload == '\r')) {
-                    node->as.mlir_op.mlir_payload++;
-                    node->as.mlir_op.payload_len--;
-                }
-
-                return node;
-            } else if (!is_func) {
-                parserAdvance(parser); // consume colon
-                AstNode *node = createNode(AST_ASSIGNMENT);
-                node->as.assignment.name = ident.start;
-                node->as.assignment.name_len = ident.length;
-                node->as.assignment.value = parseExpression(parser);
-                return node;
+                call->as.call.args = (AstNode**)tmp;
             }
+            call->as.call.args[call->as.call.arg_count++] = arg;
         }
-
-        AstNode *node = createNode(AST_IDENTIFIER);
-        node->as.identifier.name = ident.start;
-        node->as.identifier.length = ident.length;
-        return node;
+        consume(parser, TOKEN_RPAREN, "Expect ')' after arguments.");
+        return call;
+    } else {
+        AstNode *expr = parseExpression(parser);
+        consume(parser, TOKEN_RPAREN, "Expect ')' after expression.");
+        return expr;
     }
+}
 
-    if (parser->current.type == TOKEN_LPAREN) {
-        parserAdvance(parser);
-        if (parser->current.type == TOKEN_IDENTIFIER) {
-            AstNode *call = createNode(AST_CALL);
-            call->as.call.callee = parser->current.start;
-            call->as.call.callee_len = parser->current.length;
-            parserAdvance(parser);
-
-            call->as.call.args = NULL;
-            call->as.call.arg_count = 0;
-            call->as.call.capacity = 0;
-            while (parser->current.type != TOKEN_RPAREN && parser->current.type != TOKEN_EOF) {
-                AstNode *arg = parseExpression(parser);
-                if (call->as.call.arg_count >= call->as.call.capacity) {
-                    call->as.call.capacity = call->as.call.capacity < 8 ? 8 : call->as.call.capacity * 2;
-                    void *tmp = realloc(call->as.call.args, sizeof(AstNode*) * call->as.call.capacity);
-                    if (!tmp) {
-                        fprintf(stderr, "Out of memory\n");
-                        exit(1);
-                    }
-                    call->as.call.args = (AstNode**)tmp;
-                }
-                call->as.call.args[call->as.call.arg_count++] = arg;
-            }
-            consume(parser, TOKEN_RPAREN, "Expect ')' after arguments.");
-            return call;
-        } else {
-            AstNode *expr = parseExpression(parser);
-            consume(parser, TOKEN_RPAREN, "Expect ')' after expression.");
-            return expr;
-        }
+static AstNode* parsePrimary(Parser *parser) {
+    switch (parser->current.type) {
+        case TOKEN_NUMBER:     return parseNumberExpr(parser);
+        case TOKEN_STRING:     return parseStringExpr(parser);
+        case TOKEN_IMPORT:     return parseImportExpr(parser);
+        case TOKEN_IDENTIFIER: return parseIdentifierExpr(parser);
+        case TOKEN_LPAREN:     return parseGroupingExpr(parser);
+        default:
+            error(parser, "Expect expression.");
+            return NULL;
     }
-
-    error(parser, "Expect expression.");
-    return NULL;
 }
 
 static AstNode* parseExpression(Parser *parser) {
