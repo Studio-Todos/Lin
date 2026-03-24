@@ -12,4 +12,5 @@ config.test_source_root = os.path.dirname(__file__)
 config.test_exec_root = os.path.join(config.test_source_root, '..', 'build', 'test')
 
 # Let lit know about the linc compiler binary
-config.substitutions.append(('%linc', os.path.join(config.test_source_root, '..', 'build', 'src', 'linc')))
+project_root = os.path.abspath(os.path.join(config.test_source_root, '..'))
+config.substitutions.append(('%linc', os.path.join(config.test_source_root, '..', 'build', 'src', 'linc') + " -I " + project_root))
