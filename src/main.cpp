@@ -1,5 +1,7 @@
 #include <iostream>
 #include <memory>
+#include <cstring>
+#include <cstdlib>
 
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -104,25 +106,24 @@ int main(int argc, char **argv) {
 
                       if (importAst && importAst->type == AST_BLOCK) {
                           ast->as.block.statements[i]->as.import_stmt.module_block = importAst;
-                          for (int j = 0; j < importAst->as.block.count; j++) {
-                              if (total_count >= capacity) {
-                                  capacity *= 2;
-                                  AstNode **temp = static_cast<AstNode**>(realloc(new_stmts, sizeof(AstNode*) * capacity));
-                                  if (!temp) {
-                                      free(new_stmts);
-                                      return 1;
-                                  }
-                                  new_stmts = temp;
+                          int import_count = importAst->as.block.count;
+                          if (total_count + import_count > capacity) {
+                              while (total_count + import_count > capacity) capacity *= 2;
+                              AstNode **temp = static_cast<AstNode**>(realloc(new_stmts, sizeof(AstNode*) * capacity));
+                              if (!temp) {
+                                  free(new_stmts);
+                                  return 1;
                               }
-                              new_stmts[total_count++] = importAst->as.block.statements[j];
+                              new_stmts = temp;
                           }
+                          memcpy(new_stmts + total_count, importAst->as.block.statements, sizeof(AstNode*) * import_count);
+                          total_count += import_count;
                       }
                   } else {
                       std::cerr << "Failed to import file: " << importPath << "\n";
                   }
-              }
-              // Add the original statement itself if it is not an import statement
-              if (ast->as.block.statements[i]->type != AST_IMPORT) {
+              } else {
+                  // Add the original statement itself if it is not an import statement
                   if (total_count >= capacity) {
                       capacity *= 2;
                       AstNode **temp = static_cast<AstNode**>(realloc(new_stmts, sizeof(AstNode*) * capacity));
