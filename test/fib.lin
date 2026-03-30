@@ -22,9 +22,9 @@ fib: func [
     n [i32!]
     return: [i32!]
 ][
-    either (lt n 2) [
+    either n < 2 [
         n
     ][
-        (add (fib (sub n 1)) (fib (sub n 2)))
+        (fib n - 1) + (fib n - 2)
     ]
 ]

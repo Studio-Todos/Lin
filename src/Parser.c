@@ -95,7 +95,10 @@ static Token string(Lexer *lexer) {
 }
 
 static Token identifier(Lexer *lexer) {
-    while (isalpha(peek(lexer)) || isdigit(peek(lexer)) || peek(lexer) == '_' || peek(lexer) == '-') advance(lexer);
+    while (isalpha(peek(lexer)) || isdigit(peek(lexer)) || peek(lexer) == '_' ||
+           (peek(lexer) == '-' && isalpha(peekNext(lexer)))) {
+        advance(lexer);
+    }
     return makeToken(lexer, identifierType(lexer));
 }
 
@@ -125,6 +128,9 @@ Token scanToken(Lexer *lexer) {
         case '!': return makeToken(lexer, TOKEN_BANG);
         case '{': return makeToken(lexer, TOKEN_LBRACE);
         case '}': return makeToken(lexer, TOKEN_RBRACE);
+        case '<': return makeToken(lexer, TOKEN_LESS);
+        case '+': return makeToken(lexer, TOKEN_PLUS);
+        case '-': return makeToken(lexer, TOKEN_MINUS);
         case '%': return makeToken(lexer, TOKEN_IDENTIFIER);
         case '=': return makeToken(lexer, TOKEN_IDENTIFIER);
         case '.': return makeToken(lexer, TOKEN_IDENTIFIER);
@@ -320,7 +326,20 @@ static AstNode* parsePrimary(Parser *parser) {
 }
 
 static AstNode* parseExpression(Parser *parser) {
-    return parsePrimary(parser);
+    AstNode *expr = parsePrimary(parser);
+
+    while (parser->current.type == TOKEN_LESS || parser->current.type == TOKEN_PLUS || parser->current.type == TOKEN_MINUS) {
+        TokenType op = parser->current.type;
+        parserAdvance(parser);
+        AstNode *right = parsePrimary(parser);
+        AstNode *binary = createNode(AST_BINARY);
+        binary->as.binary.left = expr;
+        binary->as.binary.op = op;
+        binary->as.binary.right = right;
+        expr = binary;
+    }
+
+    return expr;
 }
 
 static AstNode* parseBlock(Parser *parser) {
