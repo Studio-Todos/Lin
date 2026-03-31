@@ -182,21 +182,27 @@ static void consume(Parser *parser, TokenType type, const char *message) {
 static AstNode* parseExpression(Parser *parser);
 static AstNode* parseStatement(Parser *parser);
 
-static AstNode* createNode(AstNodeType type) {
+static AstNode* createNode(Parser *parser, AstNodeType type) {
     AstNode *node = (AstNode*)malloc(sizeof(AstNode));
+    if (!node) {
+        error(parser, "Out of memory");
+        return NULL;
+    }
     node->type = type;
     return node;
 }
 
 static AstNode* parseNumberExpr(Parser *parser) {
-    AstNode *node = createNode(AST_NUMBER);
+    AstNode *node = createNode(parser, AST_NUMBER);
+    if (!node) return NULL;
     node->as.number.value = atoi(parser->current.start);
     parserAdvance(parser);
     return node;
 }
 
 static AstNode* parseStringExpr(Parser *parser) {
-    AstNode *node = createNode(AST_STRING);
+    AstNode *node = createNode(parser, AST_STRING);
+    if (!node) return NULL;
     node->as.string.value = parser->current.start + 1;
     node->as.string.length = parser->current.length - 2;
     parserAdvance(parser);
@@ -206,7 +212,8 @@ static AstNode* parseStringExpr(Parser *parser) {
 static AstNode* parseImportExpr(Parser *parser) {
     parserAdvance(parser);
     consume(parser, TOKEN_STRING, "Expect string path after 'import'.");
-    AstNode *node = createNode(AST_IMPORT);
+    AstNode *node = createNode(parser, AST_IMPORT);
+    if (!node) return NULL;
     node->as.import_stmt.path = parser->previous.start + 1;
     node->as.import_stmt.length = parser->previous.length - 2;
     node->as.import_stmt.module_block = NULL;
@@ -249,7 +256,8 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
             }
             Token payload_end = parser->previous;
 
-            AstNode *node = createNode(AST_MLIR_OP);
+            AstNode *node = createNode(parser, AST_MLIR_OP);
+            if (!node) return NULL;
             node->as.mlir_op.name = ident.start;
             node->as.mlir_op.name_len = ident.length;
             node->as.mlir_op.inputs = inputs_outputs_start.start;
@@ -265,7 +273,8 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
             return node;
         } else if (!is_func) {
             parserAdvance(parser); // consume colon
-            AstNode *node = createNode(AST_ASSIGNMENT);
+            AstNode *node = createNode(parser, AST_ASSIGNMENT);
+            if (!node) return NULL;
             node->as.assignment.name = ident.start;
             node->as.assignment.name_len = ident.length;
             node->as.assignment.value = parseExpression(parser);
@@ -273,7 +282,8 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
         }
     }
 
-    AstNode *node = createNode(AST_IDENTIFIER);
+    AstNode *node = createNode(parser, AST_IDENTIFIER);
+    if (!node) return NULL;
     node->as.identifier.name = ident.start;
     node->as.identifier.length = ident.length;
     return node;
@@ -282,7 +292,8 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
 static AstNode* parseGroupingExpr(Parser *parser) {
     parserAdvance(parser);
     if (parser->current.type == TOKEN_IDENTIFIER) {
-        AstNode *call = createNode(AST_CALL);
+        AstNode *call = createNode(parser, AST_CALL);
+        if (!call) return NULL;
         call->as.call.callee = parser->current.start;
         call->as.call.callee_len = parser->current.length;
         parserAdvance(parser);
@@ -296,8 +307,9 @@ static AstNode* parseGroupingExpr(Parser *parser) {
                 call->as.call.capacity = call->as.call.capacity < 8 ? 8 : call->as.call.capacity * 2;
                 void *tmp = realloc(call->as.call.args, sizeof(AstNode*) * call->as.call.capacity);
                 if (!tmp) {
-                    fprintf(stderr, "Out of memory\n");
-                    exit(1);
+                    error(parser, "Out of memory");
+                    freeAst(call);
+                    return NULL;
                 }
                 call->as.call.args = (AstNode**)tmp;
             }
@@ -344,7 +356,8 @@ static AstNode* parseExpression(Parser *parser) {
 
 static AstNode* parseBlock(Parser *parser) {
     consume(parser, TOKEN_LBRACKET, "Expect '[' before block.");
-    AstNode *block = createNode(AST_BLOCK);
+    AstNode *block = createNode(parser, AST_BLOCK);
+    if (!block) return NULL;
     block->as.block.statements = NULL;
     block->as.block.count = 0;
     block->as.block.capacity = 0;
@@ -355,8 +368,9 @@ static AstNode* parseBlock(Parser *parser) {
             block->as.block.capacity = block->as.block.capacity < 8 ? 8 : block->as.block.capacity * 2;
             void *tmp = realloc(block->as.block.statements, sizeof(AstNode*) * block->as.block.capacity);
             if (!tmp) {
-                fprintf(stderr, "Out of memory\n");
-                exit(1);
+                error(parser, "Out of memory");
+                freeAst(block);
+                return NULL;
             }
             block->as.block.statements = (AstNode**)tmp;
         }
@@ -370,7 +384,8 @@ static AstNode* parseBlock(Parser *parser) {
 static AstNode* parseStatement(Parser *parser) {
     if (parser->current.type == TOKEN_EITHER) {
         parserAdvance(parser);
-        AstNode *either = createNode(AST_EITHER);
+        AstNode *either = createNode(parser, AST_EITHER);
+        if (!either) return NULL;
         either->as.either.condition = parseExpression(parser);
         either->as.either.true_branch = parseBlock(parser);
         either->as.either.false_branch = parseBlock(parser);
@@ -389,6 +404,10 @@ static AstNode* parseFuncDecl(Parser *parser) {
     int arg_capacity = 4;
     int arg_count = 0;
     struct AstFuncArg *args = malloc(sizeof(*args) * arg_capacity);
+    if (!args) {
+        error(parser, "Out of memory");
+        return NULL;
+    }
 
     while (parser->current.type != TOKEN_RETURN && parser->current.type != TOKEN_EOF) {
         Token argName = parser->current;
@@ -409,8 +428,9 @@ static AstNode* parseFuncDecl(Parser *parser) {
             arg_capacity *= 2;
             void *tmp = realloc(args, sizeof(*args) * arg_capacity);
             if (!tmp) {
-                fprintf(stderr, "Out of memory\n");
-                exit(1);
+                error(parser, "Out of memory");
+                free(args);
+                return NULL;
             }
             args = tmp;
         }
@@ -437,7 +457,11 @@ static AstNode* parseFuncDecl(Parser *parser) {
 
     AstNode *body = parseBlock(parser);
 
-    AstNode *func = createNode(AST_FUNC_DECL);
+    AstNode *func = createNode(parser, AST_FUNC_DECL);
+    if (!func) {
+        free(args);
+        return NULL;
+    }
     func->as.func_decl.name = name.start;
     func->as.func_decl.name_len = name.length;
     func->as.func_decl.args = args;
@@ -480,7 +504,8 @@ AstNode* parse(const char *source) {
     parser.current = makeToken(&parser.lexer, TOKEN_EOF);
     parserAdvance(&parser);
 
-    AstNode *block = createNode(AST_BLOCK);
+    AstNode *block = createNode(&parser, AST_BLOCK);
+    if (!block) return NULL;
     block->as.block.statements = NULL;
     block->as.block.count = 0;
     block->as.block.capacity = 0;
@@ -500,8 +525,9 @@ AstNode* parse(const char *source) {
                       block->as.block.capacity = block->as.block.capacity < 8 ? 8 : block->as.block.capacity * 2;
                       void *tmp = realloc(block->as.block.statements, sizeof(AstNode*) * block->as.block.capacity);
                       if (!tmp) {
-                          fprintf(stderr, "Out of memory\n");
-                          exit(1);
+                          error(&parser, "Out of memory");
+                          freeAst(block);
+                          return NULL;
                       }
                       block->as.block.statements = (AstNode**)tmp;
                   }
@@ -522,8 +548,9 @@ AstNode* parse(const char *source) {
                  block->as.block.capacity = block->as.block.capacity < 8 ? 8 : block->as.block.capacity * 2;
                  void *tmp = realloc(block->as.block.statements, sizeof(AstNode*) * block->as.block.capacity);
                  if (!tmp) {
-                     fprintf(stderr, "Out of memory\n");
-                     exit(1);
+                     error(&parser, "Out of memory");
+                     freeAst(block);
+                     return NULL;
                  }
                  block->as.block.statements = (AstNode**)tmp;
              }
