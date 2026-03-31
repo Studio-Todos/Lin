@@ -344,7 +344,7 @@ static AstNode* parseExpression(Parser *parser) {
         TokenType op = parser->current.type;
         parserAdvance(parser);
         AstNode *right = parsePrimary(parser);
-        AstNode *binary = createNode(AST_BINARY);
+        AstNode *binary = createNode(parser, AST_BINARY);
         binary->as.binary.left = expr;
         binary->as.binary.op = op;
         binary->as.binary.right = right;
