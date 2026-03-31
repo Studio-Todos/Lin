@@ -1,0 +1,12 @@
+// RUN: %parser_test | FileCheck %s
+
+// CHECK: test_number passed
+// CHECK: test_string passed
+// CHECK: test_identifier passed
+// CHECK: test_assignment passed
+// CHECK: test_call passed
+// CHECK: test_either passed
+// CHECK: test_func_decl passed
+// CHECK: test_mlir_op passed
+// CHECK: test_import passed
+// CHECK: All parser tests passed!
