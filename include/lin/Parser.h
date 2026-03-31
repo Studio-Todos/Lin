@@ -15,6 +15,9 @@ typedef enum {
     TOKEN_RPAREN,       // )
     TOKEN_BANG,         // !
     TOKEN_STRING,       // "..."
+    TOKEN_LESS,         // <
+    TOKEN_PLUS,         // +
+    TOKEN_MINUS,        // -
     // Keywords
     TOKEN_FUNC,
     TOKEN_RETURN,

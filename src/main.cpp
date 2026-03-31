@@ -45,6 +45,8 @@ using namespace mlir;
 #include <sstream>
 #include <filesystem>
 #include <vector>
+#include <sys/wait.h>
+#include <unistd.h>
 
 int main(int argc, char **argv) {
   std::string command = "";
@@ -266,27 +268,46 @@ int main(int argc, char **argv) {
 
       std::cout << "Successfully emitted object file to " << objFile << "\n";
 
-      // Link the object file into a binary (linking against libc is standard)
-      std::cout << "Linking into binary '" << outputBinary << "'...\n";
+      if (command == "build") {
+          // Link the object file into a binary (linking against libc is standard)
+          std::cout << "Linking into binary '" << outputBinary << "'...\n";
 
-      std::string linkCmd = "gcc " + objFile + " -o " + outputBinary;
-      int res = system(linkCmd.c_str());
-      if (WIFEXITED(res) && WEXITSTATUS(res) != 0) {
-          std::cerr << "Linking failed. Result code: " << WEXITSTATUS(res) << "\n";
-          return 1;
-      } else if (WIFSIGNALED(res)) {
-          // Sometimes NixOS/sandbox wrapper scripts or certain glibc variants
-          // throw a harmless segfault signal at the very end of process exit.
-          // If the output file was created and is executable, we consider it a success.
-          if (llvm::sys::fs::exists(outputBinary)) {
-             std::cerr << "Warning: Linker terminated by signal " << WTERMSIG(res) << ", but output binary was created successfully.\n";
+          pid_t pid = fork();
+          if (pid == -1) {
+              std::cerr << "Failed to fork process for linking.\n";
+              return 1;
+          } else if (pid == 0) {
+              std::vector<char*> args;
+              args.push_back(const_cast<char*>("gcc"));
+              args.push_back(const_cast<char*>(objFile.c_str()));
+              args.push_back(const_cast<char*>("-o"));
+              args.push_back(const_cast<char*>(outputBinary.c_str()));
+              args.push_back(nullptr);
+
+              execvp("gcc", args.data());
+              perror("execvp failed");
+              exit(1);
           } else {
-             std::cerr << "Linking failed. Terminated by signal: " << WTERMSIG(res) << "\n";
-             return 1;
+              int status;
+              waitpid(pid, &status, 0);
+              if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+                  std::cerr << "Linking failed. Result code: " << WEXITSTATUS(status) << "\n";
+                  return 1;
+              } else if (WIFSIGNALED(status)) {
+                  // Sometimes NixOS/sandbox wrapper scripts or certain glibc variants
+                  // throw a harmless segfault signal at the very end of process exit.
+                  // If the output file was created and is executable, we consider it a success.
+                  if (llvm::sys::fs::exists(outputBinary)) {
+                     std::cerr << "Warning: Linker terminated by signal " << WTERMSIG(status) << ", but output binary was created successfully.\n";
+                  } else {
+                     std::cerr << "Linking failed. Terminated by signal: " << WTERMSIG(status) << "\n";
+                     return 1;
+                  }
+              }
           }
-      }
 
-      std::cout << "Successfully compiled and linked to '" << outputBinary << "'.\n";
+          std::cout << "Successfully compiled and linked to '" << outputBinary << "'.\n";
+      }
 
       freeAst(ast);
   }
