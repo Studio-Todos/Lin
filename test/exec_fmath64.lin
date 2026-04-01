@@ -1,0 +1,24 @@
+// RUN: %linc build %s -o %t && %t
+// RUN: %linc build %s --gpu -o %t_gpu && %t_gpu
+
+import "std/math.lin"
+
+test_fmath64_impl: func [
+    a [f64!]
+    b [f64!]
+    return: [f64!]
+][
+    (fadd64 a b)
+    (fsub64 a b)
+    (fmul64 a b)
+    (fdiv64 a b)
+    (frem64 a b)
+    a
+]
+
+test_fmath64: func [
+    argc [i32!]
+    return: [i32!]
+][
+    0
+]

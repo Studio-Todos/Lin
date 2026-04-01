@@ -1,0 +1,24 @@
+// RUN: %linc build %s -o %t && %t
+// RUN: %linc build %s --gpu -o %t_gpu && %t_gpu
+
+import "std/math.lin"
+
+test_fmath_impl: func [
+    a [f32!]
+    b [f32!]
+    return: [f32!]
+][
+    (fadd a b)
+    (fsub a b)
+    (fmul a b)
+    (fdiv a b)
+    (frem a b)
+    a
+]
+
+test_fmath: func [
+    argc [i32!]
+    return: [i32!]
+][
+    0
+]
