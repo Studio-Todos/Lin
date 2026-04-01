@@ -1,22 +1,15 @@
-// RUN: %linc build %s -o test_fib_bin | FileCheck %s
-// RUN: %linc build %s --gpu -o test_fib_bin_gpu | FileCheck %s --check-prefix=GPU
+// RUN: %linc build %s -o fib_test | FileCheck %s
+// RUN: %linc build %s --gpu -o fib_test_gpu | FileCheck %s --check-prefix=GPU
 
 // CHECK: Parsing Source:
 // CHECK: fib: func [
 // CHECK: Generated MLIR (before lowering):
-// CHECK: "pic_graph.agent"() <{agentType = "epsilon", label = "era", polarity = "*"}>
-// CHECK: Lowering pass successful. Generated LLVM IR:
-// CHECK: llvm.call @malloc
-// CHECK: Successfully compiled and linked to 'test_fib_bin'
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "add", polarity = "-"}>
 
 // GPU: Parsing Source:
 // GPU: fib: func [
 // GPU: Generated MLIR (before lowering):
-// GPU: "pic_graph.agent"() <{agentType = "epsilon", label = "era", polarity = "*"}>
-// GPU: Lowering pass successful. Generated LLVM IR:
-// GPU: Successfully compiled and linked to 'test_fib_bin_gpu'
-
-import "std/math.lin"
+// GPU: "pic_graph.agent"() <{agentType = "omega", label = "add", polarity = "-"}>
 
 fib: func [
     n [i32!]

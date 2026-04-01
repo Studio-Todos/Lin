@@ -550,6 +550,8 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
 
         MlirValue result = lowerExpression(ctx, block, loc, ast->as.func_decl.body, &env);
 
+        env_free(&env, ctx, block, loc);
+
         MlirOperationState retState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
         mlirOperationStateAddOperands(&retState, 1, &result);
         mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&retState));
@@ -582,12 +584,12 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
 
         MlirValue result = lowerExpression(ctx, block, loc, ast, &env);
 
+        env_free(&env, ctx, block, loc);
+
         MlirOperationState retState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
         mlirOperationStateAddOperands(&retState, 1, &result);
         mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&retState));
     }
-
-    env_free(&env, ctx, block, loc);
 
     return module;
 }

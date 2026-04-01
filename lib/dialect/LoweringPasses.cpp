@@ -941,6 +941,42 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
     for (auto funcOp : funcsToConvert) {
         funcOp.erase();
     }
+
+    // Now create main entrypoint to call main_inet ONLY if it doesn't exist
+    if (!module.lookupSymbol("main")) {
+        builder.setInsertionPointToEnd(module.getBody());
+        auto mainType = LLVM::LLVMFunctionType::get(i32Type, {});
+        auto mainFunc = builder.create<LLVM::LLVMFuncOp>(module.getLoc(), "main", mainType);
+        Block *mainEntry = mainFunc.addEntryBlock();
+        builder.setInsertionPointToStart(mainEntry);
+
+        auto funcSym = mlir::SymbolRefAttr::get(builder.getContext(), "main_inet");
+        // Look up main_inet to check if it has a return value
+        auto mainInetOp = module.lookupSymbol<LLVM::LLVMFuncOp>("main_inet");
+        TypeRange returnTypes = (mainInetOp && mainInetOp.getFunctionType().getReturnType() != voidType) ? TypeRange{i32Type} : TypeRange{};
+
+        // Construct args for main_inet
+        SmallVector<Value, 4> callArgs;
+        if (mainInetOp && mainInetOp.getFunctionType().getNumParams() > 0) {
+            Value zeroArg = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(0));
+            for(int i=0; i<mainInetOp.getFunctionType().getNumParams(); i++) {
+                callArgs.push_back(zeroArg);
+            }
+        }
+
+        auto callMainInet = builder.create<LLVM::CallOp>(module.getLoc(), returnTypes, funcSym, callArgs);
+
+        if (returnTypes.empty()) {
+            Value zero = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(0));
+            builder.create<LLVM::ReturnOp>(module.getLoc(), ValueRange{zero});
+        } else {
+            // Unpack 32-bit value since MVP function returns directly
+            // Usually we'd extract it from memory array for Interaction Nets,
+            // but in MVP it's just the index in the port. Just pass it through directly since
+            // simple blocks are compiled as func calls matching integer ports.
+            builder.create<LLVM::ReturnOp>(module.getLoc(), ValueRange{callMainInet.getResult()});
+        }
+    }
   }
 };
 

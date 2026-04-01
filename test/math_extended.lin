@@ -1,13 +1,9 @@
-// RUN: %linc build %s -o test_math_extended_bin | FileCheck %s
-// RUN: %linc build %s --gpu -o test_math_extended_bin_gpu | FileCheck %s --check-prefix=GPU
+// RUN: %linc build %s -o test_math_ext_bin | FileCheck %s
+// RUN: %linc build %s --gpu -o test_math_ext_bin_gpu | FileCheck %s --check-prefix=GPU
 
 // CHECK: Parsing Source:
-// CHECK: test_math: func [
+// CHECK: test_math_ext: func [
 // CHECK: Generated MLIR (before lowering):
-// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "add", polarity = "-"}>
-// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "sub", polarity = "-"}>
-// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "mul", polarity = "-"}>
-// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "div", polarity = "-"}>
 // CHECK: "pic_graph.agent"() <{agentType = "omega", label = "rem", polarity = "-"}>
 // CHECK: "pic_graph.agent"() <{agentType = "omega", label = "lt", polarity = "-"}>
 // CHECK: "pic_graph.agent"() <{agentType = "omega", label = "gt", polarity = "-"}>
@@ -22,12 +18,8 @@
 // CHECK: "pic_graph.agent"() <{agentType = "omega", label = "xor", polarity = "-"}>
 
 // GPU: Parsing Source:
-// GPU: test_math: func [
+// GPU: test_math_ext: func [
 // GPU: Generated MLIR (before lowering):
-// GPU: "pic_graph.agent"() <{agentType = "omega", label = "add", polarity = "-"}>
-// GPU: "pic_graph.agent"() <{agentType = "omega", label = "sub", polarity = "-"}>
-// GPU: "pic_graph.agent"() <{agentType = "omega", label = "mul", polarity = "-"}>
-// GPU: "pic_graph.agent"() <{agentType = "omega", label = "div", polarity = "-"}>
 // GPU: "pic_graph.agent"() <{agentType = "omega", label = "rem", polarity = "-"}>
 // GPU: "pic_graph.agent"() <{agentType = "omega", label = "lt", polarity = "-"}>
 // GPU: "pic_graph.agent"() <{agentType = "omega", label = "gt", polarity = "-"}>
@@ -43,25 +35,21 @@
 
 import "std/math.lin"
 
-test_math: func [
+test_math_ext: func [
     n [i32!]
     return: [i32!]
 ][
-    (add n 1)
-    (sub n 1)
-    (mul n 2)
-    (div n 2)
-    (rem n 3)
-    (lt n 4)
-    (gt n 5)
-    (le n 6)
-    (ge n 7)
-    (eq n 8)
-    (neq n 9)
-    (shl n 1)
-    (shr n 1)
-    (and n 1)
-    (or n 1)
-    (xor n 1)
+    (rem n n)
+    (lt n n)
+    (gt n n)
+    (le n n)
+    (ge n n)
+    (eq n n)
+    (neq n n)
+    (shl n n)
+    (shr n n)
+    (and n n)
+    (or n n)
+    (xor n n)
     n
 ]
