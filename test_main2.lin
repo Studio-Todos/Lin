@@ -1,0 +1,18 @@
+import "std/io.lin"
+fib: func [
+    n [i32!]
+    return: [i32!]
+][
+    either n < 2 [
+        n
+    ][
+        (fib n - 1) + (fib n - 2)
+    ]
+]
+
+main: func [
+    return: [i32!]
+][
+    print (fib 10)
+    0
+]
