@@ -1,0 +1,40 @@
+// std/file.lin
+// Standard file I/O operations defined as external interactions for the lin runtime.
+
+fopen: mlir-op [
+    inputs:  [state [i64!] filename_ptr [i64!] mode_ptr [i64!]]
+    outputs: [res_state [i64!] file_ptr [i64!]]
+] {
+    %fn_ptr = llvm.inttoptr %filename_ptr : i64 to !llvm.ptr
+    %md_ptr = llvm.inttoptr %mode_ptr : i64 to !llvm.ptr
+    %res_ptr = llvm.call @fopen(%fn_ptr, %md_ptr) : (!llvm.ptr, !llvm.ptr) -> !llvm.ptr
+    %file_ptr = llvm.ptrtoint %res_ptr : !llvm.ptr to i64
+    %res_state = llvm.add %state, %state : i64
+}
+
+fclose: mlir-op [
+    inputs:  [state [i64!] file_ptr [i64!]]
+    outputs: [res_state [i64!] res [i32!]]
+] {
+    %f_ptr = llvm.inttoptr %file_ptr : i64 to !llvm.ptr
+    %res = llvm.call @fclose(%f_ptr) : (!llvm.ptr) -> i32
+    %res_state = llvm.add %state, %state : i64
+}
+
+fgetc: mlir-op [
+    inputs:  [state [i64!] file_ptr [i64!]]
+    outputs: [res_state [i64!] char [i32!]]
+] {
+    %f_ptr = llvm.inttoptr %file_ptr : i64 to !llvm.ptr
+    %char = llvm.call @fgetc(%f_ptr) : (!llvm.ptr) -> i32
+    %res_state = llvm.add %state, %state : i64
+}
+
+fputc: mlir-op [
+    inputs:  [state [i64!] char [i32!] file_ptr [i64!]]
+    outputs: [res_state [i64!] res [i32!]]
+] {
+    %f_ptr = llvm.inttoptr %file_ptr : i64 to !llvm.ptr
+    %res = llvm.call @fputc(%char, %f_ptr) : (i32, !llvm.ptr) -> i32
+    %res_state = llvm.add %state, %state : i64
+}

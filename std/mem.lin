@@ -1,0 +1,76 @@
+// std/mem.lin
+// Standard memory operations defined as external interactions for the lin runtime.
+
+malloc: mlir-op [
+    inputs:  [state [i64!] size [i64!]]
+    outputs: [res_state [i64!] ptr [i64!]]
+] {
+    %ptr_res = llvm.call @malloc(%size) : (i64) -> !llvm.ptr
+    %ptr = llvm.ptrtoint %ptr_res : !llvm.ptr to i64
+    %res_state = llvm.add %state, %state : i64
+}
+
+free: mlir-op [
+    inputs:  [state [i64!] ptr [i64!]]
+    outputs: [res_state [i64!]]
+] {
+    %ptr_val = llvm.inttoptr %ptr : i64 to !llvm.ptr
+    llvm.call @free(%ptr_val) : (!llvm.ptr) -> ()
+    %res_state = llvm.add %state, %state : i64
+}
+
+load_i8: mlir-op [
+    inputs:  [state [i64!] ptr [i64!]]
+    outputs: [res_state [i64!] val [i32!]]
+] {
+    %ptr_val = llvm.inttoptr %ptr : i64 to !llvm.ptr
+    %val_i8 = llvm.load %ptr_val : !llvm.ptr -> i8
+    %val = llvm.sext %val_i8 : i8 to i32
+    %res_state = llvm.add %state, %state : i64
+}
+
+store_i8: mlir-op [
+    inputs:  [state [i64!] ptr [i64!] val [i32!]]
+    outputs: [res_state [i64!]]
+] {
+    %ptr_val = llvm.inttoptr %ptr : i64 to !llvm.ptr
+    %val_i8 = llvm.trunc %val : i32 to i8
+    llvm.store %val_i8, %ptr_val : i8, !llvm.ptr
+    %res_state = llvm.add %state, %state : i64
+}
+
+load_i32: mlir-op [
+    inputs:  [state [i64!] ptr [i64!]]
+    outputs: [res_state [i64!] val [i32!]]
+] {
+    %ptr_val = llvm.inttoptr %ptr : i64 to !llvm.ptr
+    %val = llvm.load %ptr_val : !llvm.ptr -> i32
+    %res_state = llvm.add %state, %state : i64
+}
+
+store_i32: mlir-op [
+    inputs:  [state [i64!] ptr [i64!] val [i32!]]
+    outputs: [res_state [i64!]]
+] {
+    %ptr_val = llvm.inttoptr %ptr : i64 to !llvm.ptr
+    llvm.store %val, %ptr_val : i32, !llvm.ptr
+    %res_state = llvm.add %state, %state : i64
+}
+
+load_i64: mlir-op [
+    inputs:  [state [i64!] ptr [i64!]]
+    outputs: [res_state [i64!] val [i64!]]
+] {
+    %ptr_val = llvm.inttoptr %ptr : i64 to !llvm.ptr
+    %val = llvm.load %ptr_val : !llvm.ptr -> i64
+    %res_state = llvm.add %state, %state : i64
+}
+
+store_i64: mlir-op [
+    inputs:  [state [i64!] ptr [i64!] val [i64!]]
+    outputs: [res_state [i64!]]
+] {
+    %ptr_val = llvm.inttoptr %ptr : i64 to !llvm.ptr
+    llvm.store %val, %ptr_val : i64, !llvm.ptr
+    %res_state = llvm.add %state, %state : i64
+}

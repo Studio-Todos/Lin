@@ -10,3 +10,31 @@ exit: mlir-op [
     // This is unreachable, but we need to return something
     %res = llvm.add %state, %state : i64
 }
+
+// Abort the program execution
+abort: mlir-op [
+    inputs:  [state [i64!]]
+    outputs: [res [i64!]]
+] {
+    llvm.call @abort() : () -> ()
+    %res = llvm.add %state, %state : i64
+}
+
+// Get the current time (since the Epoch)
+time: mlir-op [
+    inputs:  [state [i64!]]
+    outputs: [res_state [i64!] res_time [i64!]]
+] {
+    %null_ptr = llvm.mlir.zero : !llvm.ptr
+    %res_time = llvm.call @time(%null_ptr) : (!llvm.ptr) -> i64
+    %res_state = llvm.add %state, %state : i64
+}
+
+// Sleep for a given number of seconds
+sleep: mlir-op [
+    inputs:  [state [i64!] seconds [i32!]]
+    outputs: [res [i64!]]
+] {
+    %sleep_res = llvm.call @sleep(%seconds) : (i32) -> i32
+    %res = llvm.add %state, %state : i64
+}

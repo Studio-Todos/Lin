@@ -1,0 +1,44 @@
+// RUN: %linc build %s -o %t | FileCheck %s
+
+import "std/math.lin"
+
+// CHECK: Parsing Source:
+// CHECK: Generated MLIR
+
+test_intrinsics: func [
+    a [f32!]
+    b [f64!]
+    c [i32!]
+    d [i64!]
+    return: [i64!]
+][
+    let sq (fsqrt a)
+    let si (fsin sq.0)
+    let co (fcos si.0)
+    let ex (fexp co.0)
+    let lo (flog ex.0)
+    let ab (fabs lo.0)
+    let ce (fceil ab.0)
+    let fl (ffloor ce.0)
+
+    let sq64 (fsqrt64 b)
+    let si64 (fsin64 sq64.0)
+    let co64 (fcos64 si64.0)
+    let ex64 (fexp64 co64.0)
+    let lo64 (flog64 ex64.0)
+    let ab64 (fabs64 lo64.0)
+    let ce64 (fceil64 ab64.0)
+    let fl64 (ffloor64 ce64.0)
+
+    let nt (not c)
+    let ct (ctlz nt.0)
+    let tz (cttz ct.0)
+    let po (ctpop tz.0)
+
+    let nt64 (not64 d)
+    let ct64 (ctlz64 nt64.0)
+    let tz64 (cttz64 ct64.0)
+    let po64 (ctpop64 tz64.0)
+
+    po64.0
+]
