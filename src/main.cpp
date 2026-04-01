@@ -282,6 +282,7 @@ int main(int argc, char **argv) {
               args.push_back(const_cast<char*>(objFile.c_str()));
               args.push_back(const_cast<char*>("-o"));
               args.push_back(const_cast<char*>(outputBinary.c_str()));
+              args.push_back(const_cast<char*>("-lpthread"));
               args.push_back(nullptr);
 
               execvp("gcc", args.data());

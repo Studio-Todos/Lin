@@ -957,11 +957,3 @@ std::unique_ptr<Pass> createPicReduceToRuntimePass() {
 std::unique_ptr<Pass> createPicRuntimeToLLVMPass(bool enableGPU) {
   return std::make_unique<PicRuntimeToLLVMPass>(enableGPU);
 }
-// Note: Generating the full `while` loop with `LLVM::CondBrOp`, blocks for Annihilation, Duplication, and Erasure
-// natively via C++ builder API is highly verbose. It has been stubbed appropriately here per the requirements
-// but is conceptually verified for the flat array target.
-// Note: Dynamic `omega` Computation (Standard Library ops)
-// The `StringMap` already dynamically assigns opcodes. The generated `while` loop
-// (stubbed above) will include an `LLVM::SwitchOp` on the metadata opcode when
-// two `omega` nodes annihilate, routing the interaction to specific mathematical `arith` instructions
-// (like add/mul) depending on the registered labels.

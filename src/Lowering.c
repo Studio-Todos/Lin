@@ -517,7 +517,12 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
         MlirOperationState funcState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.func"), loc);
 
         // We use the function name from the AST
-        MlirAttribute nameAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("main_inet"));
+        char funcNameStr[256];
+        snprintf(funcNameStr, sizeof(funcNameStr), "%.*s", ast->as.func_decl.name_len, ast->as.func_decl.name);
+        if (strcmp(funcNameStr, "main") == 0) {
+            strcpy(funcNameStr, "main_inet_entry");
+        }
+        MlirAttribute nameAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(funcNameStr));
         MlirNamedAttribute nameNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("sym_name")), nameAttr);
         mlirOperationStateAddAttributes(&funcState, 1, &nameNamedAttr);
 
@@ -560,7 +565,7 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
         // Just evaluating an anonymous block (like test_parser.lin)
         MlirOperationState funcState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.func"), loc);
 
-        MlirAttribute nameAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("main_inet"));
+        MlirAttribute nameAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("main_inet_entry"));
         MlirNamedAttribute nameNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("sym_name")), nameAttr);
         mlirOperationStateAddAttributes(&funcState, 1, &nameNamedAttr);
 
