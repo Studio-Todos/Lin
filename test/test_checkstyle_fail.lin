@@ -1,21 +1,21 @@
 // RUN: not %linc test %s 2>&1 | FileCheck %s
 
-// CHECK: Checkstyle Error: Function name 'my_func' must be kebab-case.
-// CHECK: Checkstyle Error: Function argument 'arg_num' must be kebab-case.
-// CHECK: Checkstyle Error: Variable name 'var_a' must be kebab-case.
-// CHECK: Checkstyle Error: Function call 'my_func' must be kebab-case.
+// CHECK: Checkstyle Error: Function name 'myFunc' must be lower-case.
+// CHECK: Checkstyle Error: Function argument 'argNum' must be lower-case.
+// CHECK: Checkstyle Error: Variable name 'varA' must be lower-case.
+// CHECK: Checkstyle Error: Function call 'myFunc' must be lower-case.
 // CHECK: Checkstyle and static analysis failed with 4 error(s).
 
-my_func: func [
-    arg_num [i32!]
+myFunc: func [
+    argNum [i32!]
     return: [i32!]
 ][
-    var_a: 10
-    arg_num
+    varA: 10
+    argNum
 ]
 
 main: func [
     return: [i32!]
 ][
-    my_func 5
+    myFunc 5
 ]

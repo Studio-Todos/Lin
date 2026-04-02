@@ -49,11 +49,10 @@ using namespace mlir;
 #include <unistd.h>
 #include <cctype>
 
-// Helper to check if a string is kebab-case
-static bool isKebabCase(const char* str, int len) {
+// Helper to check if a string is idiomatic Red/Rebol style
+static bool isIdiomaticCase(const char* str, int len) {
     if (len == 0) return true;
     for (int i = 0; i < len; ++i) {
-        if (str[i] == '_') return false; // snake_case is invalid
         if (std::isupper(str[i])) return false; // camelCase/PascalCase is invalid
     }
     return true;
@@ -66,28 +65,28 @@ static int checkstyleAst(AstNode *node) {
 
     switch (node->type) {
         case AST_IDENTIFIER: {
-            if (!isKebabCase(node->as.identifier.name, node->as.identifier.length)) {
-                std::cerr << "Checkstyle Error: Identifier '" << std::string(node->as.identifier.name, node->as.identifier.length) << "' must be kebab-case.\n";
+            if (!isIdiomaticCase(node->as.identifier.name, node->as.identifier.length)) {
+                std::cerr << "Checkstyle Error: Identifier '" << std::string(node->as.identifier.name, node->as.identifier.length) << "' must be lower-case.\n";
                 errors++;
             }
             break;
         }
         case AST_ASSIGNMENT: {
-            if (!isKebabCase(node->as.assignment.name, node->as.assignment.name_len)) {
-                std::cerr << "Checkstyle Error: Variable name '" << std::string(node->as.assignment.name, node->as.assignment.name_len) << "' must be kebab-case.\n";
+            if (!isIdiomaticCase(node->as.assignment.name, node->as.assignment.name_len)) {
+                std::cerr << "Checkstyle Error: Variable name '" << std::string(node->as.assignment.name, node->as.assignment.name_len) << "' must be lower-case.\n";
                 errors++;
             }
             errors += checkstyleAst(node->as.assignment.value);
             break;
         }
         case AST_FUNC_DECL: {
-            if (!isKebabCase(node->as.func_decl.name, node->as.func_decl.name_len)) {
-                std::cerr << "Checkstyle Error: Function name '" << std::string(node->as.func_decl.name, node->as.func_decl.name_len) << "' must be kebab-case.\n";
+            if (!isIdiomaticCase(node->as.func_decl.name, node->as.func_decl.name_len)) {
+                std::cerr << "Checkstyle Error: Function name '" << std::string(node->as.func_decl.name, node->as.func_decl.name_len) << "' must be lower-case.\n";
                 errors++;
             }
             for (int i = 0; i < node->as.func_decl.arg_count; ++i) {
-                if (!isKebabCase(node->as.func_decl.args[i].name, node->as.func_decl.args[i].name_len)) {
-                    std::cerr << "Checkstyle Error: Function argument '" << std::string(node->as.func_decl.args[i].name, node->as.func_decl.args[i].name_len) << "' must be kebab-case.\n";
+                if (!isIdiomaticCase(node->as.func_decl.args[i].name, node->as.func_decl.args[i].name_len)) {
+                    std::cerr << "Checkstyle Error: Function argument '" << std::string(node->as.func_decl.args[i].name, node->as.func_decl.args[i].name_len) << "' must be lower-case.\n";
                     errors++;
                 }
             }
@@ -95,8 +94,8 @@ static int checkstyleAst(AstNode *node) {
             break;
         }
         case AST_CALL: {
-            if (!isKebabCase(node->as.call.callee, node->as.call.callee_len)) {
-                std::cerr << "Checkstyle Error: Function call '" << std::string(node->as.call.callee, node->as.call.callee_len) << "' must be kebab-case.\n";
+            if (!isIdiomaticCase(node->as.call.callee, node->as.call.callee_len)) {
+                std::cerr << "Checkstyle Error: Function call '" << std::string(node->as.call.callee, node->as.call.callee_len) << "' must be lower-case.\n";
                 errors++;
             }
             for (int i = 0; i < node->as.call.arg_count; ++i) {
