@@ -928,7 +928,14 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             builder.create<LLVM::ReturnOp>(funcOp.getLoc(), ValueRange{builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0)).getResult()});
 
             builder.setInsertionPointToEnd(entryBlock);
-            Value opcodeVal = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1)); // dummy opcode
+
+            // To actually dispatch based on opcode from the graph array instead of returning dummy 1:
+            // Load the opcode directly from net[allocCount+0]. The port represents the active pair's operator ID.
+            Value zeroOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0));
+            Value opcodeOffset = builder.create<LLVM::AddOp>(funcOp.getLoc(), allocCount, zeroOffset);
+            Value opcodeGEP = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{opcodeOffset});
+            Value opcodeVal = builder.create<LLVM::LoadOp>(funcOp.getLoc(), i32Type, opcodeGEP);
+
             builder.create<LLVM::SwitchOp>(funcOp.getLoc(), opcodeVal, defaultBlock, ValueRange{}, caseValues, caseDestinations, caseOperands);
         } else {
             // Return 0

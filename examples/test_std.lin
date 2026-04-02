@@ -1,0 +1,20 @@
+import "std/math.lin"
+import "std/io.lin"
+
+my-func: func [
+    x [i32!]
+    y [i32!]
+    return: [i32!]
+][
+    (add x y)
+]
+
+main: func [
+    return: [i32!]
+][
+    state: 0
+    res: (my-func 10 5)
+    state: (print_i32 state res)
+    state: (print_char state 10)
+    res
+]

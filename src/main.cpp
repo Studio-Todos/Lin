@@ -47,6 +47,90 @@ using namespace mlir;
 #include <vector>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <cctype>
+
+// Helper to check if a string is idiomatic Red/Rebol style
+static bool isIdiomaticCase(const char* str, int len) {
+    if (len == 0) return true;
+    for (int i = 0; i < len; ++i) {
+        if (std::isupper(str[i])) return false; // camelCase/PascalCase is invalid
+    }
+    return true;
+}
+
+// Recursive AST traversal for checkstyle
+static int checkstyleAst(AstNode *node) {
+    if (!node) return 0;
+    int errors = 0;
+
+    switch (node->type) {
+        case AST_IDENTIFIER: {
+            if (!isIdiomaticCase(node->as.identifier.name, node->as.identifier.length)) {
+                std::cerr << "Checkstyle Error: Identifier '" << std::string(node->as.identifier.name, node->as.identifier.length) << "' must be lower-case.\n";
+                errors++;
+            }
+            break;
+        }
+        case AST_ASSIGNMENT: {
+            if (!isIdiomaticCase(node->as.assignment.name, node->as.assignment.name_len)) {
+                std::cerr << "Checkstyle Error: Variable name '" << std::string(node->as.assignment.name, node->as.assignment.name_len) << "' must be lower-case.\n";
+                errors++;
+            }
+            errors += checkstyleAst(node->as.assignment.value);
+            break;
+        }
+        case AST_FUNC_DECL: {
+            if (!isIdiomaticCase(node->as.func_decl.name, node->as.func_decl.name_len)) {
+                std::cerr << "Checkstyle Error: Function name '" << std::string(node->as.func_decl.name, node->as.func_decl.name_len) << "' must be lower-case.\n";
+                errors++;
+            }
+            for (int i = 0; i < node->as.func_decl.arg_count; ++i) {
+                if (!isIdiomaticCase(node->as.func_decl.args[i].name, node->as.func_decl.args[i].name_len)) {
+                    std::cerr << "Checkstyle Error: Function argument '" << std::string(node->as.func_decl.args[i].name, node->as.func_decl.args[i].name_len) << "' must be lower-case.\n";
+                    errors++;
+                }
+            }
+            errors += checkstyleAst(node->as.func_decl.body);
+            break;
+        }
+        case AST_CALL: {
+            if (!isIdiomaticCase(node->as.call.callee, node->as.call.callee_len)) {
+                std::cerr << "Checkstyle Error: Function call '" << std::string(node->as.call.callee, node->as.call.callee_len) << "' must be lower-case.\n";
+                errors++;
+            }
+            for (int i = 0; i < node->as.call.arg_count; ++i) {
+                errors += checkstyleAst(node->as.call.args[i]);
+            }
+            break;
+        }
+        case AST_BINARY: {
+            errors += checkstyleAst(node->as.binary.left);
+            errors += checkstyleAst(node->as.binary.right);
+            break;
+        }
+        case AST_EITHER: {
+            errors += checkstyleAst(node->as.either.condition);
+            errors += checkstyleAst(node->as.either.true_branch);
+            errors += checkstyleAst(node->as.either.false_branch);
+            break;
+        }
+        case AST_BLOCK: {
+            for (int i = 0; i < node->as.block.count; ++i) {
+                errors += checkstyleAst(node->as.block.statements[i]);
+            }
+            break;
+        }
+        case AST_IMPORT: {
+            // Note: Imports are flattened, so we don't traverse `module_block` here to avoid double-checking.
+            break;
+        }
+        case AST_NUMBER:
+        case AST_STRING:
+        case AST_MLIR_OP:
+            break;
+    }
+    return errors;
+}
 
 int main(int argc, char **argv) {
   std::string command = "";
@@ -307,15 +391,24 @@ int main(int argc, char **argv) {
 
           std::cout << "Successfully compiled and linked to '" << outputBinary << "'.\n";
       }
-
-      freeAst(ast);
   }
 
   if (command == "test") {
-      // In the future, checkstyle rules will be enforced here.
-      // For now, if we generated a binary without crashing, we consider it a success.
+      std::cout << "\nRunning Built-in checkstyle and static analysis...\n";
+      int styleErrors = 0;
+      if (ast) {
+          styleErrors = checkstyleAst(ast);
+      }
+
+      if (styleErrors > 0) {
+          std::cerr << "Checkstyle and static analysis failed with " << styleErrors << " error(s).\n";
+          if (ast) freeAst(ast);
+          return 1;
+      }
       std::cout << "Built-in checkstyle and static analysis passed.\n";
   }
+
+  if (ast) freeAst(ast);
 
   std::cout << "Compilation complete.\n";
   return 0;
