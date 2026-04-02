@@ -102,9 +102,7 @@ int main(int argc, char **argv) {
           }
 
           // Add user-provided include paths
-          for (const auto& path : includePaths) {
-              searchPaths.push_back(path);
-          }
+          searchPaths.insert(searchPaths.end(), includePaths.begin(), includePaths.end());
 
           // We will build a completely new array of statements by appending everything in order.
           int total_count = 0;
