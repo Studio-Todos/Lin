@@ -1,0 +1,17 @@
+// RUN: %linc build %s -o %t | FileCheck %s
+
+import "std/sys.lin"
+
+// CHECK: Parsing Source:
+// CHECK: Generated MLIR
+
+test_sys: func [
+    state [i64!]
+    return: [i64!]
+][
+    // We just test that the compiler can lower the operations without crashing.
+    // It's hard to assert the specific value of time().
+    let st1_t (time state)
+    let st2 (sleep st1_t.0 0)
+    st1_t.1
+]

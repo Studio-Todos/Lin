@@ -379,3 +379,173 @@ fneq64: mlir-op [
 ] {
     %res = llvm.fcmp "one" %a, %b : f64
 }
+
+not: mlir-op [
+    inputs:  [a [i32!]]
+    outputs: [res [i32!]]
+] {
+    %neg1 = llvm.mlir.constant(-1 : i32) : i32
+    %res = llvm.xor %a, %neg1 : i32
+}
+
+not64: mlir-op [
+    inputs:  [a [i64!]]
+    outputs: [res [i64!]]
+] {
+    %neg1 = llvm.mlir.constant(-1 : i64) : i64
+    %res = llvm.xor %a, %neg1 : i64
+}
+
+ctlz: mlir-op [
+    inputs:  [a [i32!]]
+    outputs: [res [i32!]]
+] {
+    %res = llvm.intr.ctlz(%a) <{is_zero_undef = false}> : (i32) -> i32
+}
+
+cttz: mlir-op [
+    inputs:  [a [i32!]]
+    outputs: [res [i32!]]
+] {
+    %res = llvm.intr.cttz(%a) <{is_zero_undef = false}> : (i32) -> i32
+}
+
+ctpop: mlir-op [
+    inputs:  [a [i32!]]
+    outputs: [res [i32!]]
+] {
+    %res = llvm.intr.ctpop(%a) : (i32) -> i32
+}
+
+ctlz64: mlir-op [
+    inputs:  [a [i64!]]
+    outputs: [res [i64!]]
+] {
+    %res = llvm.intr.ctlz(%a) <{is_zero_undef = false}> : (i64) -> i64
+}
+
+cttz64: mlir-op [
+    inputs:  [a [i64!]]
+    outputs: [res [i64!]]
+] {
+    %res = llvm.intr.cttz(%a) <{is_zero_undef = false}> : (i64) -> i64
+}
+
+ctpop64: mlir-op [
+    inputs:  [a [i64!]]
+    outputs: [res [i64!]]
+] {
+    %res = llvm.intr.ctpop(%a) : (i64) -> i64
+}
+
+fsqrt: mlir-op [
+    inputs:  [a [f32!]]
+    outputs: [res [f32!]]
+] {
+    %res = llvm.intr.sqrt(%a) : (f32) -> f32
+}
+
+fsin: mlir-op [
+    inputs:  [a [f32!]]
+    outputs: [res [f32!]]
+] {
+    %res = llvm.intr.sin(%a) : (f32) -> f32
+}
+
+fcos: mlir-op [
+    inputs:  [a [f32!]]
+    outputs: [res [f32!]]
+] {
+    %res = llvm.intr.cos(%a) : (f32) -> f32
+}
+
+fexp: mlir-op [
+    inputs:  [a [f32!]]
+    outputs: [res [f32!]]
+] {
+    %res = llvm.intr.exp(%a) : (f32) -> f32
+}
+
+flog: mlir-op [
+    inputs:  [a [f32!]]
+    outputs: [res [f32!]]
+] {
+    %res = llvm.intr.log(%a) : (f32) -> f32
+}
+
+fabs: mlir-op [
+    inputs:  [a [f32!]]
+    outputs: [res [f32!]]
+] {
+    %res = llvm.intr.fabs(%a) : (f32) -> f32
+}
+
+fceil: mlir-op [
+    inputs:  [a [f32!]]
+    outputs: [res [f32!]]
+] {
+    %res = llvm.intr.ceil(%a) : (f32) -> f32
+}
+
+ffloor: mlir-op [
+    inputs:  [a [f32!]]
+    outputs: [res [f32!]]
+] {
+    %res = llvm.intr.floor(%a) : (f32) -> f32
+}
+
+fsqrt64: mlir-op [
+    inputs:  [a [f64!]]
+    outputs: [res [f64!]]
+] {
+    %res = llvm.intr.sqrt(%a) : (f64) -> f64
+}
+
+fsin64: mlir-op [
+    inputs:  [a [f64!]]
+    outputs: [res [f64!]]
+] {
+    %res = llvm.intr.sin(%a) : (f64) -> f64
+}
+
+fcos64: mlir-op [
+    inputs:  [a [f64!]]
+    outputs: [res [f64!]]
+] {
+    %res = llvm.intr.cos(%a) : (f64) -> f64
+}
+
+fexp64: mlir-op [
+    inputs:  [a [f64!]]
+    outputs: [res [f64!]]
+] {
+    %res = llvm.intr.exp(%a) : (f64) -> f64
+}
+
+flog64: mlir-op [
+    inputs:  [a [f64!]]
+    outputs: [res [f64!]]
+] {
+    %res = llvm.intr.log(%a) : (f64) -> f64
+}
+
+fabs64: mlir-op [
+    inputs:  [a [f64!]]
+    outputs: [res [f64!]]
+] {
+    %res = llvm.intr.fabs(%a) : (f64) -> f64
+}
+
+fceil64: mlir-op [
+    inputs:  [a [f64!]]
+    outputs: [res [f64!]]
+] {
+    %res = llvm.intr.ceil(%a) : (f64) -> f64
+}
+
+ffloor64: mlir-op [
+    inputs:  [a [f64!]]
+    outputs: [res [f64!]]
+] {
+    %res = llvm.intr.floor(%a) : (f64) -> f64
+}
