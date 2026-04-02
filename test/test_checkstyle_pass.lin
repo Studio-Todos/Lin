@@ -1,0 +1,18 @@
+// RUN: %linc test %s 2>&1 | FileCheck %s
+
+// CHECK: Built-in checkstyle and static analysis passed.
+// CHECK: Compilation complete.
+
+my-func: func [
+    arg-num [i32!]
+    return: [i32!]
+][
+    var-a: 10
+    arg-num
+]
+
+main: func [
+    return: [i32!]
+][
+    my-func 5
+]

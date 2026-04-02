@@ -1,0 +1,19 @@
+import "std/math.lin"
+
+my_func: func [
+    x [i32!]
+    y [i32!]
+    return: [i32!]
+][
+    either x < y [
+        x + y
+    ][
+        x - y
+    ]
+]
+
+main: func [
+    return: [i32!]
+][
+    my_func 10 5
+]
