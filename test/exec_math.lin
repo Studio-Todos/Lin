@@ -1,0 +1,32 @@
+// RUN: %linc build %s -o %t && %t
+// RUN: %linc build %s --gpu -o %t_gpu && %t_gpu
+
+
+import "std/math.lin"
+
+test_math: func [
+    argc [i32!]
+    return: [i32!]
+][
+    either (neq (add 10 5) 15) [
+        1
+    ][
+        either (neq (sub 10 5) 5) [
+            2
+        ][
+            either (neq (mul 10 5) 50) [
+                3
+            ][
+                either (neq (div 10 5) 2) [
+                    4
+                ][
+                    either (neq (rem 10 3) 1) [
+                        5
+                    ][
+                        0
+                    ]
+                ]
+            ]
+        ]
+    ]
+]
