@@ -8,6 +8,7 @@ typedef enum {
     TOKEN_EOF,
     TOKEN_IDENTIFIER,
     TOKEN_NUMBER,
+    TOKEN_FLOAT,
     TOKEN_COLON,        // :
     TOKEN_LBRACKET,     // [
     TOKEN_RBRACKET,     // ]
@@ -54,6 +55,7 @@ Token scanToken(Lexer *lexer);
 // AST Definitions
 typedef enum {
     AST_NUMBER,
+    AST_FLOAT,
     AST_IDENTIFIER,
     AST_BINARY,
     AST_CALL,
@@ -70,6 +72,7 @@ typedef struct AstNode {
     AstNodeType type;
     union {
         struct { int32_t value; } number;
+        struct { float value; } f_number;
         struct { const char *name; int length; } identifier;
         struct { struct AstNode *left; TokenType op; struct AstNode *right; } binary;
         struct { const char *callee; int callee_len; struct AstNode **args; int arg_count; int capacity; } call;

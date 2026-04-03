@@ -24,6 +24,19 @@ static void skipWhitespace(Lexer *lexer) {
                 if (peekNext(lexer) == '/') {
                     while (peek(lexer) != '\n' && !isAtEnd(lexer)) advance(lexer);
                     break;
+                } else if (peekNext(lexer) == '*') {
+                    advance(lexer); // consume '/'
+                    advance(lexer); // consume '*'
+                    while (!isAtEnd(lexer)) {
+                        if (peek(lexer) == '\n') lexer->line++;
+                        if (peek(lexer) == '*' && peekNext(lexer) == '/') {
+                            advance(lexer); // consume '*'
+                            advance(lexer); // consume '/'
+                            break;
+                        }
+                        advance(lexer);
+                    }
+                    break;
                 }
                 return;
             default: return;
@@ -42,6 +55,13 @@ static Token makeToken(const Lexer *lexer, TokenType type) {
 
 static Token number(Lexer *lexer) {
     while (isdigit(peek(lexer))) advance(lexer);
+
+    if (peek(lexer) == '.' && isdigit(peekNext(lexer))) {
+        advance(lexer); // Consume '.'
+        while (isdigit(peek(lexer))) advance(lexer);
+        return makeToken(lexer, TOKEN_FLOAT);
+    }
+
     return makeToken(lexer, TOKEN_NUMBER);
 }
 
@@ -200,6 +220,14 @@ static AstNode* parseNumberExpr(Parser *parser) {
     return node;
 }
 
+static AstNode* parseFloatExpr(Parser *parser) {
+    AstNode *node = createNode(parser, AST_FLOAT);
+    if (!node) return NULL;
+    node->as.f_number.value = strtof(parser->current.start, NULL);
+    parserAdvance(parser);
+    return node;
+}
+
 static AstNode* parseStringExpr(Parser *parser) {
     AstNode *node = createNode(parser, AST_STRING);
     if (!node) return NULL;
@@ -327,6 +355,7 @@ static AstNode* parseGroupingExpr(Parser *parser) {
 static AstNode* parsePrimary(Parser *parser) {
     switch (parser->current.type) {
         case TOKEN_NUMBER:     return parseNumberExpr(parser);
+        case TOKEN_FLOAT:      return parseFloatExpr(parser);
         case TOKEN_STRING:     return parseStringExpr(parser);
         case TOKEN_IMPORT:     return parseImportExpr(parser);
         case TOKEN_IDENTIFIER: return parseIdentifierExpr(parser);
@@ -566,6 +595,7 @@ void printAst(AstNode *node, int depth) {
 
     switch (node->type) {
         case AST_NUMBER: printf("Number(%d)\n", node->as.number.value); break;
+        case AST_FLOAT: printf("Float(%f)\n", node->as.f_number.value); break;
         case AST_STRING: printf("String(%.*s)\n", node->as.string.length, node->as.string.value); break;
         case AST_IDENTIFIER: printf("Ident(%.*s)\n", node->as.identifier.length, node->as.identifier.name); break;
         case AST_BINARY:
