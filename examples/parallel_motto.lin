@@ -1,0 +1,18 @@
+// parallel_motto.lin
+// Demonstration of Lin's core motto: All code is inherently parallel and optimal.
+// This standard recursive fibonacci implementation requires no explicit threading,
+// futures, or lock management. When compiled to Polarized Interaction Combinators (PIC),
+// the branching recursive calls `(fib n - 1)` and `(fib n - 2)` resolve to non-interfering
+// active pairs, which the compiler's generated native runtime will process in parallel
+// across the atomic bit-field array on available CPU/GPU cores.
+
+fib: func [
+    n [i32!]
+    return: [i32!]
+][
+    either n < 2 [
+        n
+    ][
+        (fib n - 1) + (fib n - 2)
+    ]
+]
