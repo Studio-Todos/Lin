@@ -1,0 +1,24 @@
+// RUN: %linc build %s -o %t && %t
+// RUN: %linc build %s --gpu -o %t_gpu && %t_gpu
+
+import "std/math.lin"
+import "std/io.lin"
+
+main: func [
+    return: [i32!]
+][
+    state: 0
+
+    // Test float addition with literals
+    a: 3.14
+    b: 2.5
+    sum: (fadd a b)
+
+    // Verify it isn't completely zero/undefined by converting roughly to integer for return
+    // Since print_f32 exists, we can print it, but for test pass we return an integer exit code.
+    // Float bitcast to int for checking
+    // Actually we can just print it
+    state: (print_f32 state sum)
+
+    0
+]

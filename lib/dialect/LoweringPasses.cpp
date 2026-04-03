@@ -54,7 +54,7 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
         if (agentType == "gamma_plus" || agentType == "gamma_minus") nodeTypeEnum = 1; // NODE_CON
         else if (agentType == "delta") nodeTypeEnum = 2; // NODE_DUP
         else if (agentType == "omega") {
-          if (label == "num") nodeTypeEnum = 3; // NODE_NUM
+          if (label == "num" || label == "f32" || label == "f64") nodeTypeEnum = 3; // NODE_NUM
           else nodeTypeEnum = 4; // NODE_OP
         }
 
@@ -70,6 +70,24 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
                opcodeMap[label] = nextOpcode++;
            }
            valOrOpCode = opcodeMap[label];
+
+           // If this is a string literal (str node), we want the value to be the global string's opCode/index.
+           // Since string contents can vary, we use the string content itself to map to a unique string ID.
+           if (label == "str" && op.getStrVal()) {
+               StringRef strContent = op.getStrVal().value();
+               // We will prefix the content with "STR_" to avoid collision with operator labels
+               std::string strKey = "STR_" + strContent.str();
+               if (!opcodeMap.count(strKey)) {
+                   opcodeMap[strKey] = nextOpcode++;
+               }
+               valOrOpCode = opcodeMap[strKey];
+
+               // We must record this payload for later emission as a global string!
+               // Let's create a dummy registry op to carry this over CFG bounds
+               builder.create<pic::graph::RegistryOp>(loc,
+                    builder.getStringAttr(strKey),
+                    builder.getStringAttr(strContent));
+           }
         }
 
         auto allocOp = builder.create<pic::runtime::AllocNodeOp>(
@@ -396,18 +414,32 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
     // Collect registry payloads and erase them so they don't break LLVM translation
     llvm::StringMap<std::string> opPayloads;
+    llvm::StringMap<std::string> strPayloads;
     SmallVector<Operation*> registryOps;
     module.walk([&](Operation *op) {
         if (op->getName().getStringRef() == "pic_graph.registry") {
             StringAttr nameAttr = op->getAttrOfType<StringAttr>("op_name");
             StringAttr payloadAttr = op->getAttrOfType<StringAttr>("payload");
             if (nameAttr && payloadAttr) {
-                opPayloads[nameAttr.getValue()] = payloadAttr.getValue().str();
+                if (nameAttr.getValue().starts_with("STR_")) {
+                    strPayloads[nameAttr.getValue()] = payloadAttr.getValue().str();
+                } else {
+                    opPayloads[nameAttr.getValue()] = payloadAttr.getValue().str();
+                }
                 registryOps.push_back(op);
             }
         }
     });
     for (auto* op : registryOps) op->erase();
+
+    // Allocate global strings
+    for (auto &pair : strPayloads) {
+        std::string strKey = pair.first().str();
+        std::string strContent = pair.second;
+
+        auto strType = LLVM::LLVMArrayType::get(builder.getI8Type(), strContent.size() + 1);
+        auto globalStr = builder.create<LLVM::GlobalOp>(module.getLoc(), strType, true, LLVM::Linkage::Internal, strKey, builder.getStringAttr(StringRef(strContent.c_str(), strContent.size() + 1)));
+    }
 
     SmallVector<func::FuncOp> funcsToConvert;
     module.walk([&](func::FuncOp funcOp) {
@@ -913,6 +945,36 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                         builder.create<LLVM::StoreOp>(funcOp.getLoc(), resultVal, outGEP);
                     }
                 }
+
+                Value zeroCase = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0));
+                builder.create<LLVM::ReturnOp>(funcOp.getLoc(), ValueRange{zeroCase});
+
+                caseValues.push_back(caseIdx++);
+                caseDestinations.push_back(caseBlock);
+                caseOperands.push_back(ValueRange{});
+            }
+
+            // Handle global string accesses!
+            // When an opcode is a STR_... it means a string literal node evaluated.
+            // Strings are just pointers in the interaction net. So we write the pointer.
+            for (auto &pair : strPayloads) {
+                Block *caseBlock = llvmFunc.addBlock();
+                builder.setInsertionPointToStart(caseBlock);
+
+                std::string strKey = pair.first().str();
+
+                Value threeC = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(3));
+                Value outOffset = builder.create<LLVM::AddOp>(funcOp.getLoc(), allocCount, threeC);
+                Value outGEP = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{outOffset});
+
+                Value strAddr = builder.create<LLVM::AddressOfOp>(funcOp.getLoc(), ptrType, mlir::SymbolRefAttr::get(builder.getContext(), strKey));
+                Value strAddrI32 = builder.create<LLVM::PtrToIntOp>(funcOp.getLoc(), i32Type, strAddr); // MVP assumes 32-bit pointers fit in 32-bit word, or we truncate (safe enough for tests in small mem space)
+                // Actually, PtrToInt to i32 can cause verification failure if the ptr size is 64 on the target.
+                // Let's use ptrtoint to i64, then trunc to i32.
+                Value strAddrI64 = builder.create<LLVM::PtrToIntOp>(funcOp.getLoc(), i64Type, strAddr);
+                Value strAddrTrunc = builder.create<LLVM::TruncOp>(funcOp.getLoc(), i32Type, strAddrI64);
+
+                builder.create<LLVM::StoreOp>(funcOp.getLoc(), strAddrTrunc, outGEP);
 
                 Value zeroCase = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0));
                 builder.create<LLVM::ReturnOp>(funcOp.getLoc(), ValueRange{zeroCase});

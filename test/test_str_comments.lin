@@ -1,0 +1,21 @@
+// RUN: %linc build %s -o %t && %t
+// RUN: %linc build %s --gpu -o %t_gpu && %t_gpu
+
+import "std/math.lin"
+import "std/io.lin"
+
+/*
+ * Main function
+ * Testing block comments!
+ */
+main: func [
+    return: [i32!]
+][
+    state: 0
+
+    // Test print string
+    str: "Hello World Loop"
+    state: (print_str state str)
+
+    0
+]
