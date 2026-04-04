@@ -48,6 +48,7 @@ using namespace mlir;
 #include <sys/wait.h>
 #include <unistd.h>
 #include <cctype>
+#include <linux/limits.h>
 
 // Helper to check if a string is idiomatic Red/Rebol style
 static bool isIdiomaticCase(const char* str, int len) {
@@ -183,6 +184,24 @@ int main(int argc, char **argv) {
           std::filesystem::path srcPath(sourceFile);
           if (srcPath.has_parent_path()) {
               searchPaths.push_back(srcPath.parent_path().string());
+          }
+
+          // Add executable directory and its parent for standard library resolution
+          char exePath[PATH_MAX];
+          ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath)-1);
+          if (len != -1) {
+              exePath[len] = '\0';
+              std::filesystem::path ePath(exePath);
+              if (ePath.has_parent_path()) {
+                  std::filesystem::path binDir = ePath.parent_path();
+                  searchPaths.push_back(binDir.string());
+                  if (binDir.has_parent_path()) {
+                      searchPaths.push_back(binDir.parent_path().string());
+                      if (binDir.parent_path().has_parent_path()) {
+                          searchPaths.push_back(binDir.parent_path().parent_path().string());
+                      }
+                  }
+              }
           }
 
           // Add user-provided include paths
