@@ -1,0 +1,35 @@
+// RUN: %linc test %s
+// RUN: %linc build %s -o %t && %t
+
+import "std/math.lin"
+import "std/logic.lin"
+
+main: func [
+    argc [i32!]
+    return: [i32!]
+][
+    a: true
+    b: false
+
+    either (and a a) [
+        either (not (and a b)) [
+            either (or a b) [
+                either (not (or b b)) [
+                    either (not b) [
+                        0
+                    ][
+                        1
+                    ]
+                ][
+                    1
+                ]
+            ][
+                1
+            ]
+        ][
+            1
+        ]
+    ][
+        1
+    ]
+]

@@ -310,6 +310,19 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
         }
     }
 
+    if (ident.length == 4 && strncmp(ident.start, "true", 4) == 0) {
+        AstNode *node = createNode(parser, AST_BOOL);
+        if (!node) return NULL;
+        node->as.boolean.value = true;
+        return node;
+    }
+    if (ident.length == 5 && strncmp(ident.start, "false", 5) == 0) {
+        AstNode *node = createNode(parser, AST_BOOL);
+        if (!node) return NULL;
+        node->as.boolean.value = false;
+        return node;
+    }
+
     AstNode *node = createNode(parser, AST_IDENTIFIER);
     if (!node) return NULL;
     node->as.identifier.name = ident.start;
@@ -597,6 +610,7 @@ void printAst(AstNode *node, int depth) {
         case AST_NUMBER: printf("Number(%d)\n", node->as.number.value); break;
         case AST_FLOAT: printf("Float(%f)\n", node->as.f_number.value); break;
         case AST_STRING: printf("String(%.*s)\n", node->as.string.length, node->as.string.value); break;
+        case AST_BOOL: printf("Bool(%s)\n", node->as.boolean.value ? "true" : "false"); break;
         case AST_IDENTIFIER: printf("Ident(%.*s)\n", node->as.identifier.length, node->as.identifier.name); break;
         case AST_BINARY:
             printf("Binary(%d)\n", node->as.binary.op);

@@ -159,7 +159,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         return nullVal;
     }
 
-    if (expr->type == AST_NUMBER) {
+    if (expr->type == AST_NUMBER || expr->type == AST_BOOL) {
         MlirOperationState state = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
 
         MlirAttribute typeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("omega"));
@@ -169,7 +169,8 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         MlirAttribute labelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("num"));
         MlirNamedAttribute labelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), labelAttr);
 
-        MlirAttribute valAttr = mlirIntegerAttrGet(mlirIntegerTypeGet(ctx, 32), expr->as.number.value);
+        int32_t val = (expr->type == AST_NUMBER) ? expr->as.number.value : (expr->as.boolean.value ? 1 : 0);
+        MlirAttribute valAttr = mlirIntegerAttrGet(mlirIntegerTypeGet(ctx, 32), val);
         MlirNamedAttribute valNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("value")), valAttr);
 
         MlirNamedAttribute attrs[] = {typeNamedAttr, polNamedAttr, labelNamedAttr, valNamedAttr};
@@ -183,6 +184,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         mlirBlockAppendOwnedOperation(block, op);
         return mlirOperationGetResult(op, 0); // principal port
     }
+
 
     if (expr->type == AST_FLOAT) {
         MlirOperationState state = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);

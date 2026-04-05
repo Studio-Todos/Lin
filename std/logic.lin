@@ -1,0 +1,36 @@
+// std/logic.lin
+// Standard logic operations for Lin.
+
+// Logical AND
+and: mlir-op [
+    inputs:  [a [i32!] b [i32!]]
+    outputs: [res [i32!]]
+] {
+    %c0 = llvm.mlir.constant(0 : i32) : i32
+    %res_cmp1 = llvm.icmp "ne" %a, %c0 : i32
+    %res_cmp2 = llvm.icmp "ne" %b, %c0 : i32
+    %res_and = llvm.and %res_cmp1, %res_cmp2 : i1
+    %res = llvm.zext %res_and : i1 to i32
+}
+
+// Logical OR
+or: mlir-op [
+    inputs:  [a [i32!] b [i32!]]
+    outputs: [res [i32!]]
+] {
+    %c0 = llvm.mlir.constant(0 : i32) : i32
+    %res_cmp1 = llvm.icmp "ne" %a, %c0 : i32
+    %res_cmp2 = llvm.icmp "ne" %b, %c0 : i32
+    %res_or = llvm.or %res_cmp1, %res_cmp2 : i1
+    %res = llvm.zext %res_or : i1 to i32
+}
+
+// Logical NOT
+not: mlir-op [
+    inputs:  [a [i32!]]
+    outputs: [res [i32!]]
+] {
+    %c0 = llvm.mlir.constant(0 : i32) : i32
+    %res_cmp = llvm.icmp "eq" %a, %c0 : i32
+    %res = llvm.zext %res_cmp : i1 to i32
+}
