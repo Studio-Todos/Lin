@@ -126,6 +126,7 @@ static int checkstyleAst(AstNode *node) {
             break;
         }
         case AST_NUMBER:
+        case AST_BOOL:
         case AST_STRING:
         case AST_MLIR_OP:
             break;

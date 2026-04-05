@@ -65,13 +65,15 @@ typedef enum {
     AST_STRING,
     AST_ASSIGNMENT,
     AST_MLIR_OP,
-    AST_IMPORT
+    AST_IMPORT,
+    AST_BOOL
 } AstNodeType;
 
 typedef struct AstNode {
     AstNodeType type;
     union {
         struct { int32_t value; } number;
+        struct { bool value; } boolean;
         struct { float value; } f_number;
         struct { const char *name; int length; } identifier;
         struct { struct AstNode *left; TokenType op; struct AstNode *right; } binary;
