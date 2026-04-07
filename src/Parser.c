@@ -203,7 +203,7 @@ static AstNode* parseExpression(Parser *parser);
 static AstNode* parseStatement(Parser *parser);
 
 static AstNode* createNode(Parser *parser, AstNodeType type) {
-    AstNode *node = (AstNode*)malloc(sizeof(AstNode));
+    AstNode *node = (AstNode*)calloc(1, sizeof(AstNode));
     if (!node) {
         error(parser, "Out of memory");
         return NULL;
