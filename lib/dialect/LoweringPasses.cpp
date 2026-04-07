@@ -434,8 +434,8 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
     // Allocate global strings
     for (auto &pair : strPayloads) {
-        std::string strKey = pair.first().str();
-        std::string strContent = pair.second;
+        StringRef strKey = pair.first();
+        const std::string &strContent = pair.second;
 
         auto strType = LLVM::LLVMArrayType::get(builder.getI8Type(), strContent.size() + 1);
         auto globalStr = builder.create<LLVM::GlobalOp>(module.getLoc(), strType, true, LLVM::Linkage::Internal, strKey, builder.getStringAttr(StringRef(strContent.c_str(), strContent.size() + 1)));
@@ -961,7 +961,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 Block *caseBlock = llvmFunc.addBlock();
                 builder.setInsertionPointToStart(caseBlock);
 
-                std::string strKey = pair.first().str();
+                StringRef strKey = pair.first();
 
                 Value threeC = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(3));
                 Value outOffset = builder.create<LLVM::AddOp>(funcOp.getLoc(), allocCount, threeC);
