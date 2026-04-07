@@ -164,8 +164,6 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         return nullVal;
     }
 
-    // We need access to module for while loop. Since it's not passed, we can find it by walking up the op chain,
-    // or pass it. Wait, `mlirBlockGetParentOperation` on `block` might be `func.func`, and its parent is `builtin.module`.
     MlirOperation parentOp = mlirBlockGetParentOperation(block);
     MlirOperation moduleOp = parentOp;
     while (!mlirOperationIsNull(moduleOp)) {
@@ -532,11 +530,10 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         mlirBlockAppendOwnedOperation(loopBlock, recOp);
 
         MlirValue recP0 = mlirOperationGetResult(recOp, 0); // principal result
-        MlirValue recP1 = mlirOperationGetResult(recOp, 1); // arg 1 (if there's more args we'd need more omega nodes, but for MVP we assume 1-2 or we just use p1 as a dummy)
+        MlirValue recP1 = mlirOperationGetResult(recOp, 1); // arg 1
 
-        // Link Dummy Arg for MVP (since Lin's Interaction Net macros only handle 1-2 args right now on omega nodes)
+        // Link Dummy Arg for MVP
         MlirOperationState dummyLink = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-        // We will just pass the body result as the dummy state argument
         MlirValue dummyLinkOps[] = {recP1, body_res};
         mlirOperationStateAddOperands(&dummyLink, 2, dummyLinkOps);
         mlirBlockAppendOwnedOperation(loopBlock, mlirOperationCreate(&dummyLink));
@@ -624,7 +621,6 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
 
         // Link initial state (just a dummy variable since MVP omegas take 2 auxiliary max)
         MlirOperationState callLink = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-        // We link it to an eraser since we don't have a real state to pass for this MVP loop
         MlirOperationState callEraState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
         mlirOperationStateAddAttributes(&callEraState, 3, eraAttrs);
         mlirOperationStateAddResults(&callEraState, 3, eraTypes);
