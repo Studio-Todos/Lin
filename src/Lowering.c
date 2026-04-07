@@ -309,18 +309,8 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         MlirNamedAttribute polNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), polAttr);
 
         const char* labelStr = "add";
-        switch (expr->as.binary.op) {
-            case TOKEN_MINUS: labelStr = "sub"; break;
-            case TOKEN_LESS: labelStr = "lt"; break;
-            case TOKEN_STAR: labelStr = "mul"; break;
-            case TOKEN_SLASH: labelStr = "div"; break;
-            case TOKEN_EQUAL_EQUAL: labelStr = "eq"; break;
-            case TOKEN_GREATER: labelStr = "gt"; break;
-            case TOKEN_LESS_EQUAL: labelStr = "le"; break;
-            case TOKEN_GREATER_EQUAL: labelStr = "ge"; break;
-            case TOKEN_BANG_EQUAL: labelStr = "ne"; break;
-            default: labelStr = "add"; break;
-        }
+        if (expr->as.binary.op == TOKEN_MINUS) labelStr = "sub";
+        else if (expr->as.binary.op == TOKEN_LESS) labelStr = "lt";
 
         MlirAttribute labelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(labelStr));
         MlirNamedAttribute labelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), labelAttr);

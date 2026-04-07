@@ -145,38 +145,14 @@ Token scanToken(Lexer *lexer) {
         case ']': return makeToken(lexer, TOKEN_RBRACKET);
         case '(': return makeToken(lexer, TOKEN_LPAREN);
         case ')': return makeToken(lexer, TOKEN_RPAREN);
-        case '!':
-            if (peek(lexer) == '=') {
-                advance(lexer);
-                return makeToken(lexer, TOKEN_BANG_EQUAL);
-            }
-            return makeToken(lexer, TOKEN_BANG);
+        case '!': return makeToken(lexer, TOKEN_BANG);
         case '{': return makeToken(lexer, TOKEN_LBRACE);
         case '}': return makeToken(lexer, TOKEN_RBRACE);
-        case '<':
-            if (peek(lexer) == '=') {
-                advance(lexer);
-                return makeToken(lexer, TOKEN_LESS_EQUAL);
-            }
-            return makeToken(lexer, TOKEN_LESS);
-        case '>':
-            if (peek(lexer) == '=') {
-                advance(lexer);
-                return makeToken(lexer, TOKEN_GREATER_EQUAL);
-            }
-            return makeToken(lexer, TOKEN_GREATER);
+        case '<': return makeToken(lexer, TOKEN_LESS);
         case '+': return makeToken(lexer, TOKEN_PLUS);
         case '-': return makeToken(lexer, TOKEN_MINUS);
-        case '*': return makeToken(lexer, TOKEN_STAR);
         case '%': return makeToken(lexer, TOKEN_IDENTIFIER);
-        case '=':
-            if (peek(lexer) == '=') {
-                advance(lexer);
-                return makeToken(lexer, TOKEN_EQUAL_EQUAL);
-            }
-            return makeToken(lexer, TOKEN_IDENTIFIER);
-        case '/':
-            return makeToken(lexer, TOKEN_SLASH);
+        case '=': return makeToken(lexer, TOKEN_IDENTIFIER);
         case '.': return makeToken(lexer, TOKEN_IDENTIFIER);
         case ',': return makeToken(lexer, TOKEN_IDENTIFIER);
     }
@@ -403,10 +379,10 @@ static AstNode* parsePrimary(Parser *parser) {
     }
 }
 
-static AstNode* parseFactor(Parser *parser) {
+static AstNode* parseExpression(Parser *parser) {
     AstNode *expr = parsePrimary(parser);
 
-    while (parser->current.type == TOKEN_STAR || parser->current.type == TOKEN_SLASH) {
+    while (parser->current.type == TOKEN_LESS || parser->current.type == TOKEN_PLUS || parser->current.type == TOKEN_MINUS) {
         TokenType op = parser->current.type;
         parserAdvance(parser);
         AstNode *right = parsePrimary(parser);
@@ -418,62 +394,6 @@ static AstNode* parseFactor(Parser *parser) {
     }
 
     return expr;
-}
-
-static AstNode* parseTerm(Parser *parser) {
-    AstNode *expr = parseFactor(parser);
-
-    while (parser->current.type == TOKEN_PLUS || parser->current.type == TOKEN_MINUS) {
-        TokenType op = parser->current.type;
-        parserAdvance(parser);
-        AstNode *right = parseFactor(parser);
-        AstNode *binary = createNode(parser, AST_BINARY);
-        binary->as.binary.left = expr;
-        binary->as.binary.op = op;
-        binary->as.binary.right = right;
-        expr = binary;
-    }
-
-    return expr;
-}
-
-static AstNode* parseComparison(Parser *parser) {
-    AstNode *expr = parseTerm(parser);
-
-    while (parser->current.type == TOKEN_LESS || parser->current.type == TOKEN_LESS_EQUAL ||
-           parser->current.type == TOKEN_GREATER || parser->current.type == TOKEN_GREATER_EQUAL) {
-        TokenType op = parser->current.type;
-        parserAdvance(parser);
-        AstNode *right = parseTerm(parser);
-        AstNode *binary = createNode(parser, AST_BINARY);
-        binary->as.binary.left = expr;
-        binary->as.binary.op = op;
-        binary->as.binary.right = right;
-        expr = binary;
-    }
-
-    return expr;
-}
-
-static AstNode* parseEquality(Parser *parser) {
-    AstNode *expr = parseComparison(parser);
-
-    while (parser->current.type == TOKEN_EQUAL_EQUAL || parser->current.type == TOKEN_BANG_EQUAL) {
-        TokenType op = parser->current.type;
-        parserAdvance(parser);
-        AstNode *right = parseComparison(parser);
-        AstNode *binary = createNode(parser, AST_BINARY);
-        binary->as.binary.left = expr;
-        binary->as.binary.op = op;
-        binary->as.binary.right = right;
-        expr = binary;
-    }
-
-    return expr;
-}
-
-static AstNode* parseExpression(Parser *parser) {
-    return parseEquality(parser);
 }
 
 static AstNode* parseBlock(Parser *parser) {

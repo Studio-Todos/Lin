@@ -1,4 +1,0 @@
-// RUN: %parser_test | FileCheck %s
-
-// CHECK: test_binary_precedence passed
-// CHECK: All parser tests passed!

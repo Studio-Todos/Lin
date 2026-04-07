@@ -1,0 +1,57 @@
+// RUN: %linc build %s -o %t && %t
+// RUN: %linc build %s --gpu -o %t_gpu && %t_gpu
+
+import "std/string.lin"
+import "std/math.lin"
+
+test_strings: func [
+    argc [i32!]
+    return: [i32!]
+][
+    state: 0
+
+    // We can use string literals directly since they evaluate to pointers
+    str1: "Hello, World!"
+    str2: "Hello, World!"
+    str3: "Hello, Lin!"
+
+    // Test strlen
+    len1_res: (strlen state str1)
+    state: len1_res.0
+    len1: len1_res.1
+
+    len3_res: (strlen state str3)
+    state: len3_res.0
+    len3: len3_res.1
+
+    // "Hello, World!" is 13 chars
+    is_len_correct: (eq len1 13)
+
+    // Test streq
+    is_eq1_res: (streq state str1 str2)
+    state: is_eq1_res.0
+    is_eq1: is_eq1_res.1
+
+    is_eq2_res: (streq state str1 str3)
+    state: is_eq2_res.0
+    is_eq2: is_eq2_res.1
+
+    // Expected: len correct, str1 == str2, str1 != str3
+    // is_len_correct == 1
+    // is_eq1 == 1
+    // is_eq2 == 0
+
+    either (eq is_len_correct 0) [
+        1 // Fail length
+    ][
+        either (eq is_eq1 0) [
+            2 // Fail equality
+        ][
+            either (eq is_eq2 1) [
+                3 // Fail inequality
+            ][
+                0 // Pass
+            ]
+        ]
+    ]
+]

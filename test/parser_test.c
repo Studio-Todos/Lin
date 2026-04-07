@@ -126,38 +126,6 @@ void test_import() {
     printf("test_import passed\n");
 }
 
-void test_binary_precedence() {
-    const char *source = "1 + 2 * 3 == 7";
-    AstNode *ast = parse(source);
-    assert(ast != NULL);
-    assert(ast->type == AST_BLOCK);
-    assert(ast->as.block.count == 1);
-
-    AstNode *eq = ast->as.block.statements[0];
-    assert(eq->type == AST_BINARY);
-    assert(eq->as.binary.op == TOKEN_EQUAL_EQUAL);
-
-    AstNode *add = eq->as.binary.left;
-    assert(add->type == AST_BINARY);
-    assert(add->as.binary.op == TOKEN_PLUS);
-    assert(add->as.binary.left->type == AST_NUMBER);
-    assert(add->as.binary.left->as.number.value == 1);
-
-    AstNode *mul = add->as.binary.right;
-    assert(mul->type == AST_BINARY);
-    assert(mul->as.binary.op == TOKEN_STAR);
-    assert(mul->as.binary.left->type == AST_NUMBER);
-    assert(mul->as.binary.left->as.number.value == 2);
-    assert(mul->as.binary.right->type == AST_NUMBER);
-    assert(mul->as.binary.right->as.number.value == 3);
-
-    assert(eq->as.binary.right->type == AST_NUMBER);
-    assert(eq->as.binary.right->as.number.value == 7);
-
-    freeAst(ast);
-    printf("test_binary_precedence passed\n");
-}
-
 int main() {
     test_number();
     test_string();
@@ -168,7 +136,6 @@ int main() {
     test_func_decl();
     test_mlir_op();
     test_import();
-    test_binary_precedence();
     printf("All parser tests passed!\n");
     return 0;
 }

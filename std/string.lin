@@ -1,0 +1,30 @@
+// std/string.lin
+// Standard string operations for Lin.
+// Uses `mlir-op` to ensure the memory state token is safely threaded,
+// preventing Use-After-Free in Lin's massively parallel execution model.
+
+// Calculates the length of a null-terminated string.
+strlen: mlir-op [
+    inputs:  [state [i64!] str [i64!]]
+    outputs: [res_state [i64!] len [i32!]]
+] {
+    %ptr = llvm.inttoptr %str : i64 to !llvm.ptr
+    %len_i64 = llvm.call @strlen(%ptr) : (!llvm.ptr) -> i64
+    %len = llvm.trunc %len_i64 : i64 to i32
+    %res_state = llvm.add %state, %state : i64
+}
+
+// Compares two null-terminated strings for exact equality.
+// Returns 1 if true, 0 if false.
+streq: mlir-op [
+    inputs:  [state [i64!] str1 [i64!] str2 [i64!]]
+    outputs: [res_state [i64!] is_eq [i32!]]
+] {
+    %ptr1 = llvm.inttoptr %str1 : i64 to !llvm.ptr
+    %ptr2 = llvm.inttoptr %str2 : i64 to !llvm.ptr
+    %cmp_res = llvm.call @strcmp(%ptr1, %ptr2) : (!llvm.ptr, !llvm.ptr) -> i32
+    %c0 = llvm.mlir.constant(0 : i32) : i32
+    %is_eq_i1 = llvm.icmp "eq" %cmp_res, %c0 : i32
+    %is_eq = llvm.zext %is_eq_i1 : i1 to i32
+    %res_state = llvm.add %state, %state : i64
+}

@@ -1,0 +1,44 @@
+// RUN: %linc build %s -o %t && %t
+// RUN: %linc build %s --gpu -o %t_gpu && %t_gpu
+
+import "std/array.lin"
+import "std/math.lin"
+
+test_arrays: func [
+    argc [i32!]
+    return: [i32!]
+][
+    state: 0
+
+    new_res: (array_new state 10)
+    state: new_res.0
+    arr: new_res.1
+
+    // Set arr[5] = 42
+    state: (array_set state arr 5 42)
+
+    // Set arr[6] = 99
+    state: (array_set state arr 6 99)
+
+    // Get arr[5]
+    get1: (array_get state arr 5)
+    state: get1.0
+    val1: get1.1
+
+    // Get arr[6]
+    get2: (array_get state arr 6)
+    state: get2.0
+    val2: get2.1
+
+    // Safely free the array since state forces it to wait for reads
+    state: (array_free state arr)
+
+    sum: (add val1 val2)
+
+    // Expected: 42 + 99 = 141
+    either (neq sum 141) [
+        1 // Fail
+    ][
+        0 // Pass
+    ]
+]

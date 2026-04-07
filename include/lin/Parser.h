@@ -19,13 +19,6 @@ typedef enum {
     TOKEN_LESS,         // <
     TOKEN_PLUS,         // +
     TOKEN_MINUS,        // -
-    TOKEN_STAR,         // *
-    TOKEN_SLASH,        // /
-    TOKEN_EQUAL_EQUAL,  // ==
-    TOKEN_GREATER,      // >
-    TOKEN_LESS_EQUAL,   // <=
-    TOKEN_GREATER_EQUAL,// >=
-    TOKEN_BANG_EQUAL,   // !=
     // Keywords
     TOKEN_FUNC,
     TOKEN_RETURN,
