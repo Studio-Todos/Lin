@@ -1,0 +1,82 @@
+// std/array.lin
+// Standard array operations for Lin.
+// Uses `mlir-op` to ensure the memory state token is safely threaded,
+// preventing Use-After-Free in Lin's massively parallel execution model.
+
+// Allocates an array of `capacity` i32 elements.
+array_new: mlir-op [
+    inputs:  [state [i64!] capacity [i64!]]
+    outputs: [res_state [i64!] arr [i64!]]
+] {
+    %four = llvm.mlir.constant(4 : i64) : i64
+    %bytes = llvm.mul %capacity, %four : i64
+    %ptr_res = llvm.call @malloc(%bytes) : (i64) -> !llvm.ptr
+    %arr = llvm.ptrtoint %ptr_res : !llvm.ptr to i64
+    %res_state = llvm.add %state, %state : i64
+}
+
+// Gets an i32 value from the array at `index`.
+array_get: mlir-op [
+    inputs:  [state [i64!] arr [i64!] index [i64!]]
+    outputs: [res_state [i64!] val [i32!]]
+] {
+    %ptr = llvm.inttoptr %arr : i64 to !llvm.ptr
+    %gep = llvm.getelementptr %ptr[%index] : (!llvm.ptr, i64) -> !llvm.ptr, i32
+    %val = llvm.load %gep : !llvm.ptr -> i32
+    %res_state = llvm.add %state, %state : i64
+}
+
+// Sets an i32 value in the array at `index`.
+array_set: mlir-op [
+    inputs:  [state [i64!] arr [i64!] index [i64!] val [i32!]]
+    outputs: [res_state [i64!]]
+] {
+    %ptr = llvm.inttoptr %arr : i64 to !llvm.ptr
+    %gep = llvm.getelementptr %ptr[%index] : (!llvm.ptr, i64) -> !llvm.ptr, i32
+    llvm.store %val, %gep : i32, !llvm.ptr
+    %res_state = llvm.add %state, %state : i64
+}
+
+// Allocates an array of `capacity` i64 elements.
+array64_new: mlir-op [
+    inputs:  [state [i64!] capacity [i64!]]
+    outputs: [res_state [i64!] arr [i64!]]
+] {
+    %eight = llvm.mlir.constant(8 : i64) : i64
+    %bytes = llvm.mul %capacity, %eight : i64
+    %ptr_res = llvm.call @malloc(%bytes) : (i64) -> !llvm.ptr
+    %arr = llvm.ptrtoint %ptr_res : !llvm.ptr to i64
+    %res_state = llvm.add %state, %state : i64
+}
+
+// Gets an i64 value from the array at `index`.
+array64_get: mlir-op [
+    inputs:  [state [i64!] arr [i64!] index [i64!]]
+    outputs: [res_state [i64!] val [i64!]]
+] {
+    %ptr = llvm.inttoptr %arr : i64 to !llvm.ptr
+    %gep = llvm.getelementptr %ptr[%index] : (!llvm.ptr, i64) -> !llvm.ptr, i64
+    %val = llvm.load %gep : !llvm.ptr -> i64
+    %res_state = llvm.add %state, %state : i64
+}
+
+// Sets an i64 value in the array at `index`.
+array64_set: mlir-op [
+    inputs:  [state [i64!] arr [i64!] index [i64!] val [i64!]]
+    outputs: [res_state [i64!]]
+] {
+    %ptr = llvm.inttoptr %arr : i64 to !llvm.ptr
+    %gep = llvm.getelementptr %ptr[%index] : (!llvm.ptr, i64) -> !llvm.ptr, i64
+    llvm.store %val, %gep : i64, !llvm.ptr
+    %res_state = llvm.add %state, %state : i64
+}
+
+// Frees the array memory.
+array_free: mlir-op [
+    inputs:  [state [i64!] arr [i64!]]
+    outputs: [res_state [i64!]]
+] {
+    %ptr_val = llvm.inttoptr %arr : i64 to !llvm.ptr
+    llvm.call @free(%ptr_val) : (!llvm.ptr) -> ()
+    %res_state = llvm.add %state, %state : i64
+}
