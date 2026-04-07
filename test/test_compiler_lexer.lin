@@ -1,0 +1,52 @@
+// RUN: %linc build %s -o %t && %t
+// RUN: %linc build %s --gpu -o %t_gpu && %t_gpu
+
+import "src/compiler/lexer.lin"
+
+main: func [
+    return: [i32!]
+][
+    state: 0
+
+    // Test is_digit
+    is_d1: (is_digit state 48) // '0'
+    is_d2: (is_digit state 57) // '9'
+    is_d3: (is_digit state 65) // 'A'
+
+    // Test is_alpha
+    is_a1: (is_alpha state 97) // 'a'
+    is_a2: (is_alpha state 122) // 'z'
+    is_a3: (is_alpha state 65) // 'A'
+    is_a4: (is_alpha state 48) // '0'
+
+    // Verify
+    either (neq is_d1 1) [
+        1
+    ][
+        either (neq is_d2 1) [
+            2
+        ][
+            either (neq is_d3 0) [
+                3
+            ][
+                either (neq is_a1 1) [
+                    4
+                ][
+                    either (neq is_a2 1) [
+                        5
+                    ][
+                        either (neq is_a3 1) [
+                            6
+                        ][
+                            either (neq is_a4 0) [
+                                7
+                            ][
+                                0
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+    ]
+]

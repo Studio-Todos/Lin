@@ -1,0 +1,55 @@
+// src/compiler/lexer.lin
+// Lexer for the Lin compiler bootstrap
+
+import "src/compiler/token.lin"
+import "std/mem.lin"
+import "std/math.lin"
+import "std/logic.lin"
+import "std/cast.lin"
+
+// Character matching utilities
+is_digit: func [
+    state [i64!]
+    c [i32!]
+    return: [i32!]
+][
+    // '0' is 48, '9' is 57
+    is_ge: (ge c 48)
+    is_le: (le c 57)
+    (and is_ge is_le)
+]
+
+is_alpha: func [
+    state [i64!]
+    c [i32!]
+    return: [i32!]
+][
+    // 'a' is 97, 'z' is 122
+    // 'A' is 65, 'Z' is 90
+    is_lower_ge: (ge c 97)
+    is_lower_le: (le c 122)
+    is_lower: (and is_lower_ge is_lower_le)
+
+    is_upper_ge: (ge c 65)
+    is_upper_le: (le c 90)
+    is_upper: (and is_upper_ge is_upper_le)
+
+    (or is_lower is_upper)
+]
+
+is_ident_char: func [
+    state [i64!]
+    c [i32!]
+    return: [i32!]
+][
+    // alpha, digit, '_', '-'
+    // '_' is 95, '-' is 45
+    is_a: (is_alpha state c)
+    is_d: (is_digit state c)
+    is_us: (eq c 95)
+    is_dash: (eq c 45)
+
+    res1: (or is_a is_d)
+    res2: (or res1 is_us)
+    (or res2 is_dash)
+]

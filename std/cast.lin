@@ -1,0 +1,58 @@
+// std/cast.lin
+// Standard type conversion operations for Lin.
+
+i32-to-f32: mlir-op [
+    inputs:  [a [i32!]]
+    outputs: [res [f32!]]
+] {
+    %res = llvm.sitofp %a : i32 to f32
+}
+
+f32-to-i32: mlir-op [
+    inputs:  [a [f32!]]
+    outputs: [res [i32!]]
+] {
+    %res = llvm.fptosi %a : f32 to i32
+}
+
+i64-to-f64: mlir-op [
+    inputs:  [a [i64!]]
+    outputs: [res [f64!]]
+] {
+    %res = llvm.sitofp %a : i64 to f64
+}
+
+f64-to-i64: mlir-op [
+    inputs:  [a [f64!]]
+    outputs: [res [i64!]]
+] {
+    %res = llvm.fptosi %a : f64 to i64
+}
+
+i32-to-i64: mlir-op [
+    inputs:  [a [i32!]]
+    outputs: [res [i64!]]
+] {
+    %res = llvm.sext %a : i32 to i64
+}
+
+i64-to-i32: mlir-op [
+    inputs:  [a [i64!]]
+    outputs: [res [i32!]]
+] {
+    %res = llvm.trunc %a : i64 to i32
+}
+
+f32-to-f64: mlir-op [
+    inputs:  [a [f32!]]
+    outputs: [res [f64!]]
+] {
+    %res = llvm.fpext %a : f32 to f64
+}
+
+f64-to-f32: mlir-op [
+    inputs:  [a [f64!]]
+    outputs: [res [f32!]]
+] {
+    %res = llvm.fptrunc %a : f64 to f32
+}
