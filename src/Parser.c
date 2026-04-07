@@ -100,6 +100,7 @@ static TokenType identifierType(const Lexer *lexer) {
             break;
         case 'm': return checkKeyword(lexer, 1, 6, "lir-op", TOKEN_MLIR_OP);
         case 'r': return checkKeyword(lexer, 1, 5, "eturn", TOKEN_RETURN);
+        case 'w': return checkKeyword(lexer, 1, 4, "hile", TOKEN_WHILE);
     }
     return TOKEN_IDENTIFIER;
 }
@@ -423,6 +424,15 @@ static AstNode* parseBlock(Parser *parser) {
     return block;
 }
 
+static AstNode* parseWhile(Parser *parser) {
+    parserAdvance(parser);
+    AstNode *while_node = createNode(parser, AST_WHILE);
+    if (!while_node) return NULL;
+    while_node->as.while_loop.condition = parseBlock(parser);
+    while_node->as.while_loop.body = parseBlock(parser);
+    return while_node;
+}
+
 static AstNode* parseStatement(Parser *parser) {
     if (parser->current.type == TOKEN_EITHER) {
         parserAdvance(parser);
@@ -432,6 +442,10 @@ static AstNode* parseStatement(Parser *parser) {
         either->as.either.true_branch = parseBlock(parser);
         either->as.either.false_branch = parseBlock(parser);
         return either;
+    }
+
+    if (parser->current.type == TOKEN_WHILE) {
+        return parseWhile(parser);
     }
 
     return parseExpression(parser);
@@ -527,6 +541,9 @@ void freeAst(AstNode *node) {
         freeAst(node->as.either.condition);
         freeAst(node->as.either.true_branch);
         freeAst(node->as.either.false_branch);
+    } else if (node->type == AST_WHILE) {
+        freeAst(node->as.while_loop.condition);
+        freeAst(node->as.while_loop.body);
     } else if (node->type == AST_BLOCK) {
         for (int i=0; i<node->as.block.count; i++) freeAst(node->as.block.statements[i]);
         free(node->as.block.statements);
@@ -626,6 +643,11 @@ void printAst(AstNode *node, int depth) {
             printAst(node->as.either.condition, depth + 1);
             printAst(node->as.either.true_branch, depth + 1);
             printAst(node->as.either.false_branch, depth + 1);
+            break;
+        case AST_WHILE:
+            printf("While\n");
+            printAst(node->as.while_loop.condition, depth + 1);
+            printAst(node->as.while_loop.body, depth + 1);
             break;
         case AST_BLOCK:
             printf("Block\n");
