@@ -161,6 +161,11 @@ int main(int argc, char **argv) {
       return 1;
   }
 
+  if (!outputBinary.empty() && outputBinary[0] == '-') {
+      std::cerr << "Error: Output binary name cannot start with a hyphen to prevent flag injection.\n";
+      return 1;
+  }
+
   std::ifstream file(sourceFile);
   if (!file.is_open()) {
       std::cerr << "Failed to open file: " << sourceFile << "\n";
