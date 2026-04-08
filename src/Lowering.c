@@ -144,12 +144,6 @@ static int count_var_usage(AstNode *node, const char *name, int name_len) {
         return c;
     }
 
-    if (node->type == AST_EITHER) {
-        return count_var_usage(node->as.either.condition, name, name_len) +
-               count_var_usage(node->as.either.true_branch, name, name_len) +
-               count_var_usage(node->as.either.false_branch, name, name_len);
-    }
-
     if (node->type == AST_WHILE) {
         return count_var_usage(node->as.while_loop.condition, name, name_len) +
                count_var_usage(node->as.while_loop.body, name, name_len);
@@ -394,69 +388,6 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         return lastVal;
     }
 
-    if (expr->type == AST_EITHER) {
-        MlirValue cond = lowerExpression(ctx, block, loc, expr->as.either.condition, env);
-        MlirValue t_branch = lowerExpression(ctx, block, loc, expr->as.either.true_branch, env);
-        MlirValue f_branch = lowerExpression(ctx, block, loc, expr->as.either.false_branch, env);
-
-        // Create a native interaction net conditional routing mechanism.
-        // We use a specialized 'omega' node labeled "branch" that consumes the condition
-        // and routes either t_branch or f_branch based on the condition's value.
-        // For strict interaction nets, we must link both branches into the branch node's auxiliary ports.
-
-        MlirOperationState state = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
-
-        MlirAttribute typeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("omega"));
-        MlirNamedAttribute typeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), typeAttr);
-        MlirAttribute polAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("-"));
-        MlirNamedAttribute polNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), polAttr);
-        MlirAttribute labelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("branch"));
-        MlirNamedAttribute labelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), labelAttr);
-
-        MlirNamedAttribute attrs[] = {typeNamedAttr, polNamedAttr, labelNamedAttr};
-        mlirOperationStateAddAttributes(&state, 3, attrs);
-
-        MlirType portType = getPicPortType(ctx);
-        MlirType types[] = {portType, portType, portType};
-        mlirOperationStateAddResults(&state, 3, types);
-        MlirOperation op = mlirOperationCreate(&state);
-        mlirBlockAppendOwnedOperation(block, op);
-
-        MlirValue branchP0 = mlirOperationGetResult(op, 0); // condition input
-        MlirValue branchP1 = mlirOperationGetResult(op, 1); // routes to t_branch
-        MlirValue branchP2 = mlirOperationGetResult(op, 2); // routes to f_branch
-
-        // Link condition to principal port
-        MlirOperationState linkCond = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-        MlirValue linkCondOps[] = {branchP0, cond};
-        mlirOperationStateAddOperands(&linkCond, 2, linkCondOps);
-        mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkCond));
-
-        // Link true branch
-        if (!mlirValueIsNull(t_branch)) {
-            MlirOperationState linkT = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-            MlirValue linkTOps[] = {branchP1, t_branch};
-            mlirOperationStateAddOperands(&linkT, 2, linkTOps);
-            mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkT));
-        }
-
-        // Link false branch
-        if (!mlirValueIsNull(f_branch)) {
-            MlirOperationState linkF = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-            MlirValue linkFOps[] = {branchP2, f_branch};
-            mlirOperationStateAddOperands(&linkF, 2, linkFOps);
-            mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkF));
-        }
-
-        // In a purely functional interaction net, the conditional node itself evaluates and outputs the chosen branch.
-        // Wait, `branch` node has 3 ports: principal (cond), p1 (true), p2 (false).
-        // How does it return the result? It needs 4 ports if it also returns!
-        // Or it operates as a destructor (gamma-), consuming the boolean (gamma+) and connecting the return wire to p1 or p2.
-        // For MVP, we'll return a newly created wire that the runtime will graft the result into, or just return the condition for verification equivalence to keep tests passing.
-        // Let's return the principal port.
-        return cond;
-    }
-
     if (expr->type == AST_WHILE) {
         // Lower to recursion.
         // We dynamically generate an MLIR function that represents the loop.
@@ -538,7 +469,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         mlirOperationStateAddOperands(&dummyLink, 2, dummyLinkOps);
         mlirBlockAppendOwnedOperation(loopBlock, mlirOperationCreate(&dummyLink));
 
-        // Loop Either node
+        // Loop branch node
         MlirOperationState eitherState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
         MlirAttribute eitherTypeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("omega"));
         MlirNamedAttribute eitherTypeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), eitherTypeAttr);

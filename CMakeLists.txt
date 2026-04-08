@@ -9,6 +9,9 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -lc")
 
+# Workaround for nixos ncurses bug
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--allow-shlib-undefined")
+
 find_package(MLIR REQUIRED CONFIG)
 
 message(STATUS "Found MLIR ${MLIR_VERSION} at ${MLIR_DIR}")

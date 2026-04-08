@@ -109,12 +109,6 @@ static int checkstyleAst(AstNode *node) {
             errors += checkstyleAst(node->as.binary.right);
             break;
         }
-        case AST_EITHER: {
-            errors += checkstyleAst(node->as.either.condition);
-            errors += checkstyleAst(node->as.either.true_branch);
-            errors += checkstyleAst(node->as.either.false_branch);
-            break;
-        }
         case AST_BLOCK: {
             for (int i = 0; i < node->as.block.count; ++i) {
                 errors += checkstyleAst(node->as.block.statements[i]);

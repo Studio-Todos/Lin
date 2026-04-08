@@ -22,7 +22,6 @@ typedef enum {
     // Keywords
     TOKEN_FUNC,
     TOKEN_RETURN,
-    TOKEN_EITHER,
     TOKEN_WHILE,
     TOKEN_I1,
     TOKEN_I8,
@@ -60,7 +59,6 @@ typedef enum {
     AST_IDENTIFIER,
     AST_BINARY,
     AST_CALL,
-    AST_EITHER,
     AST_BLOCK,
     AST_FUNC_DECL,
     AST_STRING,
@@ -80,7 +78,6 @@ typedef struct AstNode {
         struct { const char *name; int length; } identifier;
         struct { struct AstNode *left; TokenType op; struct AstNode *right; } binary;
         struct { const char *callee; int callee_len; struct AstNode **args; int arg_count; int capacity; } call;
-        struct { struct AstNode *condition; struct AstNode *true_branch; struct AstNode *false_branch; } either;
         struct { struct AstNode **statements; int count; int capacity; } block;
         struct {
             const char *name;

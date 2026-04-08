@@ -1,0 +1,18 @@
+// std/loop.lin
+// Standard loop helpers utilizing native MLIR scf loops for iteration over bounds.
+// Helps avoid generating deep recursive Interaction Net structures for simple array logic.
+
+loop_n: mlir-op [
+    inputs:  [state [i64!] n [i32!] cb_ptr [i64!]]
+    outputs: [res_state [i64!]]
+] {
+    // Defines a basic scf.for loop structure running 'n' times.
+    // Future enhancements will map cb_ptr to a callback interaction via indirection.
+    %c0 = llvm.mlir.constant(0 : i32) : i32
+    %c1 = llvm.mlir.constant(1 : i32) : i32
+    scf.for %iv = %c0 to %n step %c1 {
+        // Body of loop executing callback or accumulated logic.
+        // Currently empty iteration stub to map the control flow boundary.
+    }
+    %res_state = llvm.add %state, %state : i64
+}
