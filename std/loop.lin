@@ -1,0 +1,17 @@
+// std/loop.lin
+// Fixed-Bounded Iteration (loop_n)
+
+loop_n: mlir-op [
+    inputs:  [n [i32!]]
+    outputs: [res [i32!]]
+] {
+    %c0_i32 = llvm.mlir.constant(0 : i32) : i32
+    %n_idx = arith.indexcast %n : i32 to index
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %res_idx = scf.for %iv = %c0 to %n_idx step %c1 iter_args(%arg = %c0) -> (index) {
+        %next = arith.addi %arg, %c1 : index
+        scf.yield %next : index
+    }
+    %res = arith.indexcast %res_idx : index to i32
+}

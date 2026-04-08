@@ -1,7 +1,7 @@
 // RUN: %linc build %s -o %t | FileCheck %s
 
 import "std/file.lin"
-import "std/mem.lin"
+import "std/memory.lin"
 
 // CHECK: Parsing Source:
 // CHECK: Generated MLIR
