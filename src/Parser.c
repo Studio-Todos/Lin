@@ -75,7 +75,6 @@ static TokenType checkKeyword(const Lexer *lexer, int start, int length, const c
 
 static TokenType identifierType(const Lexer *lexer) {
     switch (lexer->start[0]) {
-        case 'e': return checkKeyword(lexer, 1, 5, "ither", TOKEN_EITHER);
         case 'f':
             if (lexer->current - lexer->start > 1) {
                 switch (lexer->start[1]) {
@@ -434,16 +433,6 @@ static AstNode* parseWhile(Parser *parser) {
 }
 
 static AstNode* parseStatement(Parser *parser) {
-    if (parser->current.type == TOKEN_EITHER) {
-        parserAdvance(parser);
-        AstNode *either = createNode(parser, AST_EITHER);
-        if (!either) return NULL;
-        either->as.either.condition = parseExpression(parser);
-        either->as.either.true_branch = parseBlock(parser);
-        either->as.either.false_branch = parseBlock(parser);
-        return either;
-    }
-
     if (parser->current.type == TOKEN_WHILE) {
         return parseWhile(parser);
     }
@@ -537,10 +526,6 @@ void freeAst(AstNode *node) {
     } else if (node->type == AST_CALL) {
         for (int i=0; i<node->as.call.arg_count; i++) freeAst(node->as.call.args[i]);
         free(node->as.call.args);
-    } else if (node->type == AST_EITHER) {
-        freeAst(node->as.either.condition);
-        freeAst(node->as.either.true_branch);
-        freeAst(node->as.either.false_branch);
     } else if (node->type == AST_WHILE) {
         freeAst(node->as.while_loop.condition);
         freeAst(node->as.while_loop.body);
@@ -637,12 +622,6 @@ void printAst(AstNode *node, int depth) {
         case AST_CALL:
             printf("Call(%.*s)\n", node->as.call.callee_len, node->as.call.callee);
             for (int i=0; i<node->as.call.arg_count; i++) printAst(node->as.call.args[i], depth + 1);
-            break;
-        case AST_EITHER:
-            printf("Either\n");
-            printAst(node->as.either.condition, depth + 1);
-            printAst(node->as.either.true_branch, depth + 1);
-            printAst(node->as.either.false_branch, depth + 1);
             break;
         case AST_WHILE:
             printf("While\n");
