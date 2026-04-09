@@ -97,6 +97,7 @@ static TokenType identifierType(const Lexer *lexer) {
                 }
             }
             break;
+        case 'e': return checkKeyword(lexer, 1, 5, "ither", TOKEN_EITHER);
         case 'm': return checkKeyword(lexer, 1, 6, "lir-op", TOKEN_MLIR_OP);
         case 'r': return checkKeyword(lexer, 1, 5, "eturn", TOKEN_RETURN);
         case 'w': return checkKeyword(lexer, 1, 4, "hile", TOKEN_WHILE);
@@ -432,9 +433,22 @@ static AstNode* parseWhile(Parser *parser) {
     return while_node;
 }
 
+static AstNode* parseEither(Parser *parser) {
+    parserAdvance(parser);
+    AstNode *either_node = createNode(parser, AST_EITHER);
+    if (!either_node) return NULL;
+    either_node->as.either.condition = parseExpression(parser);
+    either_node->as.either.true_branch = parseBlock(parser);
+    either_node->as.either.false_branch = parseBlock(parser);
+    return either_node;
+}
+
 static AstNode* parseStatement(Parser *parser) {
     if (parser->current.type == TOKEN_WHILE) {
         return parseWhile(parser);
+    }
+    if (parser->current.type == TOKEN_EITHER) {
+        return parseEither(parser);
     }
 
     return parseExpression(parser);
@@ -529,6 +543,10 @@ void freeAst(AstNode *node) {
     } else if (node->type == AST_WHILE) {
         freeAst(node->as.while_loop.condition);
         freeAst(node->as.while_loop.body);
+    } else if (node->type == AST_EITHER) {
+        freeAst(node->as.either.condition);
+        freeAst(node->as.either.true_branch);
+        freeAst(node->as.either.false_branch);
     } else if (node->type == AST_BLOCK) {
         for (int i=0; i<node->as.block.count; i++) freeAst(node->as.block.statements[i]);
         free(node->as.block.statements);
@@ -627,6 +645,12 @@ void printAst(AstNode *node, int depth) {
             printf("While\n");
             printAst(node->as.while_loop.condition, depth + 1);
             printAst(node->as.while_loop.body, depth + 1);
+            break;
+        case AST_EITHER:
+            printf("Either\n");
+            printAst(node->as.either.condition, depth + 1);
+            printAst(node->as.either.true_branch, depth + 1);
+            printAst(node->as.either.false_branch, depth + 1);
             break;
         case AST_BLOCK:
             printf("Block\n");

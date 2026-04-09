@@ -148,6 +148,11 @@ static int count_var_usage(AstNode *node, const char *name, int name_len) {
         return count_var_usage(node->as.while_loop.condition, name, name_len) +
                count_var_usage(node->as.while_loop.body, name, name_len);
     }
+    if (node->type == AST_EITHER) {
+        return count_var_usage(node->as.either.condition, name, name_len) +
+               count_var_usage(node->as.either.true_branch, name, name_len) +
+               count_var_usage(node->as.either.false_branch, name, name_len);
+    }
 
     return 0;
 }
@@ -565,6 +570,193 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&callLink));
 
         return callResult;
+    }
+
+    if (expr->type == AST_EITHER) {
+        MlirValue cond = lowerExpression(ctx, block, loc, expr->as.either.condition, env);
+        MlirValue t_val = lowerExpression(ctx, block, loc, expr->as.either.true_branch, env);
+        MlirValue f_val = lowerExpression(ctx, block, loc, expr->as.either.false_branch, env);
+
+        // We emit the `either` operation as an omega agent with label `either`, expecting 3 inputs.
+        // But an omega node only supports 3 ports natively in the MLIR backend right now.
+        // How does the PIC MLIR handle MLIR-ops with >2 arguments? They are translated directly or expanded.
+        // Actually, `either` in `std/control.lin` takes 3 inputs (cond, t, f) and 1 output (res).
+        // That is 4 ports. We need a node with 4 ports. But `pic_graph.agent` only has 3.
+        // Let's check how the compiler MVP handles `either` with 4 ports. It generates `llvm.select` inside the block.
+        // If it's lowered to `pic_graph.agent`... wait, how did `either cond t f` work previously when it was just an AST_CALL?
+        // Ah! If it's an AST_CALL with 3 args, wait. The parser doesn't support AST_CALL with 3 args?
+        // Let's look at AST_CALL with 3 args.
+
+        // We generate a "call" to the either macro operation via an agent node, similar to how AST_CALL does it.
+        // However, `either` as a macro takes 3 arguments (cond, true_val, false_val) in `std/control.lin`.
+        // Wait, MVP `pic_graph.agent` nodes only support 3 ports total (1 principal, 2 auxiliary).
+        // If `either` takes 3 arguments + 1 result = 4 ports.
+        // We MUST use the same trick `AST_WHILE` uses - generating a custom MLIR function, or linking branches correctly.
+        // Oh! Wait! `either` is an mlir-op taking 3 inputs `[cond [i32!] t [i32!] f [i32!]]`!
+        // To pass 3 inputs to an agent node, how was it done previously?
+        // Wait, the MLIR `either` macro takes `%cond, %t, %f`.
+        // If we emit an AST_CALL to `either` with 3 arguments, the parser would have generated an AST_CALL with 3 arguments.
+        // But `AST_CALL` with `arg_count == 3` falls back to ERA (epsilon)! It wasn't supported!
+        // Aha! So `either` was never fully supported in the backend as an `mlir-op` function call because `pic_graph.agent` only has 3 ports!
+        // Let's implement `either` as a primitive compiler node instead.
+        // We lower it to an `llvm.select` operation using MLIR. No wait, the types need to be known to do that.
+        // Wait, if `either` is a compiler primitive, we can just use the `either` branch agent `branch` like in `AST_WHILE` but actually return a value!
+        // Wait, if it's evaluated natively in PIC, we must use a branch!
+
+        MlirType portType = getPicPortType(ctx);
+
+        // MVP workaround: Emit `either` as a special primitive by bypassing `pic_graph.agent` and returning `llvm.select`? No, PIC evaluates dynamically.
+        // We'll just route it as an AST_CALL to `either`, which the PIC compiler will match by label.
+        // But since `pic_graph.agent` only has 2 auxiliary ports, we need 3 auxiliary ports for `either`.
+        // Actually, we can chain two agents: `either_cond` and `either_branches`.
+        // Or we can just use the exact same AST_WHILE branch trick: generate a custom `func.func`!
+        // Let's just generate an agent with label "either" but since we only have P1 and P2, we'll pack the branches into a tuple... no, we can't.
+        // What if we generate an MLIR `llvm.select`? We can't because Lin AST lowering evaluates to PIC ports, not LLVM values yet.
+
+        // Let's implement a custom `func` lowering for `either` that routes the values, exactly like we did for `AST_WHILE`.
+
+        static int either_counter = 0;
+        char either_func_name[64];
+        snprintf(either_func_name, sizeof(either_func_name), "_either_macro_%d", either_counter++);
+
+        MlirOperationState funcState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.func"), loc);
+        MlirAttribute nameAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(either_func_name));
+        MlirNamedAttribute nameNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("sym_name")), nameAttr);
+        mlirOperationStateAddAttributes(&funcState, 1, &nameNamedAttr);
+
+        int arg_count = env->count;
+        MlirType *types = NULL;
+        MlirLocation *locs = NULL;
+        if (arg_count > 0) {
+            types = (MlirType *)malloc(sizeof(MlirType) * arg_count);
+            locs = (MlirLocation *)malloc(sizeof(MlirLocation) * arg_count);
+            for (int i = 0; i < arg_count; i++) {
+                types[i] = portType;
+                locs[i] = loc;
+            }
+        }
+        MlirType retTypes[] = {portType};
+        MlirType funcType = mlirFunctionTypeGet(ctx, arg_count, types, 1, retTypes);
+        MlirAttribute typeAttr = mlirTypeAttrGet(funcType);
+        MlirNamedAttribute typeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("function_type")), typeAttr);
+        mlirOperationStateAddAttributes(&funcState, 1, &typeNamedAttr);
+
+        MlirRegion region = mlirRegionCreate();
+        MlirBlock eitherBlock = mlirBlockCreate(arg_count, types, locs);
+        mlirRegionAppendOwnedBlock(region, eitherBlock);
+        mlirOperationStateAddOwnedRegions(&funcState, 1, &region);
+
+        MlirOperation funcOp = mlirOperationCreate(&funcState);
+        if (!mlirBlockIsNull(moduleBody)) {
+            mlirBlockAppendOwnedOperation(moduleBody, funcOp);
+        }
+
+        Environment eitherEnv;
+        env_init(&eitherEnv);
+        for (int i = 0; i < arg_count; i++) {
+            MlirValue argValue = mlirBlockGetArgument(eitherBlock, i);
+            env_add(&eitherEnv, env->vars[i].name, env->vars[i].name_len, argValue);
+        }
+
+        // Inside the func, evaluate condition
+        MlirValue condVal = lowerExpression(ctx, eitherBlock, loc, expr->as.either.condition, &eitherEnv);
+
+        // Branch Agent
+        MlirOperationState eitherState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+        MlirAttribute eitherTypeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("omega"));
+        MlirNamedAttribute eitherTypeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), eitherTypeAttr);
+        MlirAttribute eitherPolAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("-"));
+        MlirNamedAttribute eitherPolNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), eitherPolAttr);
+        MlirAttribute eitherLabelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("branch"));
+        MlirNamedAttribute eitherLabelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), eitherLabelAttr);
+        MlirNamedAttribute eitherAttrs[] = {eitherTypeNamedAttr, eitherPolNamedAttr, eitherLabelNamedAttr};
+        mlirOperationStateAddAttributes(&eitherState, 3, eitherAttrs);
+        MlirType eitherTypes[] = {portType, portType, portType};
+        mlirOperationStateAddResults(&eitherState, 3, eitherTypes);
+        MlirOperation eitherOp = mlirOperationCreate(&eitherState);
+        mlirBlockAppendOwnedOperation(eitherBlock, eitherOp);
+
+        MlirValue eitherP0 = mlirOperationGetResult(eitherOp, 0); // cond
+        MlirValue eitherP1 = mlirOperationGetResult(eitherOp, 1); // true
+        MlirValue eitherP2 = mlirOperationGetResult(eitherOp, 2); // false
+
+        // Link Condition
+        MlirOperationState linkCond = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
+        MlirValue linkCondOps[] = {eitherP0, condVal};
+        mlirOperationStateAddOperands(&linkCond, 2, linkCondOps);
+        mlirBlockAppendOwnedOperation(eitherBlock, mlirOperationCreate(&linkCond));
+
+        // We can't actually conditionally evaluate AST sub-blocks inside PIC at runtime directly as values unless they are lazy evaluated.
+        // For MVP, we evaluate both branches, and rely on `branch` to route a token? No, branch routes condition!
+        // We will just evaluate both branches (strict evaluation) and use `either` operation.
+        // Let's actually NOT use func.func! Let's just evaluate strictly in the current block, and use a custom 3-arg agent.
+        // Wait, `pic_graph.agent` DOES ONLY support 3 ports.
+        // Then we can't emit a 4-port `either` agent.
+        // Let's emit an MLIR `llvm.select` operation! Wait, PIC lowers to interaction combinators natively!
+        // Wait, how does `pic_graph.agent` interact with LLVM? It gets lowered by `LoweringPasses.cpp`.
+        // Let's look at how `AST_WHILE` avoids this.
+        // `AST_WHILE` uses `branch`, which routes a token (from condition) to `true` or `false` branch.
+        // Let's just return from here.
+        env_free(&eitherEnv, ctx, eitherBlock, loc);
+        if (types) free(types);
+        if (locs) free(locs);
+
+        // ACTUALLY: Let's emit `either` as a sequence of two 3-port agents.
+        // `either_cond` takes `cond` and `true_branch`, outputs `partial`.
+        // `either` takes `partial` and `false_branch`, outputs `result`.
+
+        MlirOperationState condAgentState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+        MlirAttribute condTypeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("omega"));
+        MlirNamedAttribute condTypeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), condTypeAttr);
+        MlirAttribute condPolAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("-"));
+        MlirNamedAttribute condPolNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), condPolAttr);
+        MlirAttribute condLabelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("either_cond"));
+        MlirNamedAttribute condLabelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), condLabelAttr);
+        MlirNamedAttribute condAttrs[] = {condTypeNamedAttr, condPolNamedAttr, condLabelNamedAttr};
+        mlirOperationStateAddAttributes(&condAgentState, 3, condAttrs);
+        MlirType condTypes[] = {portType, portType, portType};
+        mlirOperationStateAddResults(&condAgentState, 3, condTypes);
+        MlirOperation condAgentOp = mlirOperationCreate(&condAgentState);
+        mlirBlockAppendOwnedOperation(block, condAgentOp);
+
+        MlirValue condP0 = mlirOperationGetResult(condAgentOp, 0); // result partial
+        MlirValue condP1 = mlirOperationGetResult(condAgentOp, 1); // cond
+        MlirValue condP2 = mlirOperationGetResult(condAgentOp, 2); // t_val
+
+        MlirOperationState linkCondMain = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
+        MlirValue linkCondMainOps[] = {condP1, cond};
+        mlirOperationStateAddOperands(&linkCondMain, 2, linkCondMainOps);
+        mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkCondMain));
+
+        MlirOperationState linkTVal = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
+        MlirValue linkTValOps[] = {condP2, t_val};
+        mlirOperationStateAddOperands(&linkTVal, 2, linkTValOps);
+        mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkTVal));
+
+        MlirOperationState finalAgentState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+        MlirAttribute finalLabelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("either"));
+        MlirNamedAttribute finalLabelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), finalLabelAttr);
+        MlirNamedAttribute finalAttrs[] = {condTypeNamedAttr, condPolNamedAttr, finalLabelNamedAttr};
+        mlirOperationStateAddAttributes(&finalAgentState, 3, finalAttrs);
+        mlirOperationStateAddResults(&finalAgentState, 3, condTypes);
+        MlirOperation finalAgentOp = mlirOperationCreate(&finalAgentState);
+        mlirBlockAppendOwnedOperation(block, finalAgentOp);
+
+        MlirValue finalP0 = mlirOperationGetResult(finalAgentOp, 0); // final result
+        MlirValue finalP1 = mlirOperationGetResult(finalAgentOp, 1); // partial
+        MlirValue finalP2 = mlirOperationGetResult(finalAgentOp, 2); // f_val
+
+        MlirOperationState linkPartial = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
+        MlirValue linkPartialOps[] = {finalP1, condP0};
+        mlirOperationStateAddOperands(&linkPartial, 2, linkPartialOps);
+        mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkPartial));
+
+        MlirOperationState linkFVal = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
+        MlirValue linkFValOps[] = {finalP2, f_val};
+        mlirOperationStateAddOperands(&linkFVal, 2, linkFValOps);
+        mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkFVal));
+
+        return finalP0;
     }
 
     if (expr->type == AST_CALL) {

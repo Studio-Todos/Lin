@@ -23,6 +23,7 @@ typedef enum {
     TOKEN_FUNC,
     TOKEN_RETURN,
     TOKEN_WHILE,
+    TOKEN_EITHER,
     TOKEN_I1,
     TOKEN_I8,
     TOKEN_I16,
@@ -66,7 +67,8 @@ typedef enum {
     AST_MLIR_OP,
     AST_IMPORT,
     AST_BOOL,
-    AST_WHILE
+    AST_WHILE,
+    AST_EITHER
 } AstNodeType;
 
 typedef struct AstNode {
@@ -95,6 +97,7 @@ typedef struct AstNode {
         struct { const char *name; int name_len; const char *inputs; int inputs_len; const char *outputs; int outputs_len; const char *mlir_payload; int payload_len; } mlir_op;
         struct { const char *path; int length; struct AstNode *module_block; } import_stmt;
         struct { struct AstNode *condition; struct AstNode *body; } while_loop;
+        struct { struct AstNode *condition; struct AstNode *true_branch; struct AstNode *false_branch; } either;
     } as;
 } AstNode;
 
