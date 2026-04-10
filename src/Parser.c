@@ -358,6 +358,17 @@ static AstNode* parseGroupingExpr(Parser *parser) {
             call->as.call.args[call->as.call.arg_count++] = arg;
         }
         consume(parser, TOKEN_RPAREN, "Expect ')' after arguments.");
+
+        if (call->as.call.arg_count == 3) {
+            AstNode *pair = createNode(parser, AST_PAIR);
+            if (pair) {
+                pair->as.pair.left = call->as.call.args[1];
+                pair->as.pair.right = call->as.call.args[2];
+                call->as.call.args[1] = pair;
+                call->as.call.arg_count = 2;
+            }
+        }
+
         return call;
     } else {
         AstNode *expr = parseExpression(parser);
@@ -435,12 +446,31 @@ static AstNode* parseWhile(Parser *parser) {
 
 static AstNode* parseEither(Parser *parser) {
     parserAdvance(parser);
-    AstNode *either_node = createNode(parser, AST_EITHER);
-    if (!either_node) return NULL;
-    either_node->as.either.condition = parseExpression(parser);
-    either_node->as.either.true_branch = parseBlock(parser);
-    either_node->as.either.false_branch = parseBlock(parser);
-    return either_node;
+    AstNode *call = createNode(parser, AST_CALL);
+    if (!call) return NULL;
+    call->as.call.callee = "either";
+    call->as.call.callee_len = 6;
+    call->as.call.arg_count = 2;
+    call->as.call.capacity = 2;
+    call->as.call.args = malloc(sizeof(AstNode*) * 2);
+    if (!call->as.call.args) {
+        error(parser, "Out of memory");
+        freeAst(call);
+        return NULL;
+    }
+
+    call->as.call.args[0] = parseExpression(parser);
+
+    AstNode *pair = createNode(parser, AST_PAIR);
+    if (!pair) {
+        freeAst(call);
+        return NULL;
+    }
+    pair->as.pair.left = parseBlock(parser);
+    pair->as.pair.right = parseBlock(parser);
+    call->as.call.args[1] = pair;
+
+    return call;
 }
 
 static AstNode* parseStatement(Parser *parser) {
@@ -543,10 +573,9 @@ void freeAst(AstNode *node) {
     } else if (node->type == AST_WHILE) {
         freeAst(node->as.while_loop.condition);
         freeAst(node->as.while_loop.body);
-    } else if (node->type == AST_EITHER) {
-        freeAst(node->as.either.condition);
-        freeAst(node->as.either.true_branch);
-        freeAst(node->as.either.false_branch);
+    } else if (node->type == AST_PAIR) {
+        freeAst(node->as.pair.left);
+        freeAst(node->as.pair.right);
     } else if (node->type == AST_BLOCK) {
         for (int i=0; i<node->as.block.count; i++) freeAst(node->as.block.statements[i]);
         free(node->as.block.statements);
@@ -646,11 +675,10 @@ void printAst(AstNode *node, int depth) {
             printAst(node->as.while_loop.condition, depth + 1);
             printAst(node->as.while_loop.body, depth + 1);
             break;
-        case AST_EITHER:
-            printf("Either\n");
-            printAst(node->as.either.condition, depth + 1);
-            printAst(node->as.either.true_branch, depth + 1);
-            printAst(node->as.either.false_branch, depth + 1);
+        case AST_PAIR:
+            printf("Pair\n");
+            printAst(node->as.pair.left, depth + 1);
+            printAst(node->as.pair.right, depth + 1);
             break;
         case AST_BLOCK:
             printf("Block\n");

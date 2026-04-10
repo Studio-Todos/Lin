@@ -68,7 +68,7 @@ typedef enum {
     AST_IMPORT,
     AST_BOOL,
     AST_WHILE,
-    AST_EITHER
+    AST_PAIR
 } AstNodeType;
 
 typedef struct AstNode {
@@ -97,7 +97,7 @@ typedef struct AstNode {
         struct { const char *name; int name_len; const char *inputs; int inputs_len; const char *outputs; int outputs_len; const char *mlir_payload; int payload_len; } mlir_op;
         struct { const char *path; int length; struct AstNode *module_block; } import_stmt;
         struct { struct AstNode *condition; struct AstNode *body; } while_loop;
-        struct { struct AstNode *condition; struct AstNode *true_branch; struct AstNode *false_branch; } either;
+        struct { struct AstNode *left; struct AstNode *right; } pair;
     } as;
 } AstNode;
 

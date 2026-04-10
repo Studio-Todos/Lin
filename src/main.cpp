@@ -124,11 +124,6 @@ static int checkstyleAst(AstNode *node) {
         case AST_STRING:
         case AST_MLIR_OP:
             break;
-        case AST_EITHER:
-            errors += checkstyleAst(node->as.either.condition);
-            errors += checkstyleAst(node->as.either.true_branch);
-            errors += checkstyleAst(node->as.either.false_branch);
-            break;
     }
     return errors;
 }
