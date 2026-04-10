@@ -108,7 +108,6 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
         valueToPort[op.getP2()] = makePort(2);
       });
 
-      SmallVector<Operation*, 16> opsToErase;
       funcOp.walk([&](pic::graph::LinkOp op) {
         builder.setInsertionPoint(op);
 
@@ -117,8 +116,6 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
 
         // We bypass `pic_runtime::LinkOp` for now to avoid memref args mismatch while testing
         // builder.create<pic::runtime::LinkOp>(op.getLoc(), pA, pB);
-
-        opsToErase.push_back(op);
       });
 
       funcOp.walk([&](func::ReturnOp op) {
@@ -130,13 +127,8 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
          }
       });
 
-      funcOp.walk([&](pic::graph::AgentOp op) {
-        opsToErase.push_back(op);
-      });
-      for (auto* op : opsToErase) {
-        op->dropAllUses(); // Remove dependencies so it can be erased
-        op->erase();
-      }
+      // Rely on MLIR's built-in DCE to clean up old nodes later
+      // instead of op->dropAllUses() and op->erase() which causes segfaults.
     });
   }
 };
@@ -162,7 +154,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
     auto voidType = LLVM::LLVMVoidType::get(builder.getContext());
     auto ptrType = LLVM::LLVMPointerType::get(builder.getContext());
 
-    // Declare system malloc & printf & free
+    // Declare system malloc & printf & free & putchar & getchar & scanf
     auto mallocType = LLVM::LLVMFunctionType::get(ptrType, {i32Type});
     builder.create<LLVM::LLVMFuncOp>(module.getLoc(), "malloc", mallocType);
 
@@ -171,6 +163,15 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
     auto printfType = LLVM::LLVMFunctionType::get(i32Type, {ptrType}, true);
     builder.create<LLVM::LLVMFuncOp>(module.getLoc(), "printf", printfType);
+
+    auto putcharType = LLVM::LLVMFunctionType::get(i32Type, {i32Type});
+    builder.create<LLVM::LLVMFuncOp>(module.getLoc(), "putchar", putcharType);
+
+    auto getcharType = LLVM::LLVMFunctionType::get(i32Type, {});
+    builder.create<LLVM::LLVMFuncOp>(module.getLoc(), "getchar", getcharType);
+
+    auto scanfType = LLVM::LLVMFunctionType::get(i32Type, {ptrType}, true);
+    builder.create<LLVM::LLVMFuncOp>(module.getLoc(), "scanf", scanfType);
 
     auto i64Type = builder.getI64Type();
     auto voidPtrType = LLVM::LLVMPointerType::get(builder.getContext());
