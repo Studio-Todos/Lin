@@ -1,0 +1,23 @@
+import "std/math.lin"
+import "std/io.lin"
+
+test_math: func [
+    argc [i32!]
+    return: [i32!]
+][
+    state: 0
+    res: (add 10 5)
+
+    either (eq res 15) [
+        state: (print_i32 state 1)
+    ][
+        state: (print_i32 state 0)
+    ]
+    0
+]
+
+main: func [
+    return: [i32!]
+][
+    (test_math 0)
+]

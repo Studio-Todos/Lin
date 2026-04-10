@@ -79,10 +79,11 @@ void test_either() {
     assert(ast->as.block.count == 1);
     assert(ast->as.block.statements[0]->type == AST_CALL);
     assert(strncmp(ast->as.block.statements[0]->as.call.callee, "either", 6) == 0);
-    assert(ast->as.block.statements[0]->as.call.arg_count == 3);
+    assert(ast->as.block.statements[0]->as.call.arg_count == 2);
     assert(ast->as.block.statements[0]->as.call.args[0]->type == AST_NUMBER);
-    assert(ast->as.block.statements[0]->as.call.args[1]->type == AST_BLOCK);
-    assert(ast->as.block.statements[0]->as.call.args[2]->type == AST_BLOCK);
+    assert(ast->as.block.statements[0]->as.call.args[1]->type == AST_PAIR);
+    assert(ast->as.block.statements[0]->as.call.args[1]->as.pair.left->type == AST_BLOCK);
+    assert(ast->as.block.statements[0]->as.call.args[1]->as.pair.right->type == AST_BLOCK);
     freeAst(ast);
     printf("test_either passed\n");
 }
