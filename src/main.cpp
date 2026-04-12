@@ -134,6 +134,7 @@ int main(int argc, char **argv) {
   std::string outputBinary = "linc_out";
   bool enableGPU = false;
   std::vector<std::string> includePaths;
+  std::vector<const char*> importSources;
 
   for (int i = 1; i < argc; ++i) {
       std::string arg = argv[i];
@@ -212,6 +213,7 @@ int main(int argc, char **argv) {
           int capacity = 16;
           AstNode **new_stmts = static_cast<AstNode**>(malloc(sizeof(AstNode*) * capacity));
 
+
           for (int i = 0; i < ast->as.block.count; i++) {
               if (ast->as.block.statements[i]->type == AST_IMPORT) {
                   std::string importPath = std::string(ast->as.block.statements[i]->as.import_stmt.path, ast->as.block.statements[i]->as.import_stmt.length);
@@ -228,10 +230,10 @@ int main(int argc, char **argv) {
                       importBuffer << importFile.rdbuf();
                       std::string importSourceStr = importBuffer.str();
                       const char *importSource = strdup(importSourceStr.c_str());
+                      importSources.push_back(importSource);
                       AstNode *importAst = parse(importSource);
 
                       if (importAst && importAst->type == AST_BLOCK) {
-                          ast->as.block.statements[i]->as.import_stmt.module_block = importAst;
                           int import_count = importAst->as.block.count;
                           if (total_count + import_count > capacity) {
                               while (total_count + import_count > capacity) capacity *= 2;
@@ -244,10 +246,18 @@ int main(int argc, char **argv) {
                           }
                           memcpy(new_stmts + total_count, importAst->as.block.statements, sizeof(AstNode*) * import_count);
                           total_count += import_count;
+                          free(importAst->as.block.statements);
+                          free(importAst);
+                      } else if (importAst) {
+                          freeAst(importAst);
                       }
                   } else {
                       std::cerr << "Failed to import file: " << importPath << "\n";
                   }
+
+                  // Always free the original import statement node as it's not placed into new_stmts
+                  ast->as.block.statements[i]->as.import_stmt.module_block = nullptr;
+                  freeAst(ast->as.block.statements[i]);
               } else {
                   // Add the original statement itself if it is not an import statement
                   if (total_count >= capacity) {
@@ -262,7 +272,6 @@ int main(int argc, char **argv) {
                   new_stmts[total_count++] = ast->as.block.statements[i];
               }
           }
-
           free(ast->as.block.statements);
           ast->as.block.statements = new_stmts;
           ast->as.block.count = total_count;
@@ -369,6 +378,8 @@ int main(int argc, char **argv) {
 
       std::cout << "Successfully emitted object file to " << objFile << "\n";
 
+      delete targetMachine;
+
       if (command == "build") {
           // Link the object file into a binary (linking against libc is standard)
           std::cout << "Linking into binary '" << outputBinary << "'...\n";
@@ -410,6 +421,7 @@ int main(int argc, char **argv) {
 
           std::cout << "Successfully compiled and linked to '" << outputBinary << "'.\n";
       }
+      mlirModuleDestroy(cModule);
   }
 
   if (command == "test") {
@@ -428,6 +440,7 @@ int main(int argc, char **argv) {
   }
 
   if (ast) freeAst(ast);
+  for (const char *src : importSources) free((void*)src);
 
   std::cout << "Compilation complete.\n";
   return 0;

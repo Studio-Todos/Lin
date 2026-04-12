@@ -1,0 +1,17 @@
+// RUN: %linc build %s -o %t && %t
+
+import "std/loop.lin"
+import "std/math.lin"
+
+test_loop: func [
+    argc [i32!]
+    return: [i32!]
+][
+    state: 0
+
+    // For now loop_n doesn't do much except map the SCF loop.
+    // We just test if it runs without crashing and lowers properly.
+    state: (loop_n state 5 0)
+
+    0
+]
