@@ -1,0 +1,46 @@
+import "std/math.lin"
+import "std/io.lin"
+import "std/logic.lin"
+
+// A simple number guessing game!
+// The user has to guess a secret number.
+// If the guess is correct, the game ends.
+// If the guess is too low or too high, it gives a hint and loops.
+
+main: func [
+    return: [i32!]
+][
+    // The secret number
+    secret: 42
+
+    // Initial state token
+    s0: 0
+
+    // Print welcome message
+    s1: print_str s0 "Welcome to the Number Guessing Game!\n"
+
+    // Loop until the user guesses correctly
+    guessed: 0
+    s_curr: s1
+
+    while [eq guessed 0] [
+        s_curr: print_str s_curr "Enter your guess: "
+        s_curr: read_i32 s_curr
+        guess: s_curr.1
+        s_curr: s_curr.0
+
+        either [eq guess secret] [
+            s_curr: print_str s_curr "Congratulations! You guessed correctly!\n"
+            guessed: 1
+        ][
+            either [lt guess secret] [
+                s_curr: print_str s_curr "Too low!\n"
+            ][
+                s_curr: print_str s_curr "Too high!\n"
+            ]
+        ]
+    ]
+
+    // Return 0 for success
+    0
+]
