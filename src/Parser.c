@@ -202,6 +202,8 @@ static void consume(Parser *parser, TokenType type, const char *message) {
 
 static AstNode* parseExpression(Parser *parser);
 static AstNode* parseStatement(Parser *parser);
+static AstNode* parseWhile(Parser *parser);
+static AstNode* parseEither(Parser *parser);
 
 static AstNode* createNode(Parser *parser, AstNodeType type) {
     AstNode *node = (AstNode*)calloc(1, sizeof(AstNode));
@@ -385,6 +387,8 @@ static AstNode* parsePrimary(Parser *parser) {
         case TOKEN_IMPORT:     return parseImportExpr(parser);
         case TOKEN_IDENTIFIER: return parseIdentifierExpr(parser);
         case TOKEN_LPAREN:     return parseGroupingExpr(parser);
+        case TOKEN_WHILE:      return parseWhile(parser);
+        case TOKEN_EITHER:     return parseEither(parser);
         default:
             error(parser, "Expect expression.");
             return NULL;
@@ -439,7 +443,12 @@ static AstNode* parseWhile(Parser *parser) {
     parserAdvance(parser);
     AstNode *while_node = createNode(parser, AST_WHILE);
     if (!while_node) return NULL;
-    while_node->as.while_loop.condition = parseBlock(parser);
+
+    if (parser->current.type == TOKEN_LBRACKET) {
+        while_node->as.while_loop.condition = parseBlock(parser);
+    } else {
+        while_node->as.while_loop.condition = parseExpression(parser);
+    }
     while_node->as.while_loop.body = parseBlock(parser);
     return while_node;
 }
@@ -459,7 +468,11 @@ static AstNode* parseEither(Parser *parser) {
         return NULL;
     }
 
-    call->as.call.args[0] = parseExpression(parser);
+    if (parser->current.type == TOKEN_LBRACKET) {
+        call->as.call.args[0] = parseBlock(parser);
+    } else {
+        call->as.call.args[0] = parseExpression(parser);
+    }
 
     AstNode *pair = createNode(parser, AST_PAIR);
     if (!pair) {
@@ -474,13 +487,6 @@ static AstNode* parseEither(Parser *parser) {
 }
 
 static AstNode* parseStatement(Parser *parser) {
-    if (parser->current.type == TOKEN_WHILE) {
-        return parseWhile(parser);
-    }
-    if (parser->current.type == TOKEN_EITHER) {
-        return parseEither(parser);
-    }
-
     return parseExpression(parser);
 }
 
