@@ -1,0 +1,10 @@
+import "std/io.lin"
+import "std/math.lin"
+
+main: func [
+    return: [i32!]
+][
+    state: 0
+    state2: (print_str state "Hello world!\n")
+    0
+]

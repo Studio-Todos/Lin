@@ -28,15 +28,15 @@ main: func [
     game_loop: while playing [
         // Print board
         // Just print an instruction for now since printing arrays is complicated without a loop over puts
-        p1: (puts state "Current player, enter cell 0-8: ")
+        p1: (print_str state "Current player, enter cell 0-8: ")
 
-        scan_res: (scanf_i32 p1 "%d")
+        scan_res: (read_i32 p1)
         state: scan_res.0
         cell: scan_res.1
 
         // Basic out of bounds check
         either (or (lt cell 0) (gt cell 8)) [
-            state: (puts state "Invalid cell! Try again.")
+            state: (print_str state "Invalid cell! Try again.\n")
             0
         ][
             get_res: (array_get state board cell)
@@ -51,7 +51,7 @@ main: func [
                 // Toggle turn
                 turn: either (eq turn 0) [ 1 ][ 0 ]
             ][
-                state: (puts state "Cell already taken!")
+                state: (print_str state "Cell already taken!\n")
                 0
             ]
         ]

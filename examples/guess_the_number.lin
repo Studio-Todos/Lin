@@ -20,24 +20,26 @@ main: func [
 
     // Game loop
     loop_res: while [ playing ] [
-        p1: (puts state2 "Enter your guess: ")
+        p1: (print_str state2 "Enter your guess: ")
 
         // Read input
-        scan_res: (scanf_i32 p1 "%d")
+        scan_res: (read_i32 p1)
         state8: scan_res.0
         current_guess: scan_res.1
 
         attempts: (add attempts 1)
 
         playing_next: either [ (eq current_guess target) ] [
-            p2: (printf_i32 state8 "Congratulations! You guessed it in %d attempts.\n" attempts)
+            p2: (print_str state8 "Congratulations! You guessed it in ")
+            p2b: (print_i32 p2 attempts)
+            p2c: (print_str p2b " attempts!")
             0 // Stop playing
         ][
             either [ (lt current_guess target) ] [
-                p3: (puts state8 "Too low! Try again.")
+                p3: (print_str state8 "Too low! Try again.\n")
                 1 // Keep playing
             ][
-                p4: (puts state8 "Too high! Try again.")
+                p4: (print_str state8 "Too high! Try again.\n")
                 1 // Keep playing
             ]
         ]
