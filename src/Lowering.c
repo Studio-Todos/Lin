@@ -689,6 +689,20 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
     return mlirOperationGetResult(fbOp, 0);
 }
 
+static MlirType getMlirTypeFromName(MlirContext ctx, const char* name, int len) {
+    if (len == 2 && strncmp(name, "i1", 2) == 0) return mlirIntegerTypeGet(ctx, 1);
+    if (len == 2 && strncmp(name, "i8", 2) == 0) return mlirIntegerTypeGet(ctx, 8);
+    if (len == 3 && strncmp(name, "i16", 3) == 0) return mlirIntegerTypeGet(ctx, 16);
+    if (len == 3 && strncmp(name, "i32", 3) == 0) return mlirIntegerTypeGet(ctx, 32);
+    if (len == 3 && strncmp(name, "i64", 3) == 0) return mlirIntegerTypeGet(ctx, 64);
+    if (len == 3 && strncmp(name, "f32", 3) == 0) return mlirF32TypeGet(ctx);
+    if (len == 3 && strncmp(name, "f64", 3) == 0) return mlirF64TypeGet(ctx);
+    if (len == 4 && strncmp(name, "bool", 4) == 0) return mlirIntegerTypeGet(ctx, 1);
+    // If not a standard type, fallback to pic.port opaque pointer logic to allow generic execution
+    // since the whole pic system relies on dynamic interaction nets.
+    return getPicPortType(ctx);
+}
+
 MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
     MlirLocation loc = mlirLocationUnknownGet(ctx);
     MlirModule module = mlirModuleCreateEmpty(loc);
@@ -711,15 +725,14 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
         MlirNamedAttribute nameNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("sym_name")), nameAttr);
         mlirOperationStateAddAttributes(&funcState, 1, &nameNamedAttr);
 
-        MlirType portType = getPicPortType(ctx);
         int arg_count = ast->as.func_decl.arg_count;
         MlirType *types = (MlirType *)malloc(sizeof(MlirType) * arg_count);
         MlirLocation *locs = (MlirLocation *)malloc(sizeof(MlirLocation) * arg_count);
         for (int i = 0; i < arg_count; i++) {
-            types[i] = portType;
+            types[i] = getMlirTypeFromName(ctx, ast->as.func_decl.args[i].type_name, ast->as.func_decl.args[i].type_len);
             locs[i] = loc;
         }
-        MlirType retTypes[] = {portType};
+        MlirType retTypes[] = {getMlirTypeFromName(ctx, ast->as.func_decl.ret_type_name, ast->as.func_decl.ret_type_len)};
         MlirType funcType = mlirFunctionTypeGet(ctx, arg_count, types, 1, retTypes);
         MlirAttribute typeAttr = mlirTypeAttrGet(funcType);
         MlirNamedAttribute typeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("function_type")), typeAttr);

@@ -24,15 +24,6 @@ typedef enum {
     TOKEN_RETURN,
     TOKEN_WHILE,
     TOKEN_EITHER,
-    TOKEN_I1,
-    TOKEN_I8,
-    TOKEN_I16,
-    TOKEN_I32,
-    TOKEN_I64,
-    TOKEN_F32,
-    TOKEN_F64,
-    TOKEN_BOOL,
-    TOKEN_STR,
     TOKEN_IMPORT,
     TOKEN_MLIR_OP,
     TOKEN_LBRACE,
@@ -89,10 +80,14 @@ typedef struct AstNode {
             struct AstFuncArg {
                 const char *name;
                 int name_len;
+                const char *type_name;
+                int type_len;
             } *args;
             int arg_count;
             int arg_capacity;
             struct AstNode *body;
+            const char *ret_type_name;
+            int ret_type_len;
         } func_decl;
         struct { const char *value; int length; } string;
         struct { const char *name; int name_len; struct AstNode *value; } assignment;
