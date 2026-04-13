@@ -129,6 +129,20 @@ void test_import() {
     printf("test_import passed\n");
 }
 
+
+void test_while() {
+    const char *source = "while true [ 1 ]";
+    AstNode *ast = parse(source);
+    assert(ast != NULL);
+    assert(ast->type == AST_BLOCK);
+    assert(ast->as.block.count == 1);
+    assert(ast->as.block.statements[0]->type == AST_WHILE);
+    assert(ast->as.block.statements[0]->as.while_loop.condition->type == AST_BOOL);
+    assert(ast->as.block.statements[0]->as.while_loop.body->type == AST_BLOCK);
+    freeAst(ast);
+    printf("test_while passed\n");
+}
+
 int main() {
     test_number();
     test_string();
@@ -139,6 +153,7 @@ int main() {
     test_func_decl();
     test_mlir_op();
     test_import();
+    test_while();
     printf("All parser tests passed!\n");
     return 0;
 }

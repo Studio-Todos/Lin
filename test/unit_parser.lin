@@ -9,4 +9,5 @@
 // CHECK: test_func_decl passed
 // CHECK: test_mlir_op passed
 // CHECK: test_import passed
+// CHECK: test_while passed
 // CHECK: All parser tests passed!
