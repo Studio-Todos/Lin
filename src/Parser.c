@@ -443,7 +443,11 @@ static AstNode* parseWhile(Parser *parser) {
     parserAdvance(parser);
     AstNode *while_node = createNode(parser, AST_WHILE);
     if (!while_node) return NULL;
-    while_node->as.while_loop.condition = parseExpression(parser);
+    if (parser->current.type == TOKEN_LBRACKET) {
+        while_node->as.while_loop.condition = parseBlock(parser);
+    } else {
+        while_node->as.while_loop.condition = parseExpression(parser);
+    }
     while_node->as.while_loop.body = parseBlock(parser);
     return while_node;
 }
@@ -463,7 +467,11 @@ static AstNode* parseEither(Parser *parser) {
         return NULL;
     }
 
-    call->as.call.args[0] = parseExpression(parser);
+    if (parser->current.type == TOKEN_LBRACKET) {
+        call->as.call.args[0] = parseBlock(parser);
+    } else {
+        call->as.call.args[0] = parseExpression(parser);
+    }
 
     AstNode *pair = createNode(parser, AST_PAIR);
     if (!pair) {
