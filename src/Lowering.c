@@ -705,7 +705,7 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
         char funcNameStr[256];
         snprintf(funcNameStr, sizeof(funcNameStr), "%.*s", ast->as.func_decl.name_len, ast->as.func_decl.name);
         if (strcmp(funcNameStr, "main") == 0) {
-            strcpy(funcNameStr, "main_inet_entry");
+            snprintf(funcNameStr, sizeof(funcNameStr), "main_inet_entry");
         }
         MlirAttribute nameAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(funcNameStr));
         MlirNamedAttribute nameNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("sym_name")), nameAttr);
