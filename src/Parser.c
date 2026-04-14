@@ -196,6 +196,7 @@ static AstNode* parseExpression(Parser *parser);
 static AstNode* parseStatement(Parser *parser);
 static AstNode* parseWhile(Parser *parser);
 static AstNode* parseEither(Parser *parser);
+static AstNode* parseFuncDecl(Parser *parser);
 
 static AstNode* createNode(Parser *parser, AstNodeType type) {
     AstNode *node = (AstNode*)calloc(1, sizeof(AstNode));
@@ -294,7 +295,10 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
             }
 
             return node;
-        } else if (!is_func) {
+        } else if (is_func) {
+            parser->previous = ident;
+            return parseFuncDecl(parser);
+        } else {
             parserAdvance(parser); // consume colon
             AstNode *node = createNode(parser, AST_ASSIGNMENT);
             if (!node) return NULL;
@@ -599,38 +603,6 @@ AstNode* parse(const char *source) {
     block->as.block.count = 0;
     block->as.block.capacity = 0;
     while (parser.current.type != TOKEN_EOF) {
-        if (parser.current.type == TOKEN_IDENTIFIER && peek(&parser.lexer) == ':') {
-             // Handle func decl or assignment at root level
-             Token ident = parser.current;
-             parserAdvance(&parser);
-
-             const char* next_word = parser.lexer.current;
-             while (*next_word == ' ' || *next_word == '\n' || *next_word == '\t' || *next_word == '\r') next_word++;
-
-             if (strncmp(next_word, "func", 4) == 0) {
-                  parser.previous = ident;
-                  AstNode *func = parseFuncDecl(&parser);
-                  if (block->as.block.count >= block->as.block.capacity) {
-                      block->as.block.capacity = block->as.block.capacity < 8 ? 8 : block->as.block.capacity * 2;
-                      void *tmp = realloc(block->as.block.statements, sizeof(AstNode*) * block->as.block.capacity);
-                      if (!tmp) {
-                          error(&parser, "Out of memory");
-                          freeAst(block);
-                          return NULL;
-                      }
-                      block->as.block.statements = (AstNode**)tmp;
-                  }
-                  block->as.block.statements[block->as.block.count++] = func;
-                  continue;
-             } else {
-                  // Revert ident advance so primary can handle assignment or mlir-op
-                  // Hack for MVP, we rely on primary parser doing it properly
-                  parser.current = ident;
-                  parser.lexer.current = ident.start;
-                  parserAdvance(&parser);
-             }
-        }
-
         AstNode *stmt = parseStatement(&parser);
         if (stmt) {
              if (block->as.block.count >= block->as.block.capacity) {
