@@ -26,7 +26,7 @@ include(TableGen)
 include(AddLLVM)
 include(AddMLIR)
 
-set(LLVM_TARGETS_TO_BUILD "X86" CACHE STRING "Targets to build")
+set(LLVM_TARGETS_TO_BUILD "X86;WebAssembly" CACHE STRING "Targets to build")
 
 include_directories(${LLVM_INCLUDE_DIRS})
 include_directories(${MLIR_INCLUDE_DIRS})
