@@ -112,7 +112,7 @@ static Token string(Lexer *lexer) {
         if (peek(lexer) == '\n') lexer->line++;
         advance(lexer);
     }
-    if (isAtEnd(lexer)) return makeToken(lexer, TOKEN_EOF);
+    if (isAtEnd(lexer)) return makeToken(lexer, TOKEN_ERROR);
     advance(lexer);
     return makeToken(lexer, TOKEN_STRING);
 }
@@ -190,7 +190,8 @@ static void parserAdvance(Parser *parser) {
     parser->previous = parser->current;
     for (;;) {
         parser->current = scanToken(&parser->lexer);
-        if (parser->current.type != TOKEN_EOF || parser->lexer.current[0] == '\0') break;
+        if (parser->current.type != TOKEN_ERROR) break;
+        errorAt(parser, &parser->current, "Lexical error: possibly unterminated string.");
     }
 }
 
@@ -619,6 +620,12 @@ AstNode* parse(const char *source) {
     block->as.block.statements = NULL;
     block->as.block.count = 0;
     block->as.block.capacity = 0;
+
+    if (parser.hadError) {
+        freeAst(block);
+        return NULL;
+    }
+
     while (parser.current.type != TOKEN_EOF) {
         if (parser.current.type == TOKEN_IDENTIFIER && peek(&parser.lexer) == ':') {
              // Handle func decl or assignment at root level
