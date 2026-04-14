@@ -6,17 +6,19 @@ import "std/mem.lin"
 // CHECK: Generated MLIR
 
 test_mem: func [
-    state [i64!]
+    argc [i32!]
     return: [i32!]
 ][
+    state: 0
+
     // Allocate 4 bytes
-    let st1_ptr (malloc state 4)
+    st1_ptr: (malloc state 4)
     // Store 42 into it
-    let st2 (store_i32 st1_ptr.0 st1_ptr.1 42)
+    st2: (store_i32 st1_ptr.0 st1_ptr.1 42)
     // Load it back
-    let st3_val (load_i32 st2.0 st1_ptr.1)
+    st3_val: (load_i32 st2.0 st1_ptr.1)
     // Free it
-    let st4 (free st3_val.0 st1_ptr.1)
+    st4: (free st3_val.0 st1_ptr.1)
 
     st3_val.1
 ]

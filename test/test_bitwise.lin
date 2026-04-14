@@ -1,0 +1,85 @@
+// RUN: %linc build %s -o %t && %t
+// RUN: %linc build %s --gpu -o %t_gpu && %t_gpu
+
+import "std/math.lin"
+
+test_bitwise: func [
+    argc [i32!]
+    return: [i32!]
+][
+    // Test i32 bitwise operations
+    // 5 = 0101, 3 = 0011
+
+    // 0101 & 0011 = 0001 = 1
+    t1: (and 5 3)
+
+    // 0101 | 0011 = 0111 = 7
+    t2: (or 5 3)
+
+    // 0101 ^ 0011 = 0110 = 6
+    t3: (xor 5 3)
+
+    // 5 << 1 = 10
+    t4: (shl 5 1)
+
+    // 5 >> 1 = 2
+    t5: (shr 5 1)
+
+    // Test i64 bitwise operations
+    // 0101 & 0011 = 0001 = 1
+    t6: (and64 5 3)
+
+    // 0101 | 0011 = 0111 = 7
+    t7: (or64 5 3)
+
+    // 0101 ^ 0011 = 0110 = 6
+    t8: (xor64 5 3)
+
+    // 5 << 1 = 10
+    t9: (shl64 5 1)
+
+    // 5 >> 1 = 2
+    t10: (shr64 5 1)
+
+    either (neq t1 1) [
+        1
+    ][
+        either (neq t2 7) [
+            2
+        ][
+            either (neq t3 6) [
+                3
+            ][
+                either (neq t4 10) [
+                    4
+                ][
+                    either (neq t5 2) [
+                        5
+                    ][
+                        either (neq64 t6 1) [
+                            6
+                        ][
+                            either (neq64 t7 7) [
+                                7
+                            ][
+                                either (neq64 t8 6) [
+                                    8
+                                ][
+                                    either (neq64 t9 10) [
+                                        9
+                                    ][
+                                        either (neq64 t10 2) [
+                                            10
+                                        ][
+                                            0
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+    ]
+]

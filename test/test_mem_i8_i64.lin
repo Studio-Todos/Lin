@@ -1,0 +1,39 @@
+// RUN: %linc build %s -o %t | FileCheck %s
+// RUN: %linc build %s -o %t && %t
+
+import "std/mem.lin"
+
+// CHECK: Parsing Source:
+// CHECK: Generated MLIR
+
+test_mem_types: func [
+    argc [i32!]
+    return: [i32!]
+][
+    state: 0
+
+    // Allocate 8 bytes
+    st1_ptr: (malloc state 8)
+
+    // Store i8 (value 42) into first byte
+    st2: (store_i8 st1_ptr.0 st1_ptr.1 42)
+
+    // Load it back
+    st3_val: (load_i8 st2.0 st1_ptr.1)
+
+    // Store i64 (value 123456789) into the 8 bytes
+    st4: (store_i64 st3_val.0 st1_ptr.1 123456789)
+
+    // Load it back
+    st5_val: (load_i64 st4.0 st1_ptr.1)
+
+    // Free it
+    st6: (free st5_val.0 st1_ptr.1)
+
+    // Check values
+    either (eq st3_val.1 42) [
+        0
+    ][
+        1
+    ]
+]

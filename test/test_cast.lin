@@ -1,0 +1,48 @@
+// RUN: %linc build %s -o %t && %t
+// RUN: %linc build %s --gpu -o %t_gpu && %t_gpu
+
+import "std/cast.lin"
+import "std/math.lin"
+
+test_casts: func [
+    argc [i32!]
+    return: [i32!]
+][
+    // Check i32 to f32 and back
+    f32_val: (i32-to-f32 42)
+    back_i32: (f32-to-i32 f32_val)
+    test1: (neq back_i32 42)
+
+    // Check i32 to i64 and back
+    i64_val: (i32-to-i64 99)
+    back_i32_2: (i64-to-i32 i64_val)
+    test2: (neq back_i32_2 99)
+
+    // Check f32 to f64 and back
+    f64_val: (f32-to-f64 3.14)
+    back_f32: (f64-to-f32 f64_val)
+    test3: (fneq back_f32 3.14)
+
+    // Check i64 to f64 and back
+    f64_val_2: (i64-to-f64 123)
+    back_i64: (f64-to-i64 f64_val_2)
+    test4: (neq64 back_i64 123)
+
+    either test1 [
+        1
+    ][
+        either test2 [
+            2
+        ][
+            either test3 [
+                3
+            ][
+                either test4 [
+                    4
+                ][
+                    0
+                ]
+            ]
+        ]
+    ]
+]
