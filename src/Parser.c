@@ -198,6 +198,7 @@ static AstNode* parseStatement(Parser *parser);
 static AstNode* parseWhile(Parser *parser);
 static AstNode* parseEither(Parser *parser);
 static AstNode* parseFuncDecl(Parser *parser);
+static AstNode* parseBlock(Parser *parser);
 
 static AstNode* createNode(Parser *parser, AstNodeType type) {
     AstNode *node = (AstNode*)calloc(1, sizeof(AstNode));
@@ -387,8 +388,10 @@ static AstNode* parsePrimary(Parser *parser) {
         case TOKEN_LPAREN:     return parseGroupingExpr(parser);
         case TOKEN_WHILE:      return parseWhile(parser);
         case TOKEN_EITHER:     return parseEither(parser);
+        case TOKEN_LBRACKET:   return parseBlock(parser);
         default:
             error(parser, "Expect expression.");
+            parserAdvance(parser);
             return NULL;
     }
 }
