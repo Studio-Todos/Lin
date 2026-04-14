@@ -143,6 +143,13 @@ void test_while() {
     printf("test_while passed\n");
 }
 
+void test_unterminated_string() {
+    const char *source = "\"hello";
+    AstNode *ast = parse(source);
+    assert(ast == NULL);
+    printf("test_unterminated_string passed\n");
+}
+
 int main() {
     test_number();
     test_string();
@@ -154,6 +161,7 @@ int main() {
     test_mlir_op();
     test_import();
     test_while();
+    test_unterminated_string();
     printf("All parser tests passed!\n");
     return 0;
 }
