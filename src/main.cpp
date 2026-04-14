@@ -59,6 +59,87 @@ static bool isIdiomaticCase(const char* str, int len) {
     return true;
 }
 
+#include <unordered_set>
+#include <string>
+
+// Semantic type checking to ensure argument and return types resolve to declared types or mlir-ops.
+static int semanticTypeCheckAst(AstNode *node, std::unordered_set<std::string>& declaredTypes) {
+    if (!node) return 0;
+    int errors = 0;
+
+    switch (node->type) {
+        case AST_BLOCK: {
+            // First pass: collect all top-level declarations
+            for (int i = 0; i < node->as.block.count; ++i) {
+                AstNode *stmt = node->as.block.statements[i];
+                if (stmt->type == AST_FUNC_DECL) {
+                    declaredTypes.insert(std::string(stmt->as.func_decl.name, stmt->as.func_decl.name_len));
+                } else if (stmt->type == AST_MLIR_OP) {
+                    declaredTypes.insert(std::string(stmt->as.mlir_op.name, stmt->as.mlir_op.name_len));
+                } else if (stmt->type == AST_ASSIGNMENT) {
+                    declaredTypes.insert(std::string(stmt->as.assignment.name, stmt->as.assignment.name_len));
+                }
+            }
+
+            // Second pass: validate types within the block
+            for (int i = 0; i < node->as.block.count; ++i) {
+                errors += semanticTypeCheckAst(node->as.block.statements[i], declaredTypes);
+            }
+            break;
+        }
+        case AST_FUNC_DECL: {
+            for (int i = 0; i < node->as.func_decl.arg_count; ++i) {
+                std::string argTypeName(node->as.func_decl.args[i].type_name, node->as.func_decl.args[i].type_name_len);
+                if (declaredTypes.find(argTypeName) == declaredTypes.end()) {
+                    std::cerr << "Semantic Error: Type '" << argTypeName << "' used in argument '" << std::string(node->as.func_decl.args[i].name, node->as.func_decl.args[i].name_len) << "' is undeclared.\n";
+                    errors++;
+                }
+            }
+            std::string returnTypeName(node->as.func_decl.return_type_name, node->as.func_decl.return_type_len);
+            if (declaredTypes.find(returnTypeName) == declaredTypes.end()) {
+                std::cerr << "Semantic Error: Return type '" << returnTypeName << "' used in function '" << std::string(node->as.func_decl.name, node->as.func_decl.name_len) << "' is undeclared.\n";
+                errors++;
+            }
+            errors += semanticTypeCheckAst(node->as.func_decl.body, declaredTypes);
+            break;
+        }
+        case AST_ASSIGNMENT: {
+            errors += semanticTypeCheckAst(node->as.assignment.value, declaredTypes);
+            break;
+        }
+        case AST_CALL: {
+            for (int i = 0; i < node->as.call.arg_count; ++i) {
+                errors += semanticTypeCheckAst(node->as.call.args[i], declaredTypes);
+            }
+            break;
+        }
+        case AST_BINARY: {
+            errors += semanticTypeCheckAst(node->as.binary.left, declaredTypes);
+            errors += semanticTypeCheckAst(node->as.binary.right, declaredTypes);
+            break;
+        }
+        case AST_WHILE: {
+            errors += semanticTypeCheckAst(node->as.while_loop.condition, declaredTypes);
+            errors += semanticTypeCheckAst(node->as.while_loop.body, declaredTypes);
+            break;
+        }
+        case AST_PAIR: {
+            errors += semanticTypeCheckAst(node->as.pair.left, declaredTypes);
+            errors += semanticTypeCheckAst(node->as.pair.right, declaredTypes);
+            break;
+        }
+        case AST_IDENTIFIER:
+        case AST_NUMBER:
+        case AST_FLOAT:
+        case AST_BOOL:
+        case AST_STRING:
+        case AST_MLIR_OP:
+        case AST_IMPORT:
+            break;
+    }
+    return errors;
+}
+
 // Recursive AST traversal for checkstyle
 static int checkstyleAst(AstNode *node) {
     if (!node) return 0;
@@ -170,10 +251,14 @@ int main(int argc, char **argv) {
   std::stringstream buffer;
   buffer << file.rdbuf();
   std::string source_str = buffer.str();
-  const char *source = source_str.c_str();
 
-  std::cout << "Parsing Source:\n" << source << std::endl;
-  AstNode *ast = parse(source);
+  // Implicitly inject std/types.lin at the beginning of the AST
+  std::string fullSource = "import \"std/types.lin\"\n" + source_str;
+  const char *patchedSource = strdup(fullSource.c_str());
+  importSources.push_back(patchedSource);
+
+  std::cout << "Parsing Source:\n" << patchedSource << std::endl;
+  AstNode *ast = parse(patchedSource);
   if (ast) {
       // Find imports and recursively resolve them into a flat AST block list
       if (ast->type == AST_BLOCK) {
@@ -200,6 +285,9 @@ int main(int argc, char **argv) {
                       searchPaths.push_back(binDir.parent_path().string());
                       if (binDir.parent_path().has_parent_path()) {
                           searchPaths.push_back(binDir.parent_path().parent_path().string());
+                          if (binDir.parent_path().parent_path().has_parent_path()) {
+                              searchPaths.push_back(binDir.parent_path().parent_path().parent_path().string());
+                          }
                       }
                   }
               }
@@ -302,6 +390,17 @@ int main(int argc, char **argv) {
   std::cout << "PIC dialects registered successfully.\n" << std::endl;
 
   if (ast) {
+      // Perform semantic type checking
+      std::unordered_set<std::string> declaredTypes;
+
+      int semanticErrors = semanticTypeCheckAst(ast, declaredTypes);
+      if (semanticErrors > 0) {
+          std::cerr << "Semantic analysis failed with " << semanticErrors << " error(s).\n";
+          if (ast) freeAst(ast);
+          for (const char *src : importSources) free((void*)src);
+          return 1;
+      }
+
       // Lower AST to MLIR C types
       MlirContext cCtx = wrap(&context);
       MlirModule cModule = lowerAstToMlir(cCtx, ast);

@@ -89,10 +89,14 @@ typedef struct AstNode {
             struct AstFuncArg {
                 const char *name;
                 int name_len;
+                const char *type_name;
+                int type_name_len;
             } *args;
             int arg_count;
             int arg_capacity;
             struct AstNode *body;
+            const char *return_type_name;
+            int return_type_len;
         } func_decl;
         struct { const char *value; int length; } string;
         struct { const char *name; int name_len; struct AstNode *value; } assignment;

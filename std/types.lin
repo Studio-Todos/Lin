@@ -1,0 +1,17 @@
+// std/types.lin
+// Core type definitions previously hardcoded in the compiler frontend.
+// The Lin parser now treats types dynamically as identifiers.
+
+// We declare standard types as empty functions so they resolve in the standard library.
+// Since Lin's execution model handles interaction nets at runtime natively, types
+// function as tags in the AST for semantic tooling.
+
+i1: func [return: [i1!]] []
+i8: func [return: [i8!]] []
+i16: func [return: [i16!]] []
+i32: func [return: [i32!]] []
+i64: func [return: [i64!]] []
+f32: func [return: [f32!]] []
+f64: func [return: [f64!]] []
+bool: func [return: [bool!]] []
+str: func [return: [str!]] []
