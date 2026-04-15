@@ -214,6 +214,7 @@ int main(int argc, char **argv) {
   std::string sourceFile = "";
   std::string outputBinary = "linc_out";
   bool enableGPU = false;
+  bool enableWasm = false;
   std::vector<std::string> includePaths;
   std::vector<const char*> importSources;
 
@@ -227,6 +228,8 @@ int main(int argc, char **argv) {
           includePaths.push_back(argv[++i]);
       } else if (arg == "--gpu" || arg == "-gpu") {
           enableGPU = true;
+      } else if (arg == "--wasm" || arg == "-wasm") {
+          enableWasm = true;
       } else if (sourceFile.empty()) {
           sourceFile = arg;
       }
@@ -381,8 +384,11 @@ int main(int argc, char **argv) {
   mlir::registerLLVMDialectTranslation(registry);
 
   // Initialize LLVM targets
-  llvm::InitializeNativeTarget();
-  llvm::InitializeNativeTargetAsmPrinter();
+  llvm::InitializeAllTargetInfos();
+  llvm::InitializeAllTargets();
+  llvm::InitializeAllTargetMCs();
+  llvm::InitializeAllAsmPrinters();
+  llvm::InitializeAllAsmParsers();
 
   mlir::MLIRContext context(registry);
   context.loadAllAvailableDialects();
@@ -439,23 +445,25 @@ int main(int argc, char **argv) {
       }
 
       std::string error;
-      auto target = llvm::TargetRegistry::lookupTarget("x86_64-unknown-linux-gnu", error);
+      std::string targetTriple = enableWasm ? "wasm32-unknown-unknown" : llvm::sys::getDefaultTargetTriple();
+      auto target = llvm::TargetRegistry::lookupTarget(targetTriple, error);
+      if (!target && !enableWasm) {
+          // Fallback if default fails
+          targetTriple = "x86_64-unknown-linux-gnu";
+          target = llvm::TargetRegistry::lookupTarget(targetTriple, error);
+      }
+
       if (!target) {
-          // If a specific target fails, try to get the default target triple
-          auto defaultTriple = llvm::sys::getDefaultTargetTriple();
-          target = llvm::TargetRegistry::lookupTarget(defaultTriple, error);
-          if (!target) {
-              std::cerr << "Failed to lookup target: " << error << "\n";
-              return 1;
-          }
+          std::cerr << "Failed to lookup target: " << error << "\n";
+          return 1;
       }
 
       llvm::TargetOptions opt;
       auto rm = std::optional<llvm::Reloc::Model>();
-      auto targetMachine = target->createTargetMachine(llvm::sys::getDefaultTargetTriple(), "generic", "", opt, rm);
+      auto targetMachine = target->createTargetMachine(targetTriple, "generic", "", opt, rm);
 
       llvmModule->setDataLayout(targetMachine->createDataLayout());
-      llvmModule->setTargetTriple(llvm::sys::getDefaultTargetTriple());
+      llvmModule->setTargetTriple(targetTriple);
 
       std::string objFile = outputBinary + ".o";
       std::error_code ec;
@@ -489,14 +497,24 @@ int main(int argc, char **argv) {
               return 1;
           } else if (pid == 0) {
               std::vector<char*> args;
-              args.push_back(const_cast<char*>("gcc"));
-              args.push_back(const_cast<char*>(objFile.c_str()));
-              args.push_back(const_cast<char*>("-o"));
-              args.push_back(const_cast<char*>(outputBinary.c_str()));
-              args.push_back(const_cast<char*>("-lpthread"));
-              args.push_back(nullptr);
-
-              execvp("gcc", args.data());
+              if (enableWasm) {
+                  args.push_back(const_cast<char*>("wasm-ld"));
+                  args.push_back(const_cast<char*>(objFile.c_str()));
+                  args.push_back(const_cast<char*>("-o"));
+                  args.push_back(const_cast<char*>(outputBinary.c_str()));
+                  args.push_back(const_cast<char*>("--no-entry"));
+                  args.push_back(const_cast<char*>("--export-all"));
+                  args.push_back(nullptr);
+                  execvp("wasm-ld", args.data());
+              } else {
+                  args.push_back(const_cast<char*>("gcc"));
+                  args.push_back(const_cast<char*>(objFile.c_str()));
+                  args.push_back(const_cast<char*>("-o"));
+                  args.push_back(const_cast<char*>(outputBinary.c_str()));
+                  args.push_back(const_cast<char*>("-lpthread"));
+                  args.push_back(nullptr);
+                  execvp("gcc", args.data());
+              }
               perror("execvp failed");
               exit(1);
           } else {
