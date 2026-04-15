@@ -1,0 +1,62 @@
+// RUN: %linc build %s -o %t && %t
+import "std/math.lin"
+import "std/io.lin"
+import "std/array.lin"
+import "std/string.lin"
+
+fib: func [
+    n [i32!]
+    return: [i32!]
+][
+    either (lt n 2) [
+        n
+    ][
+        (add (fib (sub n 1)) (fib (sub n 2)))
+    ]
+]
+
+main: func [
+    return: [i32!]
+][
+    state: 0
+    state: print_str state "Hello, Lin!\n"
+
+    // Array
+    res_arr: array_new state 2
+    state: res_arr.0
+    arr: res_arr.1
+    state: array_set state arr 0 42
+    state: array_set state arr 1 99
+    val1_res: array_get state arr 0
+    state: val1_res.0
+    val1: val1_res.1
+    state: print_str state "Array val1: "
+    state: print_i32 state val1
+    state: print_str state "\n"
+
+    // String
+    str1: "foo"
+    str2: "foo"
+    str3: "bar"
+    eq1_res: streq state str1 str2
+    state: eq1_res.0
+    eq1: eq1_res.1
+    state: print_str state "str1 == str2: "
+    state: print_i32 state eq1
+    state: print_str state "\n"
+
+    eq2_res: streq state str1 str3
+    state: eq2_res.0
+    eq2: eq2_res.1
+    state: print_str state "str1 == str3: "
+    state: print_i32 state eq2
+    state: print_str state "\n"
+
+    // Math
+    fib_res: fib 5
+    state: print_str state "fib(5): "
+    state: print_i32 state fib_res
+    state: print_str state "\n"
+
+    0
+]

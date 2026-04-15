@@ -1,0 +1,36 @@
+// RUN: %linc build %s -o %t && %t
+import "std/math.lin"
+import "std/io.lin"
+
+fib: func [
+    n [i32!]
+    return: [i32!]
+][
+    either [lt n 2] [
+        n
+    ][
+        (add [fib [sub n 1]] [fib [sub n 2]])
+    ]
+]
+
+main: func [
+    return: [i32!]
+][
+    s1: 0
+
+    // We want to loop from 0 to 10 and print fib
+    i: 0
+    loop_res: while [le i 10] [
+        res: fib i
+        s2: print_str s1 "Fibonacci of "
+        s3: print_i32 s2 i
+        s4: print_str s3 " is "
+        s5: print_i32 s4 res
+        s1: print_str s5 "\n"
+
+        i: add i 1
+        [s1 i]
+    ]
+
+    0
+]
