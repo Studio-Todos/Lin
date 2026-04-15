@@ -1,0 +1,16 @@
+// RUN: %linc build %s -o %t | FileCheck %s
+
+import "std/sys.lin"
+
+// CHECK: Parsing Source:
+// CHECK: Generated MLIR
+
+test_abort: func [
+    argc [i32!]
+    return: [i32!]
+][
+    state: 0
+    // Just lower, do not execute
+    st1: (abort state)
+    0
+]
