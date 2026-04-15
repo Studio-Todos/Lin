@@ -540,10 +540,13 @@ static AstNode* parseFuncDecl(Parser *parser) {
     Token returnTypeName = parser->current;
     if (parser->current.type == TOKEN_IDENTIFIER) {
         parserAdvance(parser);
+        consume(parser, TOKEN_BANG, "Expect '!'.");
+    } else if (parser->current.type == TOKEN_RBRACKET) {
+        returnTypeName.start = "";
+        returnTypeName.length = 0;
     } else {
         errorAt(parser, &parser->current, "Expect type identifier.");
     }
-    consume(parser, TOKEN_BANG, "Expect '!'.");
     consume(parser, TOKEN_RBRACKET, "Expect ']' after return type.");
 
     consume(parser, TOKEN_RBRACKET, "Expect ']' to end args.");
