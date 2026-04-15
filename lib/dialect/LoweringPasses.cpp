@@ -586,9 +586,9 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             Block *loopEnd = builder.createBlock(&launchOp.getBody());
 
             Block &firstBlock = launchOp.getBody().front();
-            gpu::TerminatorOp autoTerm = nullptr;
-            if (!firstBlock.empty() && isa<gpu::TerminatorOp>(firstBlock.back())) {
-                autoTerm = cast<gpu::TerminatorOp>(&firstBlock.back());
+            Operation *autoTerm = nullptr;
+            if (!firstBlock.empty() && isa<gpu::TerminatorOp>(&firstBlock.back())) {
+                autoTerm = &firstBlock.back();
             }
 
             builder.setInsertionPointToStart(&firstBlock);
