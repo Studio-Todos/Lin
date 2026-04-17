@@ -1,0 +1,20 @@
+// RUN: %linc build %s -o %t && %t
+
+import "std/sys.lin"
+import "std/math.lin"
+
+test_sys_more: func [
+    argc [i32!]
+    return: [i64!]
+][
+    state: 0
+
+    // Just call time and sleep, then we do exit
+    st1_t: (time state)
+    st2: (sleep st1_t.0 0)
+
+    // exit with code 0
+    st3: (exit st2 0)
+
+    st3
+]

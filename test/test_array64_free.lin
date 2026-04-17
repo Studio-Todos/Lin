@@ -1,0 +1,18 @@
+// RUN: %linc build %s -o %t && %t
+
+import "std/array.lin"
+
+test_array64_free: func [
+    argc [i32!]
+    return: [i32!]
+][
+    state: 0
+
+    new_res: (array64_new state 10)
+    state: new_res.0
+    arr: new_res.1
+
+    state: (array_free state arr)
+
+    0
+]

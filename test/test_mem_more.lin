@@ -1,0 +1,35 @@
+// RUN: %linc build %s -o %t && %t
+
+import "std/mem.lin"
+import "std/math.lin"
+
+test_mem_more: func [
+    argc [i32!]
+    return: [i32!]
+][
+    state: 0
+
+    // malloc 16
+    st1_ptr: (malloc state 16)
+
+    // load/store i8
+    st2: (store_i8 st1_ptr.0 st1_ptr.1 42)
+    st3: (load_i8 st2.0 st1_ptr.1)
+
+    // load/store i32
+    st4: (store_i32 st3.0 st1_ptr.1 12345678)
+    st5: (load_i32 st4.0 st1_ptr.1)
+
+    // load/store i64
+    st6: (store_i64 st5.0 st1_ptr.1 9876543210123)
+    st7: (load_i64 st6.0 st1_ptr.1)
+
+    st8: (free st7.0 st1_ptr.1)
+
+    // check some value to ensure success
+    either (eq st3.1 42) [
+        0
+    ][
+        1
+    ]
+]
