@@ -1,0 +1,36 @@
+// RUN: %linc build %s -o %t && %t
+
+import "std/string.lin"
+import "std/math.lin"
+
+test_string_more: func [
+    argc [i32!]
+    return: [i32!]
+][
+    state: 0
+
+    // strlen
+    str1: "Hello"
+    res_len: (strlen state str1)
+
+    // streq
+    str2: "Hello"
+    res_eq: (streq res_len.0 str1 str2)
+
+    str3: "World"
+    res_eq2: (streq res_eq.0 str1 str3)
+
+    either (neq res_len.1 5) [
+        1
+    ][
+        either (neq res_eq.1 1) [
+            2
+        ][
+            either (neq res_eq2.1 0) [
+                3
+            ][
+                0
+            ]
+        ]
+    ]
+]

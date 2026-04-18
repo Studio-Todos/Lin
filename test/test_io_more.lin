@@ -1,0 +1,29 @@
+// RUN: %linc build %s -o %t && echo "a" | %t
+
+import "std/io.lin"
+import "std/math.lin"
+
+test_io_more: func [
+    argc [i32!]
+    return: [i32!]
+][
+    state: 0
+
+    // print_i64
+    state: (print_i64 state 1234567890123)
+    state: (print_str state "\n")
+
+    // print_f64
+    state: (print_f64 state 3.14159)
+    state: (print_str state "\n")
+
+    // read_char
+    res_char: (read_char state)
+    state: res_char.0
+    c: res_char.1
+
+    state: (print_char state c)
+    state: (print_str state "\n")
+
+    0
+]

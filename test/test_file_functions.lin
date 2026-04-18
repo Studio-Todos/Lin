@@ -1,0 +1,51 @@
+// RUN: %linc build %s -o %t && %t
+
+import "std/file.lin"
+import "std/mem.lin"
+import "std/math.lin"
+
+test_file_functions: func [
+    argc [i32!]
+    return: [i32!]
+][
+    state: 0
+
+    // Just need to exercise the wrapper operations slightly if they aren't fully covered
+    s1_fn_ptr: (malloc state 6)
+    s2: (store_i8 s1_fn_ptr.0 s1_fn_ptr.1 120) // x
+    s3: (store_i8 s2.0 (add s1_fn_ptr.1 1) 46) // .
+    s4: (store_i8 s3.0 (add s1_fn_ptr.1 2) 116) // t
+    s5: (store_i8 s4.0 (add s1_fn_ptr.1 3) 120) // x
+    s6: (store_i8 s5.0 (add s1_fn_ptr.1 4) 116) // t
+    s7: (store_i8 s6.0 (add s1_fn_ptr.1 5) 0) // \0
+
+    w_md_ptr: (malloc s7.0 2)
+    s8: (store_i8 w_md_ptr.0 w_md_ptr.1 119) // w
+    s9: (store_i8 s8.0 (add w_md_ptr.1 1) 0)
+
+    f_ptr: (fopen s9.0 s1_fn_ptr.1 w_md_ptr.1)
+
+    s10: (fputc f_ptr.0 65 f_ptr.1)
+
+    s11: (fclose s10.0 f_ptr.1)
+
+    r_md_ptr: (malloc s11.0 2)
+    s12: (store_i8 r_md_ptr.0 r_md_ptr.1 114) // r
+    s13: (store_i8 s12.0 (add r_md_ptr.1 1) 0)
+
+    f_ptr_r: (fopen s13.0 s1_fn_ptr.1 r_md_ptr.1)
+
+    res_c: (fgetc f_ptr_r.0 f_ptr_r.1)
+
+    s14: (fclose res_c.0 f_ptr_r.1)
+
+    s15: (free s14.0 s1_fn_ptr.1)
+    s16: (free s15.0 w_md_ptr.1)
+    s17: (free s16.0 r_md_ptr.1)
+
+    either (eq res_c.1 65) [
+        0
+    ][
+        1
+    ]
+]
