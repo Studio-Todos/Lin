@@ -24,6 +24,17 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
+#if __has_include("mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h")
+#include "mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h"
+#endif
+#if __has_include("mlir/Dialect/SPIRV/IR/SPIRVDialect.h")
+#include "mlir/Dialect/SPIRV/IR/SPIRVDialect.h"
+#include "mlir/Dialect/SPIRV/IR/SPIRVOps.h"
+#include "mlir/Dialect/SPIRV/IR/SPIRVAttributes.h"
+#endif
+#if __has_include("mlir/Target/SPIRV/Serialization.h")
+#include "mlir/Target/SPIRV/Serialization.h"
+#endif
 
 #include "mlir-c/IR.h"
 #include "mlir/CAPI/IR.h"
@@ -41,7 +52,6 @@ extern "C" {
 
 using namespace mlir;
 
-#include <fstream>
 #include <sstream>
 #include <filesystem>
 #include <vector>
@@ -49,6 +59,8 @@ using namespace mlir;
 #include <unistd.h>
 #include <cctype>
 #include <linux/limits.h>
+#include <fstream>
+#include <fstream>
 
 // Helper to check if a string is idiomatic Red/Rebol style
 static bool isIdiomaticCase(const char* str, int len) {
@@ -382,6 +394,9 @@ int main(int argc, char **argv) {
   registry.insert<mlir::arith::ArithDialect>();
   registry.insert<mlir::LLVM::LLVMDialect>();
   registry.insert<mlir::gpu::GPUDialect>();
+#if __has_include("mlir/Dialect/SPIRV/IR/SPIRVDialect.h")
+  registry.insert<mlir::spirv::SPIRVDialect>();
+#endif
   mlir::registerBuiltinDialectTranslation(registry);
   mlir::registerLLVMDialectTranslation(registry);
 
@@ -428,6 +443,11 @@ int main(int argc, char **argv) {
 
       if (enableGPU) {
           pm.addPass(mlir::createGpuKernelOutliningPass());
+#if __has_include("mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h")
+          pm.addPass(mlir::createConvertGPUToSPIRVPass());
+#else
+          std::cerr << "Warning: MLIR GPU-to-SPIRV conversion headers not available; skipping SPIR-V conversion.\n";
+#endif
       }
 
       if (mlir::failed(pm.run(module))) {
@@ -438,6 +458,53 @@ int main(int argc, char **argv) {
       std::cout << "\nLowering pass successful. Generated LLVM IR:\n";
       module->print(llvm::outs());
       llvm::outs() << "\n";
+
+#if __has_include("mlir/Target/SPIRV/Serialization.h")
+      if (enableGPU) {
+          module.walk([&](mlir::spirv::ModuleOp spirvModule) {
+              if (spirvModule->hasAttr("vce_triple")) return;
+              auto vce = mlir::spirv::VerCapExtAttr::get(
+                  mlir::spirv::Version::V_1_0,
+                  mlir::ArrayRef<mlir::spirv::Capability>{mlir::spirv::Capability::Shader},
+                  mlir::ArrayRef<mlir::spirv::Extension>{},
+                  spirvModule.getContext());
+              spirvModule->setAttr("vce_triple", vce);
+          });
+          mlir::SmallVector<uint32_t, 0> spirvBinary;
+          bool hasSpirv = false;
+          module.walk([&](mlir::Operation *op) {
+              if (hasSpirv) return;
+              auto spirvModule = llvm::dyn_cast<mlir::spirv::ModuleOp>(op);
+              if (!spirvModule) return;
+              if (mlir::succeeded(mlir::spirv::serialize(spirvModule, spirvBinary))) {
+                  hasSpirv = true;
+              }
+          });
+
+          if (hasSpirv) {
+              std::string spirvPath = outputBinary + ".spv";
+              std::ofstream spirvOut(spirvPath, std::ios::binary);
+              if (!spirvOut) {
+                  std::cerr << "Failed to open SPIR-V output file: " << spirvPath << "\n";
+              } else {
+                  spirvOut.write(reinterpret_cast<const char *>(spirvBinary.data()),
+                                 static_cast<std::streamsize>(spirvBinary.size() * sizeof(uint32_t)));
+                  spirvOut.flush();
+                  std::cout << "Emitted SPIR-V module to " << spirvPath << "\n";
+              }
+          } else {
+              std::cerr << "Warning: No SPIR-V module was produced during GPU lowering.\n";
+          }
+      }
+#endif
+
+      if (enableGPU && module.lookupSymbol<mlir::spirv::ModuleOp>("__spv__pic_gpu")) {
+          std::cout << "Skipping host LLVM IR generation for SPIR-V-only GPU output.\n";
+          std::cout << "Compilation complete.\n";
+          if (ast) freeAst(ast);
+          for (const char *src : importSources) free((void*)src);
+          return 0;
+      }
 
       llvm::LLVMContext llvmContext;
       auto llvmModule = mlir::translateModuleToLLVMIR(module, llvmContext);

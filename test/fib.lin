@@ -14,6 +14,7 @@
 // GPU: Generated MLIR (before lowering):
 // GPU: "pic_graph.agent"() <{agentType = "epsilon", label = "era", polarity = "*"}>
 // GPU: Lowering pass successful. Generated LLVM IR:
+// GPU: Emitted SPIR-V module to test_fib_bin_gpu.spv
 // GPU: Successfully compiled and linked to 'test_fib_bin_gpu'
 
 import "std/math.lin"

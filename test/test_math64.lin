@@ -1,5 +1,6 @@
 // RUN: %linc build %s -o test_math64_bin | FileCheck %s
 // RUN: %linc build %s --gpu -o test_math64_bin_gpu | FileCheck %s --check-prefix=GPU
+// RUN: test -s test_math64_bin_gpu.spv
 
 // CHECK: Parsing Source:
 // CHECK: test_math64: func [
@@ -38,6 +39,7 @@
 // GPU: "pic_graph.agent"() <{agentType = "omega", label = "shl64", polarity = "-"}>
 // GPU: "pic_graph.agent"() <{agentType = "omega", label = "shr64", polarity = "-"}>
 // GPU: "pic_graph.agent"() <{agentType = "omega", label = "and64", polarity = "-"}>
+// GPU: Emitted SPIR-V module to test_math64_bin_gpu.spv
 // GPU: "pic_graph.agent"() <{agentType = "omega", label = "or64", polarity = "-"}>
 // GPU: "pic_graph.agent"() <{agentType = "omega", label = "xor64", polarity = "-"}>
 

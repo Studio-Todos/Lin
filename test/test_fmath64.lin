@@ -1,5 +1,6 @@
 // RUN: %linc build %s -o test_fmath64_bin | FileCheck %s
 // RUN: %linc build %s --gpu -o test_fmath64_bin_gpu | FileCheck %s --check-prefix=GPU
+// RUN: test -s test_fmath64_bin_gpu.spv
 
 // CHECK: Parsing Source:
 // CHECK: test_fmath64: func [

@@ -1,5 +1,6 @@
 // RUN: %linc build %s -S -o %t | FileCheck %s
 // RUN: %linc build %s --gpu -S -o %t_gpu | FileCheck %s --check-prefix=GPU
+// RUN: test -s %t_gpu.spv
 
 import "std/io.lin"
 import "std/sys.lin"
