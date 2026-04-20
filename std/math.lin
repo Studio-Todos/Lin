@@ -549,3 +549,101 @@ ffloor64: mlir-op [
 ] {
     %res = llvm.intr.floor(%a) : (f64) -> f64
 }
+
+min: mlir-op [
+    inputs:  [a [i32!] b [i32!]]
+    outputs: [res [i32!]]
+] {
+    %res = llvm.intr.smin(%a, %b) : (i32, i32) -> i32
+}
+
+max: mlir-op [
+    inputs:  [a [i32!] b [i32!]]
+    outputs: [res [i32!]]
+] {
+    %res = llvm.intr.smax(%a, %b) : (i32, i32) -> i32
+}
+
+min64: mlir-op [
+    inputs:  [a [i64!] b [i64!]]
+    outputs: [res [i64!]]
+] {
+    %res = llvm.intr.smin(%a, %b) : (i64, i64) -> i64
+}
+
+max64: mlir-op [
+    inputs:  [a [i64!] b [i64!]]
+    outputs: [res [i64!]]
+] {
+    %res = llvm.intr.smax(%a, %b) : (i64, i64) -> i64
+}
+
+fmin: mlir-op [
+    inputs:  [a [f32!] b [f32!]]
+    outputs: [res [f32!]]
+] {
+    %res = llvm.intr.minnum(%a, %b) : (f32, f32) -> f32
+}
+
+fmax: mlir-op [
+    inputs:  [a [f32!] b [f32!]]
+    outputs: [res [f32!]]
+] {
+    %res = llvm.intr.maxnum(%a, %b) : (f32, f32) -> f32
+}
+
+fmin64: mlir-op [
+    inputs:  [a [f64!] b [f64!]]
+    outputs: [res [f64!]]
+] {
+    %res = llvm.intr.minnum(%a, %b) : (f64, f64) -> f64
+}
+
+fmax64: mlir-op [
+    inputs:  [a [f64!] b [f64!]]
+    outputs: [res [f64!]]
+] {
+    %res = llvm.intr.maxnum(%a, %b) : (f64, f64) -> f64
+}
+
+fpow: mlir-op [
+    inputs:  [a [f32!] b [f32!]]
+    outputs: [res [f32!]]
+] {
+    %res = llvm.intr.pow(%a, %b) : (f32, f32) -> f32
+}
+
+fpow64: mlir-op [
+    inputs:  [a [f64!] b [f64!]]
+    outputs: [res [f64!]]
+] {
+    %res = llvm.intr.pow(%a, %b) : (f64, f64) -> f64
+}
+
+fround: mlir-op [
+    inputs:  [a [f32!]]
+    outputs: [res [f32!]]
+] {
+    %res = llvm.intr.round(%a) : (f32) -> f32
+}
+
+ftrunc: mlir-op [
+    inputs:  [a [f32!]]
+    outputs: [res [f32!]]
+] {
+    %res = llvm.intr.trunc(%a) : (f32) -> f32
+}
+
+fround64: mlir-op [
+    inputs:  [a [f64!]]
+    outputs: [res [f64!]]
+] {
+    %res = llvm.intr.round(%a) : (f64) -> f64
+}
+
+ftrunc64: mlir-op [
+    inputs:  [a [f64!]]
+    outputs: [res [f64!]]
+] {
+    %res = llvm.intr.trunc(%a) : (f64) -> f64
+}
