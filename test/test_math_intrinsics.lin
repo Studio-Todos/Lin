@@ -21,6 +21,12 @@ test_intrinsics: func [
     ce: (fceil ab.0)
     fl: (ffloor ce.0)
 
+    fm: (fmin fl.0 a)
+    fmx: (fmax fm.0 a)
+    fpw: (fpow fmx.0 a)
+    fr: (fround fpw.0)
+    ft: (ftrunc fr.0)
+
     sq64: (fsqrt64 b)
     si64: (fsin64 sq64.0)
     co64: (fcos64 si64.0)
@@ -30,15 +36,27 @@ test_intrinsics: func [
     ce64: (fceil64 ab64.0)
     fl64: (ffloor64 ce64.0)
 
+    fm64: (fmin64 fl64.0 b)
+    fmx64: (fmax64 fm64.0 b)
+    fpw64: (fpow64 fmx64.0 b)
+    fr64: (fround64 fpw64.0)
+    ft64: (ftrunc64 fr64.0)
+
     nt: (not c)
     ct: (ctlz nt.0)
     tz: (cttz ct.0)
     po: (ctpop tz.0)
+
+    mi: (min po.0 c)
+    ma: (max mi.0 c)
 
     nt64: (not64 d)
     ct64: (ctlz64 nt64.0)
     tz64: (cttz64 ct64.0)
     po64: (ctpop64 tz64.0)
 
-    po64.0
+    mi64: (min64 po64.0 d)
+    ma64: (max64 mi64.0 d)
+
+    ma64.0
 ]
