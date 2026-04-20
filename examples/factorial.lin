@@ -1,0 +1,36 @@
+import "std/math.lin"
+import "std/io.lin"
+import "std/logic.lin"
+
+fact: func [
+    n [i32!]
+    return: [i32!]
+][
+    either [lt n 2] [
+        1
+    ][
+        mul n (fact (sub n 1))
+    ]
+]
+
+main: func [
+    return: [i32!]
+][
+    state: 0
+
+    n: 5
+    res: fact n
+
+    p1: print_str state "Factorial of 5 is: "
+    p2: print_i32 p1 res
+    p3: print_str p2 "\n"
+
+    n2: 10
+    res2: fact n2
+
+    p4: print_str p3 "Factorial of 10 is: "
+    p5: print_i32 p4 res2
+    p6: print_str p5 "\n"
+
+    0
+]

@@ -1,0 +1,94 @@
+import "std/math.lin"
+import "std/io.lin"
+import "std/logic.lin"
+import "std/array.lin"
+import "std/cast.lin"
+
+// Simple binary search over an array of integers
+// Array values MUST be pre-sorted
+
+binary_search: func [
+    state [i32!]
+    arr_ptr [i64!]
+    len [i32!]
+    target [i32!]
+    return: []
+][
+    low: 0
+    high: sub len 1
+    found: 0
+    result_idx: sub 0 1
+
+    s_curr: state
+
+    loop_res: while [and (eq found 0) (or (lt low high) (eq low high))] [
+        mid: add low (div (sub high low) 2)
+
+        // Load element at mid
+        res: array_get s_curr arr_ptr mid
+        mid_val: res.1
+        s_curr: res.0
+
+        either [eq mid_val target] [
+            found: 1
+            result_idx: mid
+            0
+        ][
+            either [lt mid_val target] [
+                low: add mid 1
+                0
+            ][
+                high: sub mid 1
+                0
+            ]
+        ]
+    ]
+
+    // Manual construction of result tuple (state, result_idx)
+    s_curr result_idx
+]
+
+
+main: func [
+    return: [i32!]
+][
+    state: 0
+
+    // Allocate array of size 5
+    len: 5
+    res: array_new state len
+    state: res.0
+    arr: res.1
+
+    // Initialize sorted array: 10, 20, 30, 40, 50
+    state: array_set state arr 0 10
+    state: array_set state arr 1 20
+    state: array_set state arr 2 30
+    state: array_set state arr 3 40
+    state: array_set state arr 4 50
+
+    // Test 1: Search for 30
+    target1: 30
+    res1: binary_search state arr len target1
+    state: res1.0
+    idx1: res1.1
+
+    state: print_str state "Searching for 30. Index: "
+    state: print_i32 state idx1
+    state: print_str state "\n"
+
+    // Test 2: Search for 45 (not found)
+    target2: 45
+    res2: binary_search state arr len target2
+    state: res2.0
+    idx2: res2.1
+
+    state: print_str state "Searching for 45. Index (-1 means not found): "
+    state: print_i32 state idx2
+    state: print_str state "\n"
+
+    // Free array
+    state: array_free state arr
+
+    0
+]

@@ -1,4 +1,3 @@
-// Tic Tac Toe in Lin
 import "std/math.lin"
 import "std/sys.lin"
 import "std/io.lin"
@@ -11,56 +10,56 @@ main: func [
     state: 0
 
     // Initialize 3x3 board
-    new_res: (array_new state 9)
+    new_res: array_new state 9
     state: new_res.0
     board: new_res.1
 
     // Fill with spaces (32)
     i: 0
-    init_loop: while (lt i 9) [
-        state: (array_set state board i 32)
-        i: (add i 1)
+    init_loop: while [lt i 9] [
+        state: array_set state board i 32
+        i: add i 1
     ]
 
     playing: 1
     turn: 0 // 0 for X, 1 for O
 
-    game_loop: while playing [
+    game_loop: while [playing] [
         // Print board
         // Just print an instruction for now since printing arrays is complicated without a loop over print_str
-        p1: (print_str state "Current player, enter cell 0-8: ")
+        p1: print_str state "Current player, enter cell 0-8: "
 
-        scan_res: (read_i32 p1)
+        scan_res: read_i32 p1
         state: scan_res.0
         cell: scan_res.1
 
         // Basic out of bounds check
-        either (or (lt cell 0) (gt cell 8)) [
-            state: (print_str state "Invalid cell! Try again.\n")
+        either [or (lt cell 0) (gt cell 8)] [
+            state: print_str state "Invalid cell! Try again.\n"
             0
         ][
-            get_res: (array_get state board cell)
+            get_res: array_get state board cell
             state: get_res.0
             val: get_res.1
 
-            either (eq val 32) [
+            either [eq val 32] [
                 // Set X or O
-                char: either (eq turn 0) [ 88 ][ 79 ] // X or O
-                state: (array_set state board cell char)
+                char: either [eq turn 0] [ 88 ][ 79 ] // X or O
+                state: array_set state board cell char
 
                 // Toggle turn
-                turn: either (eq turn 0) [ 1 ][ 0 ]
+                turn: either [eq turn 0] [ 1 ][ 0 ]
             ][
-                state: (print_str state "Cell already taken!\n")
+                state: print_str state "Cell already taken!\n"
                 0
             ]
         ]
 
         // Check if game is over (simplified)
         // Should check winning conditions, but let's just stop if the user inputs 99
-        playing: either (eq cell 99) [ 0 ][ 1 ]
+        playing: either [eq cell 99] [ 0 ][ 1 ]
     ]
 
-    state: (array_free state board)
+    state: array_free state board
     0
 ]

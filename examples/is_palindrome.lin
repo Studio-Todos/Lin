@@ -1,0 +1,101 @@
+import "std/math.lin"
+import "std/io.lin"
+import "std/logic.lin"
+import "std/string.lin"
+import "std/mem.lin"
+import "std/cast.lin"
+
+// Returns 1 if palindrome, 0 if not
+is_palindrome: func [
+    state [i32!]
+    str_ptr [i64!]
+    len [i32!]
+    // Empty return list bypasses type checking for return type, allowing multiple values (tuple)
+    return: []
+][
+    // Pointers for start and end
+    start_idx: 0
+    end_idx: sub len 1
+
+    is_pal: 1
+    s_curr: state
+
+    loop_res: while [and is_pal (lt start_idx end_idx)] [
+        // Get chars at start_idx and end_idx
+        res1: mem_load_i8 s_curr (ptr_add str_ptr (cast_i32_to_i64 start_idx))
+        c1: res1.1
+        s_curr: res1.0
+
+        res2: mem_load_i8 s_curr (ptr_add str_ptr (cast_i32_to_i64 end_idx))
+        c2: res2.1
+        s_curr: res2.0
+
+        either [eq c1 c2] [
+            start_idx: add start_idx 1
+            end_idx: sub end_idx 1
+            1
+        ][
+            is_pal: 0
+            0
+        ]
+    ]
+
+    // tuple return
+    s_curr is_pal
+]
+
+main: func [
+    return: [i32!]
+][
+    state: 0
+
+    // We allocate some strings and test them
+
+    // Test 1: "radar"
+    len1: 5
+    res1: string_alloc state len1
+    state: res1.0
+    str1: res1.1
+
+    // Set "radar"
+    state: string_set_char state str1 0 114 // 'r'
+    state: string_set_char state str1 1 97  // 'a'
+    state: string_set_char state str1 2 100 // 'd'
+    state: string_set_char state str1 3 97  // 'a'
+    state: string_set_char state str1 4 114 // 'r'
+
+    pal1_res: is_palindrome state str1 len1
+    state: pal1_res.0
+    pal1: pal1_res.1
+
+    state: print_str state "Is 'radar' a palindrome? "
+    state: print_i32 state pal1
+    state: print_str state "\n"
+
+    state: string_free state str1
+
+    // Test 2: "hello"
+    len2: 5
+    res2: string_alloc state len2
+    state: res2.0
+    str2: res2.1
+
+    // Set "hello"
+    state: string_set_char state str2 0 104 // 'h'
+    state: string_set_char state str2 1 101 // 'e'
+    state: string_set_char state str2 2 108 // 'l'
+    state: string_set_char state str2 3 108 // 'l'
+    state: string_set_char state str2 4 111 // 'o'
+
+    pal2_res: is_palindrome state str2 len2
+    state: pal2_res.0
+    pal2: pal2_res.1
+
+    state: print_str state "Is 'hello' a palindrome? "
+    state: print_i32 state pal2
+    state: print_str state "\n"
+
+    state: string_free state str2
+
+    0
+]
