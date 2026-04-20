@@ -1,0 +1,255 @@
+import "std/math.lin"
+import "std/io.lin"
+import "std/logic.lin"
+import "std/array.lin"
+import "std/cast.lin"
+
+// Connect Four game in Lin
+// Board is 6 rows x 7 cols = 42 cells.
+// We use a 1D array to represent the 2D board.
+// Cell at (row, col) is index: row * 7 + col.
+// Rows are 0 to 5, where 0 is the top row, 5 is the bottom row.
+// Columns are 0 to 6.
+// Players: 1 (Player 1, 'X' - ASCII 88) and 2 (Player 2, 'O' - ASCII 79)
+// Empty cell: 0 (Printed as '.' - ASCII 46)
+
+print_board: func [
+    state [i64!] board [i64!]
+    return: [i64!]
+] [
+    s_curr: print_str state "\n  0 1 2 3 4 5 6\n"
+    r: 0
+    while [lt r 6] [
+        s_curr: print_str s_curr "| "
+        c: 0
+        while [lt c 7] [
+            idx: add (mul r 7) c
+            arr_res: array_get s_curr board (i32-to-i64 idx)
+            s_curr: arr_res.0
+            val: arr_res.1
+
+            char: either [eq val 0] [ 46 ][ either [eq val 1] [ 88 ][ 79 ] ]
+            s_curr: print_char s_curr char
+            s_curr: print_str s_curr " "
+            c: add c 1
+        ]
+        s_curr: print_str s_curr "|\n"
+        r: add r 1
+    ]
+    print_str s_curr "-----------------\n"
+]
+
+// Returns 1 if player has won, 0 otherwise.
+// Checks all possible winning lines: horizontal, vertical, diagonal.
+check_win: func [
+    state [i64!] board [i64!] player [i32!]
+    return: [[i64!] [i32!]]
+] [
+    s_curr: state
+    won: 0
+
+    // Horizontal check
+    r: 0
+    while [and (lt r 6) (eq won 0)] [
+        c: 0
+        while [and (lt c 4) (eq won 0)] [
+            idx0: add (mul r 7) c
+            idx1: add idx0 1
+            idx2: add idx0 2
+            idx3: add idx0 3
+
+            arr_res0: array_get s_curr board (i32-to-i64 idx0)
+            arr_res1: array_get arr_res0.0 board (i32-to-i64 idx1)
+            arr_res2: array_get arr_res1.0 board (i32-to-i64 idx2)
+            arr_res3: array_get arr_res2.0 board (i32-to-i64 idx3)
+            s_curr: arr_res3.0
+
+            v0: arr_res0.1
+            v1: arr_res1.1
+            v2: arr_res2.1
+            v3: arr_res3.1
+
+            won: either [and (and (eq v0 player) (eq v1 player)) (and (eq v2 player) (eq v3 player))] [ 1 ][ 0 ]
+            c: add c 1
+        ]
+        r: add r 1
+    ]
+
+    // Vertical check
+    c: 0
+    while [and (lt c 7) (eq won 0)] [
+        r: 0
+        while [and (lt r 3) (eq won 0)] [
+            idx0: add (mul r 7) c
+            idx1: add (mul (add r 1) 7) c
+            idx2: add (mul (add r 2) 7) c
+            idx3: add (mul (add r 3) 7) c
+
+            arr_res0: array_get s_curr board (i32-to-i64 idx0)
+            arr_res1: array_get arr_res0.0 board (i32-to-i64 idx1)
+            arr_res2: array_get arr_res1.0 board (i32-to-i64 idx2)
+            arr_res3: array_get arr_res2.0 board (i32-to-i64 idx3)
+            s_curr: arr_res3.0
+
+            v0: arr_res0.1
+            v1: arr_res1.1
+            v2: arr_res2.1
+            v3: arr_res3.1
+
+            won: either [and (and (eq v0 player) (eq v1 player)) (and (eq v2 player) (eq v3 player))] [ 1 ][ 0 ]
+            r: add r 1
+        ]
+        c: add c 1
+    ]
+
+    // Diagonal check (bottom-left to top-right)
+    r: 3
+    while [and (lt r 6) (eq won 0)] [
+        c: 0
+        while [and (lt c 4) (eq won 0)] [
+            idx0: add (mul r 7) c
+            idx1: add (mul (sub r 1) 7) (add c 1)
+            idx2: add (mul (sub r 2) 7) (add c 2)
+            idx3: add (mul (sub r 3) 7) (add c 3)
+
+            arr_res0: array_get s_curr board (i32-to-i64 idx0)
+            arr_res1: array_get arr_res0.0 board (i32-to-i64 idx1)
+            arr_res2: array_get arr_res1.0 board (i32-to-i64 idx2)
+            arr_res3: array_get arr_res2.0 board (i32-to-i64 idx3)
+            s_curr: arr_res3.0
+
+            v0: arr_res0.1
+            v1: arr_res1.1
+            v2: arr_res2.1
+            v3: arr_res3.1
+
+            won: either [and (and (eq v0 player) (eq v1 player)) (and (eq v2 player) (eq v3 player))] [ 1 ][ 0 ]
+            c: add c 1
+        ]
+        r: add r 1
+    ]
+
+    // Diagonal check (top-left to bottom-right)
+    r: 0
+    while [and (lt r 3) (eq won 0)] [
+        c: 0
+        while [and (lt c 4) (eq won 0)] [
+            idx0: add (mul r 7) c
+            idx1: add (mul (add r 1) 7) (add c 1)
+            idx2: add (mul (add r 2) 7) (add c 2)
+            idx3: add (mul (add r 3) 7) (add c 3)
+
+            arr_res0: array_get s_curr board (i32-to-i64 idx0)
+            arr_res1: array_get arr_res0.0 board (i32-to-i64 idx1)
+            arr_res2: array_get arr_res1.0 board (i32-to-i64 idx2)
+            arr_res3: array_get arr_res2.0 board (i32-to-i64 idx3)
+            s_curr: arr_res3.0
+
+            v0: arr_res0.1
+            v1: arr_res1.1
+            v2: arr_res2.1
+            v3: arr_res3.1
+
+            won: either [and (and (eq v0 player) (eq v1 player)) (and (eq v2 player) (eq v3 player))] [ 1 ][ 0 ]
+            c: add c 1
+        ]
+        r: add r 1
+    ]
+
+    [s_curr won]
+]
+
+main: func [
+    return: [i32!]
+] [
+    state: 0
+
+    // Initialize 6x7 board = 42 cells
+    new_res: array_new state 42
+    state: new_res.0
+    board: new_res.1
+
+    // Fill with 0
+    i: 0
+    while [lt i 42] [
+        state: array_set state board (i32-to-i64 i) 0
+        i: add i 1
+    ]
+
+    state: print_str state "Welcome to Connect Four!\n"
+
+    playing: 1
+    turn: 1 // 1 for Player 1, 2 for Player 2
+    moves: 0
+
+    while [playing] [
+        state: print_board state board
+
+        // Ask for input
+        either [eq turn 1] [
+            state: print_str state "Player 1 (X), enter column (0-6): "
+        ][
+            state: print_str state "Player 2 (O), enter column (0-6): "
+        ]
+
+        scan_res: read_i32 state
+        state: scan_res.0
+        col: scan_res.1
+
+        either [or (lt col 0) (gt col 6)] [
+            state: print_str state "Invalid column! Please enter 0-6.\n"
+            0 // just a dummy value to avoid a block returning nothing when expected
+        ][
+            // Find lowest available row in the selected column
+            r: 5 // Start from bottom
+            placed: 0
+            while [and (ge r 0) (eq placed 0)] [
+                idx: add (mul r 7) col
+                get_res: array_get state board (i32-to-i64 idx)
+                state: get_res.0
+                val: get_res.1
+
+                either [eq val 0] [
+                    state: array_set state board (i32-to-i64 idx) turn
+                    placed: 1
+                    moves: add moves 1
+                ][
+                    r: sub r 1
+                ]
+            ]
+
+            either [eq placed 0] [
+                state: print_str state "Column is full! Try another one.\n"
+                0
+            ][
+                // Check win
+                win_res: check_win state board turn
+                state: win_res.0
+                has_won: win_res.1
+
+                either [has_won] [
+                    state: print_board state board
+                    either [eq turn 1] [
+                        state: print_str state "Player 1 wins!\n"
+                    ][
+                        state: print_str state "Player 2 wins!\n"
+                    ]
+                    playing: 0
+                ][
+                    // Check draw
+                    either [eq moves 42] [
+                        state: print_board state board
+                        state: print_str state "It's a draw!\n"
+                        playing: 0
+                    ][
+                        // Toggle turn
+                        turn: either [eq turn 1] [ 2 ][ 1 ]
+                    ]
+                ]
+            ]
+        ]
+    ]
+
+    state: array_free state board
+    0
+]
