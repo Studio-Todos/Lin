@@ -1,0 +1,62 @@
+import "std/math.lin"
+import "std/io.lin"
+import "std/logic.lin"
+
+main: func [
+    return: [i32!]
+][
+    state: 0
+    p1: print_str state "Simple Calculator\n"
+    p2: print_str p1 "-----------------\n"
+    p3: print_str p2 "1. Add\n2. Subtract\n3. Multiply\n4. Divide\n"
+
+    scan_op: read_i32 p3
+    op: scan_op.1
+    p4: scan_op.0
+
+    p5: print_str p4 "Enter first number: "
+    scan_a: read_i32 p5
+    a: scan_a.1
+    p6: scan_a.0
+
+    p7: print_str p6 "Enter second number: "
+    scan_b: read_i32 p7
+    b: scan_b.1
+    p8: scan_b.0
+
+    either [eq op 1] [
+        res: add a b
+        p9: print_str p8 "Result: "
+        p10: print_i32 p9 res
+        p11: print_str p10 "\n"
+    ][
+        either [eq op 2] [
+            res: sub a b
+            p9: print_str p8 "Result: "
+            p10: print_i32 p9 res
+            p11: print_str p10 "\n"
+        ][
+            either [eq op 3] [
+                res: mul a b
+                p9: print_str p8 "Result: "
+                p10: print_i32 p9 res
+                p11: print_str p10 "\n"
+            ][
+                either [eq op 4] [
+                    either [eq b 0] [
+                        p9: print_str p8 "Error: Division by zero!\n"
+                    ][
+                        res: div a b
+                        p9: print_str p8 "Result: "
+                        p10: print_i32 p9 res
+                        p11: print_str p10 "\n"
+                    ]
+                ][
+                    p9: print_str p8 "Error: Invalid operation!\n"
+                ]
+            ]
+        ]
+    ]
+
+    0
+]

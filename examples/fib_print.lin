@@ -1,0 +1,35 @@
+import "std/math.lin"
+import "std/io.lin"
+import "std/logic.lin"
+
+fib: func [
+    n [i32!]
+    return: [i32!]
+][
+    either [lt n 2] [
+        n
+    ][
+        add (fib (sub n 1)) (fib (sub n 2))
+    ]
+]
+
+main: func [
+    return: [i32!]
+][
+    state: 0
+    p1: print_str state "Fibonacci Sequence:\n"
+
+    i: 0
+    p_curr: p1
+    loop_res: while [lt i 10] [
+        res: fib i
+        p_curr: print_str p_curr "fib("
+        p_curr: print_i32 p_curr i
+        p_curr: print_str p_curr ") = "
+        p_curr: print_i32 p_curr res
+        p_curr: print_str p_curr "\n"
+        i: add i 1
+    ]
+
+    0
+]

@@ -1,0 +1,42 @@
+import "std/math.lin"
+import "std/io.lin"
+import "std/logic.lin"
+
+// Function to find the Greatest Common Divisor (GCD) using Euclidean algorithm
+gcd: func [
+    a [i32!]
+    b [i32!]
+    return: [i32!]
+][
+    either [eq b 0] [
+        a
+    ][
+        gcd b (mod a b)
+    ]
+]
+
+main: func [
+    return: [i32!]
+][
+    state: 0
+
+    // Calculate GCD of 48 and 18
+    num1: 48
+    num2: 18
+    res1: gcd num1 num2
+
+    p1: print_str state "GCD of 48 and 18 is: "
+    p2: print_i32 p1 res1
+    p3: print_str p2 "\n"
+
+    // Calculate GCD of 54 and 24
+    num3: 54
+    num4: 24
+    res2: gcd num3 num4
+
+    p4: print_str p3 "GCD of 54 and 24 is: "
+    p5: print_i32 p4 res2
+    p6: print_str p5 "\n"
+
+    0
+]

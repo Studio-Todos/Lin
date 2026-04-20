@@ -1,0 +1,59 @@
+import "std/math.lin"
+import "std/io.lin"
+import "std/logic.lin"
+
+// Function to check if a number is prime
+is_prime: func [
+    n [i32!]
+    return: [i32!]
+][
+    either [lt n 2] [
+        0 // False, 0 and 1 are not prime
+    ][
+        either [eq n 2] [
+            1 // True, 2 is prime
+        ][
+            // Check divisibility from 2 to n-1
+            // We use a naive approach here since we don't have a square root function easily available
+            i: 2
+            is_p: 1
+            loop_res: while [and is_p (lt i n)] [
+                rem: mod n i
+                either [eq rem 0] [
+                    is_p: 0 // Found a divisor, not prime
+                ][
+                    i: add i 1
+                ]
+            ]
+            is_p
+        ]
+    ]
+]
+
+main: func [
+    return: [i32!]
+][
+    state: 0
+    p1: print_str state "Prime Checker\n"
+
+    // Check some numbers
+    num: 17
+    res: is_prime num
+    p2: print_str p1 "Is 17 prime? "
+    p3: print_i32 p2 res
+    p4: print_str p3 "\n"
+
+    num2: 15
+    res2: is_prime num2
+    p5: print_str p4 "Is 15 prime? "
+    p6: print_i32 p5 res2
+    p7: print_str p6 "\n"
+
+    num3: 2
+    res3: is_prime num3
+    p8: print_str p7 "Is 2 prime? "
+    p9: print_i32 p8 res3
+    p10: print_str p9 "\n"
+
+    0
+]

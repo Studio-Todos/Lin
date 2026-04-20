@@ -1,0 +1,45 @@
+import "std/math.lin"
+import "std/io.lin"
+import "std/logic.lin"
+
+// More complex mathematical operations
+main: func [
+    return: [i32!]
+][
+    state: 0
+
+    // Testing order of operations
+    // (10 + 5) * 2 - 8 / 4
+    a: 10
+    b: 5
+    c: 2
+    d: 8
+    e: 4
+
+    res1: add a b
+    res2: mul res1 c
+    res3: div d e
+    res: sub res2 res3
+
+    p1: print_str state "Result of (10 + 5) * 2 - 8 / 4: "
+    p2: print_i32 p1 res
+    p3: print_str p2 "\n"
+
+    // Power function (custom implementation)
+    // 2^10
+    base: 2
+    exp: 10
+    pow_res: 1
+    i: 0
+
+    loop_res: while [lt i exp] [
+        pow_res: mul pow_res base
+        i: add i 1
+    ]
+
+    p4: print_str p3 "Result of 2^10: "
+    p5: print_i32 p4 pow_res
+    p6: print_str p5 "\n"
+
+    0
+]
