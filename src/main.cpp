@@ -317,6 +317,10 @@ int main(int argc, char **argv) {
           int total_count = 0;
           int capacity = 16;
           AstNode **new_stmts = static_cast<AstNode**>(malloc(sizeof(AstNode*) * capacity));
+          if (!new_stmts) {
+              std::cerr << "Out of memory\n";
+              return 1;
+          }
 
 
           for (int i = 0; i < ast->as.block.count; i++) {
