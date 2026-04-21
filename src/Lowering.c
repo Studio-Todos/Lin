@@ -27,6 +27,10 @@ static void env_init(Environment *env) {
     env->capacity = 16;
     env->count = 0;
     env->vars = (EnvVar*)malloc(sizeof(EnvVar) * env->capacity);
+    if (!env->vars) {
+        fprintf(stderr, "Out of memory\n");
+        exit(1);
+    }
 }
 
 static void env_free(Environment *env, MlirContext ctx, MlirBlock block, MlirLocation loc) {
@@ -408,6 +412,10 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         if (arg_count > 0) {
             types = (MlirType *)malloc(sizeof(MlirType) * arg_count);
             locs = (MlirLocation *)malloc(sizeof(MlirLocation) * arg_count);
+            if (!types || !locs) {
+                fprintf(stderr, "Out of memory\n");
+                exit(1);
+            }
             for (int i = 0; i < arg_count; i++) {
                 types[i] = portType;
                 locs[i] = loc;
@@ -715,6 +723,10 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
         int arg_count = ast->as.func_decl.arg_count;
         MlirType *types = (MlirType *)malloc(sizeof(MlirType) * arg_count);
         MlirLocation *locs = (MlirLocation *)malloc(sizeof(MlirLocation) * arg_count);
+        if (!types || !locs) {
+            fprintf(stderr, "Out of memory\n");
+            exit(1);
+        }
         for (int i = 0; i < arg_count; i++) {
             types[i] = portType;
             locs[i] = loc;
