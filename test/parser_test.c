@@ -16,6 +16,19 @@ void test_number() {
     printf("test_number passed\n");
 }
 
+void test_float() {
+    const char *source = "3.14";
+    AstNode *ast = parse(source);
+    assert(ast != NULL);
+    assert(ast->type == AST_BLOCK);
+    assert(ast->as.block.count == 1);
+    assert(ast->as.block.statements[0]->type == AST_FLOAT);
+    float val = ast->as.block.statements[0]->as.f_number.value;
+    assert(val > 3.13 && val < 3.15);
+    freeAst(ast);
+    printf("test_float passed\n");
+}
+
 void test_string() {
     const char *source = "\"hello\"";
     AstNode *ast = parse(source);
@@ -152,6 +165,7 @@ void test_unterminated_string() {
 
 int main() {
     test_number();
+    test_float();
     test_string();
     test_identifier();
     test_assignment();
