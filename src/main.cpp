@@ -465,7 +465,9 @@ int main(int argc, char **argv) {
               if (spirvModule->hasAttr("vce_triple")) return;
               auto vce = mlir::spirv::VerCapExtAttr::get(
                   mlir::spirv::Version::V_1_0,
-                  mlir::ArrayRef<mlir::spirv::Capability>{mlir::spirv::Capability::Shader},
+                  mlir::ArrayRef<mlir::spirv::Capability>{
+                      mlir::spirv::Capability::Shader,
+                      mlir::spirv::Capability::Linkage},
                   mlir::ArrayRef<mlir::spirv::Extension>{},
                   spirvModule.getContext());
               spirvModule->setAttr("vce_triple", vce);

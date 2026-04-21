@@ -573,7 +573,9 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 #if __has_include("mlir/Dialect/SPIRV/IR/TargetAndABI.h")
                 auto vce = mlir::spirv::VerCapExtAttr::get(
                     mlir::spirv::Version::V_1_0,
-                    llvm::ArrayRef<mlir::spirv::Capability>{mlir::spirv::Capability::Shader},
+                    llvm::ArrayRef<mlir::spirv::Capability>{
+                        mlir::spirv::Capability::Shader,
+                        mlir::spirv::Capability::Linkage},
                     llvm::ArrayRef<mlir::spirv::Extension>{},
                     module.getContext());
                 gpuModule->setAttr("vce_triple", vce);
