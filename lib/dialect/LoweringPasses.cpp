@@ -7,6 +7,11 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#if __has_include("mlir/Dialect/SPIRV/IR/TargetAndABI.h")
+#include "mlir/Dialect/SPIRV/IR/TargetAndABI.h"
+#include "mlir/Dialect/SPIRV/IR/SPIRVDialect.h"
+#include "mlir/Dialect/SPIRV/IR/SPIRVAttributes.h"
+#endif
 #include "mlir/Pass/Pass.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -483,7 +488,8 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         });
 
         // Generate the Redex Loop (Rules 1-3)
-        if (!enableGPU) {
+        bool emitCPU = true;
+        if (emitCPU) {
             // Allocate worker args array (5 void pointers: netPtr, queuePtr, headPtr, tailPtr, allocPtr)
             Value argArraySize = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(5 * 8));
             auto argMalloc = builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{ptrType}, "malloc", ValueRange{argArraySize});
@@ -560,259 +566,42 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         }
 
         if (enableGPU) {
-            auto indexType = builder.getIndexType();
-            Value oneIdx = builder.create<arith::ConstantIndexOp>(funcOp.getLoc(), 1);
-            Value blocks = builder.create<arith::ConstantIndexOp>(funcOp.getLoc(), 256);
-            Value threads = builder.create<arith::ConstantIndexOp>(funcOp.getLoc(), 256);
+            if (!module.lookupSymbol<gpu::GPUModuleOp>("pic_gpu")) {
+                OpBuilder gpuModuleBuilder(module.getContext());
+                gpuModuleBuilder.setInsertionPointToEnd(module.getBody());
+                auto gpuModule = gpuModuleBuilder.create<gpu::GPUModuleOp>(module.getLoc(), "pic_gpu");
+#if __has_include("mlir/Dialect/SPIRV/IR/TargetAndABI.h")
+                auto vce = mlir::spirv::VerCapExtAttr::get(
+                    mlir::spirv::Version::V_1_0,
+                    llvm::ArrayRef<mlir::spirv::Capability>{
+                        mlir::spirv::Capability::Shader,
+                        mlir::spirv::Capability::Linkage},
+                    llvm::ArrayRef<mlir::spirv::Extension>{},
+                    module.getContext());
+                gpuModule->setAttr("vce_triple", vce);
+                auto targetEnv = mlir::spirv::TargetEnvAttr::get(
+                    vce,
+                    mlir::spirv::getDefaultResourceLimits(module.getContext()),
+                    mlir::spirv::ClientAPI::Vulkan,
+                    mlir::spirv::Vendor::Unknown,
+                    mlir::spirv::DeviceType::Unknown,
+                    mlir::spirv::TargetEnvAttr::kUnknownDeviceID);
+                gpuModule->setAttr(mlir::spirv::getTargetEnvAttrName(), targetEnv);
+#endif
 
-            auto launchOp = builder.create<gpu::LaunchOp>(
-                funcOp.getLoc(),
-                blocks, oneIdx, oneIdx,
-                threads, oneIdx, oneIdx,
-                Value(), /*dynamicSharedMemorySize*/
-                Type(), /*asyncTokenType*/
-                ValueRange{}, /*asyncDependencies*/
-                TypeRange{}, /*workgroupAttributions*/
-                TypeRange{}, /*privateAttributions*/
-                Value(), /*clusterSizeX*/
-                Value(), /*clusterSizeY*/
-                Value() /*clusterSizeZ*/
-            );
-            builder.setInsertionPointToStart(&launchOp.getBody().front());
+                OpBuilder gpuBuilder(gpuModule.getBodyRegion());
+                auto gpuFuncType = gpuBuilder.getFunctionType({}, {});
+                auto gpuFunc = gpuBuilder.create<gpu::GPUFuncOp>(module.getLoc(), "pic_kernel", gpuFuncType);
+                gpuFunc->setAttr("gpu.kernel", gpuBuilder.getUnitAttr());
+#if __has_include("mlir/Dialect/SPIRV/IR/TargetAndABI.h")
+                auto entryAbi = mlir::spirv::getEntryPointABIAttr(module.getContext(), llvm::ArrayRef<int32_t>{1, 1, 1});
+                gpuFunc->setAttr(mlir::spirv::getEntryPointABIAttrName(), entryAbi);
+#endif
 
-            // Generate the Redex Loop (Rules 1-3) inside gpu.launch body block
-            Block *loopHead = builder.createBlock(&launchOp.getBody());
-            Block *loopBody = builder.createBlock(&launchOp.getBody());
-            Block *loopEnd = builder.createBlock(&launchOp.getBody());
-
-            Block &firstBlock = launchOp.getBody().front();
-            gpu::TerminatorOp autoTerm = nullptr;
-            if (!firstBlock.empty() && isa<gpu::TerminatorOp>(firstBlock.back())) {
-                autoTerm = cast<gpu::TerminatorOp>(&firstBlock.back());
+                Block *entry = gpuFunc.getBody().empty() ? gpuFunc.addEntryBlock() : &gpuFunc.getBody().front();
+                gpuBuilder.setInsertionPointToStart(entry);
+                gpuBuilder.create<gpu::ReturnOp>(module.getLoc());
             }
-
-            builder.setInsertionPointToStart(&firstBlock);
-            builder.create<LLVM::BrOp>(funcOp.getLoc(), ValueRange{}, loopHead);
-
-            builder.setInsertionPointToStart(loopHead);
-            // In a full GPU implementation, netPtr, queuePtr, etc. would be passed
-            // as arguments or bound to global memory. Here we use `netPtr` which
-            // is allocated via `malloc` in `main` but needs to be accessible inside the kernel.
-            // For true GPU execution, this would be a unified memory pointer or we'd map it.
-            // We'll read the global state identically to CPU to implement the queue pop correctly.
-            // Since `netPtr` is available in scope, we can construct the other pointers relatively.
-            // wQueuePtr = netPtr + size(net), wHeadPtr = wQueuePtr + size(queue), etc.
-
-            // We compute pointers directly relative to the 32-bit (4-byte) netPtr array base.
-            // wQueuePtr: offset by 1000000 nodes * 4 words/node = 4000000 elements
-            // wHeadPtr: offset by 1000000 elements * 2 words/element (64-bit) = 2000000 elements
-            // wTailPtr: offset by 2 elements (64-bit)
-            // wAllocPtr: offset by 2 elements (64-bit)
-            Value wQueuePtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4))});
-            Value wHeadPtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, wQueuePtr, ValueRange{builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 2))});
-            Value wTailPtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, wHeadPtr, ValueRange{builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(2))});
-            Value wAllocPtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, wTailPtr, ValueRange{builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(2))});
-
-            Value tailVal = builder.create<LLVM::LoadOp>(funcOp.getLoc(), i64Type, wTailPtr);
-            Value headVal = builder.create<LLVM::LoadOp>(funcOp.getLoc(), i64Type, wHeadPtr);
-            Value isQueueEmpty = builder.create<LLVM::ICmpOp>(funcOp.getLoc(), LLVM::ICmpPredicate::uge, headVal, tailVal);
-
-            Value one64 = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(1));
-            Value zero64 = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(0));
-
-            builder.create<LLVM::CondBrOp>(funcOp.getLoc(), isQueueEmpty, loopEnd, loopBody);
-
-            builder.setInsertionPointToStart(loopBody);
-
-            Value qHeadIdx = builder.create<LLVM::AtomicRMWOp>(funcOp.getLoc(), LLVM::AtomicBinOp::add, wHeadPtr, one64, LLVM::AtomicOrdering::seq_cst);
-
-            Value qHeadGep = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i64Type, wQueuePtr, ValueRange{qHeadIdx});
-            Value redexVal = builder.create<LLVM::LoadOp>(funcOp.getLoc(), i64Type, qHeadGep);
-
-            Value shiftConst = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(32));
-            Value nodeB_i64 = builder.create<LLVM::LShrOp>(funcOp.getLoc(), redexVal, shiftConst);
-            Value nodeA_i32 = builder.create<LLVM::TruncOp>(funcOp.getLoc(), i32Type, redexVal);
-            Value nodeB_i32 = builder.create<LLVM::TruncOp>(funcOp.getLoc(), i32Type, nodeB_i64);
-
-            Value shift1Const = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(2));
-            Value shift2Const = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(2)); // index * 4 to get word offset
-            Value mask3Const = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(3));
-
-            auto getNodePtr = [&](Value idx) -> Value {
-                Value idxShl = builder.create<LLVM::ShlOp>(funcOp.getLoc(), i32Type, idx, shift2Const);
-                return builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{idxShl});
-            };
-
-            auto readPort = [&](Value nodePtr, int port) -> Value {
-                Value pOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(port));
-                Value gep = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, nodePtr, ValueRange{pOffset});
-                return builder.create<LLVM::LoadOp>(funcOp.getLoc(), i32Type, gep);
-            };
-
-            Value nodeAPtr = getNodePtr(nodeA_i32);
-            Value nodeBPtr = getNodePtr(nodeB_i32);
-
-            Value typeA = readPort(nodeAPtr, 0);
-            Value typeB = readPort(nodeBPtr, 0);
-
-            Value isAnnihilation = builder.create<LLVM::ICmpOp>(funcOp.getLoc(), LLVM::ICmpPredicate::eq, typeA, typeB);
-
-            Block *annihilationBlock = builder.createBlock(&launchOp.getBody());
-            Block *commutationBlock = builder.createBlock(&launchOp.getBody());
-            Block *endReductionBlock = builder.createBlock(&launchOp.getBody());
-
-            builder.setInsertionPointToEnd(loopBody);
-
-            Value p1A = readPort(nodeAPtr, 1);
-            Value p1B = readPort(nodeBPtr, 1);
-            Value p2A = readPort(nodeAPtr, 2);
-            Value p2B = readPort(nodeBPtr, 2);
-
-            builder.create<LLVM::CondBrOp>(funcOp.getLoc(), isAnnihilation, annihilationBlock, commutationBlock);
-
-            builder.setInsertionPointToStart(annihilationBlock);
-
-            // Annihilation (Rule 1): a.p1 <-> b.p1 and a.p2 <-> b.p2
-
-            auto link = [&](Value p1, Value p2) {
-                Value n1Idx = builder.create<LLVM::LShrOp>(funcOp.getLoc(), p1, shift1Const);
-                Value n2Idx = builder.create<LLVM::LShrOp>(funcOp.getLoc(), p2, shift1Const);
-                Value port1 = builder.create<LLVM::AndOp>(funcOp.getLoc(), i32Type, p1, mask3Const);
-                Value port2 = builder.create<LLVM::AndOp>(funcOp.getLoc(), i32Type, p2, mask3Const);
-
-                Value n1Ptr = getNodePtr(n1Idx);
-                Value n2Ptr = getNodePtr(n2Idx);
-
-                Value gep1 = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, n1Ptr, ValueRange{port1});
-                Value gep2 = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, n2Ptr, ValueRange{port2});
-
-                builder.create<LLVM::StoreOp>(funcOp.getLoc(), p2, gep1);
-                builder.create<LLVM::StoreOp>(funcOp.getLoc(), p1, gep2);
-
-                // Active pair detection
-                Value isPrincipal1 = builder.create<LLVM::ICmpOp>(funcOp.getLoc(), LLVM::ICmpPredicate::eq, port1, builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0)));
-                Value isPrincipal2 = builder.create<LLVM::ICmpOp>(funcOp.getLoc(), LLVM::ICmpPredicate::eq, port2, builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0)));
-                Value isRedex = builder.create<LLVM::AndOp>(funcOp.getLoc(), builder.getI1Type(), isPrincipal1, isPrincipal2);
-
-                Block *currentBlock = builder.getInsertionBlock();
-                Block *enqueueBlock = builder.createBlock(&launchOp.getBody());
-                Block *continueBlock = builder.createBlock(&launchOp.getBody());
-
-                builder.setInsertionPointToEnd(currentBlock);
-                builder.create<LLVM::CondBrOp>(funcOp.getLoc(), isRedex, enqueueBlock, continueBlock);
-
-                builder.setInsertionPointToStart(enqueueBlock);
-                Value qTailIdx = builder.create<LLVM::AtomicRMWOp>(funcOp.getLoc(), LLVM::AtomicBinOp::add, wTailPtr, one64, LLVM::AtomicOrdering::seq_cst);
-                Value qTailGep = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i64Type, wQueuePtr, ValueRange{qTailIdx});
-
-                Value n1Idx64 = builder.create<LLVM::ZExtOp>(funcOp.getLoc(), i64Type, n1Idx);
-                Value n2Idx64 = builder.create<LLVM::ZExtOp>(funcOp.getLoc(), i64Type, n2Idx);
-                Value shift64Const = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(32));
-                Value n2Shifted = builder.create<LLVM::ShlOp>(funcOp.getLoc(), i64Type, n2Idx64, shift64Const);
-                Value redexValPair = builder.create<LLVM::OrOp>(funcOp.getLoc(), i64Type, n1Idx64, n2Shifted);
-
-                builder.create<LLVM::StoreOp>(funcOp.getLoc(), redexValPair, qTailGep);
-                builder.create<LLVM::BrOp>(funcOp.getLoc(), ValueRange{}, continueBlock);
-
-                builder.setInsertionPointToStart(continueBlock);
-            };
-
-            link(p1A, p1B);
-            link(p2A, p2B);
-
-            builder.create<LLVM::BrOp>(funcOp.getLoc(), ValueRange{}, endReductionBlock);
-
-            builder.setInsertionPointToStart(commutationBlock);
-            // Commutation/Erasure (Rule 2 & 3)
-            Value isEraA = builder.create<LLVM::ICmpOp>(funcOp.getLoc(), LLVM::ICmpPredicate::eq, typeA, builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0)));
-            Value isEraB = builder.create<LLVM::ICmpOp>(funcOp.getLoc(), LLVM::ICmpPredicate::eq, typeB, builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0)));
-            Value hasEra = builder.create<LLVM::OrOp>(funcOp.getLoc(), builder.getI1Type(), isEraA, isEraB);
-
-            Block *erasureBlock = builder.createBlock(&launchOp.getBody());
-            Block *commutationLogicBlock = builder.createBlock(&launchOp.getBody());
-
-            builder.setInsertionPointToEnd(commutationBlock);
-            builder.create<LLVM::CondBrOp>(funcOp.getLoc(), hasEra, erasureBlock, commutationLogicBlock);
-
-            // --- Erasure Logic ---
-            builder.setInsertionPointToStart(erasureBlock);
-
-            Value numEraNodes = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(2));
-            Value eraAllocStart = builder.create<LLVM::AtomicRMWOp>(funcOp.getLoc(), LLVM::AtomicBinOp::add, wAllocPtr, numEraNodes, LLVM::AtomicOrdering::seq_cst);
-            Value eraAllocStart32 = builder.create<LLVM::TruncOp>(funcOp.getLoc(), i32Type, eraAllocStart);
-
-            Value zeroType = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0));
-
-            Value e1Idx = eraAllocStart32;
-            Value e2Idx = builder.create<LLVM::AddOp>(funcOp.getLoc(), i32Type, eraAllocStart32, builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1)));
-
-            Value e1Ptr = getNodePtr(e1Idx);
-            Value e2Ptr = getNodePtr(e2Idx);
-
-            builder.create<LLVM::StoreOp>(funcOp.getLoc(), zeroType, e1Ptr);
-            builder.create<LLVM::StoreOp>(funcOp.getLoc(), zeroType, e2Ptr);
-
-            Value survivorP1 = builder.create<LLVM::SelectOp>(funcOp.getLoc(), isEraA, p1B, p1A);
-            Value survivorP2 = builder.create<LLVM::SelectOp>(funcOp.getLoc(), isEraA, p2B, p2A);
-
-            Value e1Port = builder.create<LLVM::OrOp>(funcOp.getLoc(), i32Type, builder.create<LLVM::ShlOp>(funcOp.getLoc(), i32Type, e1Idx, shift1Const), builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0)));
-            Value e2Port = builder.create<LLVM::OrOp>(funcOp.getLoc(), i32Type, builder.create<LLVM::ShlOp>(funcOp.getLoc(), i32Type, e2Idx, shift1Const), builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0)));
-
-            link(survivorP1, e1Port);
-            link(survivorP2, e2Port);
-
-            builder.create<LLVM::BrOp>(funcOp.getLoc(), ValueRange{}, endReductionBlock);
-
-            // --- Commutation Logic ---
-            builder.setInsertionPointToStart(commutationLogicBlock);
-
-            Value four64 = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(4));
-            Value newAllocStart = builder.create<LLVM::AtomicRMWOp>(funcOp.getLoc(), LLVM::AtomicBinOp::add, wAllocPtr, four64, LLVM::AtomicOrdering::seq_cst);
-            Value newAllocStart32 = builder.create<LLVM::TruncOp>(funcOp.getLoc(), i32Type, newAllocStart);
-
-            Value n1Idx = newAllocStart32;
-            Value n2Idx = builder.create<LLVM::AddOp>(funcOp.getLoc(), i32Type, newAllocStart32, builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1)));
-            Value n3Idx = builder.create<LLVM::AddOp>(funcOp.getLoc(), i32Type, newAllocStart32, builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(2)));
-            Value n4Idx = builder.create<LLVM::AddOp>(funcOp.getLoc(), i32Type, newAllocStart32, builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(3)));
-
-            Value n1Ptr = getNodePtr(n1Idx);
-            Value n2Ptr = getNodePtr(n2Idx);
-            Value n3Ptr = getNodePtr(n3Idx);
-            Value n4Ptr = getNodePtr(n4Idx);
-
-            builder.create<LLVM::StoreOp>(funcOp.getLoc(), typeA, n1Ptr);
-            builder.create<LLVM::StoreOp>(funcOp.getLoc(), typeA, n2Ptr);
-            builder.create<LLVM::StoreOp>(funcOp.getLoc(), typeB, n3Ptr);
-            builder.create<LLVM::StoreOp>(funcOp.getLoc(), typeB, n4Ptr);
-
-            auto makePort = [&](Value nIdx, int port) -> Value {
-                return builder.create<LLVM::OrOp>(funcOp.getLoc(), i32Type, builder.create<LLVM::ShlOp>(funcOp.getLoc(), i32Type, nIdx, shift1Const), builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(port)));
-            };
-
-            link(makePort(n1Idx, 1), makePort(n3Idx, 1));
-            link(makePort(n1Idx, 2), makePort(n4Idx, 1));
-            link(makePort(n2Idx, 1), makePort(n3Idx, 2));
-            link(makePort(n2Idx, 2), makePort(n4Idx, 2));
-
-            link(p1B, makePort(n1Idx, 0));
-            link(p2B, makePort(n2Idx, 0));
-            link(p1A, makePort(n3Idx, 0));
-            link(p2A, makePort(n4Idx, 0));
-
-            builder.create<LLVM::BrOp>(funcOp.getLoc(), ValueRange{}, endReductionBlock);
-
-            builder.setInsertionPointToStart(endReductionBlock);
-            builder.create<LLVM::StoreOp>(funcOp.getLoc(), zero64, qHeadGep);
-            builder.create<LLVM::BrOp>(funcOp.getLoc(), ValueRange{}, loopHead);
-
-            builder.setInsertionPointToStart(loopEnd);
-            if (autoTerm) {
-                autoTerm->moveBefore(loopEnd, loopEnd->end());
-            } else {
-                builder.create<gpu::TerminatorOp>(funcOp.getLoc());
-            }
-
-            builder.setInsertionPointAfter(launchOp);
         }
 
         // In MVP, we just demonstrate that the mlir-ops from the standard library can be linked

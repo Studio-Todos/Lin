@@ -25,6 +25,7 @@
             pkgs.python3
             pkgs.lit
             pkgs.gtest
+            pkgs.spirv-tools
           ];
 
           shellHook = ''
