@@ -23,9 +23,11 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
 #if __has_include("mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h")
 #include "mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h"
+#include "mlir/Conversion/MemRefToSPIRV/MemRefToSPIRVPass.h"
 #endif
 #if __has_include("mlir/Dialect/SPIRV/IR/SPIRVDialect.h")
 #include "mlir/Dialect/SPIRV/IR/SPIRVDialect.h"
@@ -392,6 +394,7 @@ int main(int argc, char **argv) {
   registry.insert<mlir::pic::runtime::PicRuntimeDialect>();
   registry.insert<mlir::func::FuncDialect>();
   registry.insert<mlir::arith::ArithDialect>();
+  registry.insert<mlir::memref::MemRefDialect>();
   registry.insert<mlir::LLVM::LLVMDialect>();
   registry.insert<mlir::gpu::GPUDialect>();
 #if __has_include("mlir/Dialect/SPIRV/IR/SPIRVDialect.h")
@@ -444,7 +447,11 @@ int main(int argc, char **argv) {
       if (enableGPU) {
           pm.addPass(mlir::createGpuKernelOutliningPass());
 #if __has_include("mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h")
-          pm.addPass(mlir::createConvertGPUToSPIRVPass());
+#if __has_include("mlir/Conversion/MemRefToSPIRV/MemRefToSPIRVPass.h")
+           pm.addPass(mlir::createMapMemRefStorageClassPass());
+           pm.addPass(mlir::createConvertMemRefToSPIRVPass());
+#endif
+           pm.addPass(mlir::createConvertGPUToSPIRVPass());
 #else
           std::cerr << "Warning: MLIR GPU-to-SPIRV conversion headers not available; skipping SPIR-V conversion.\n";
 #endif

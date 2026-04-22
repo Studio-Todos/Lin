@@ -7,6 +7,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #if __has_include("mlir/Dialect/SPIRV/IR/TargetAndABI.h")
 #include "mlir/Dialect/SPIRV/IR/TargetAndABI.h"
 #include "mlir/Dialect/SPIRV/IR/SPIRVDialect.h"
@@ -21,6 +22,15 @@
 using namespace mlir;
 
 namespace {
+
+static uint32_t opcodeForLabel(StringRef label) {
+  uint32_t hash = 2166136261u;
+  for (unsigned char c : label) {
+    hash ^= c;
+    hash *= 16777619u;
+  }
+  return hash ? hash : 1u;
+}
 
 struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PicGraphToReducePass)
@@ -67,32 +77,22 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
         if (nodeTypeEnum == 3 && op.getValue()) {
            valOrOpCode = op.getValue().value();
         } else if (nodeTypeEnum == 4) {
-           // Dynamic opcode assignment based on string label
-           static llvm::StringMap<uint32_t> opcodeMap;
-           static uint32_t nextOpcode = 1; // 0 reserved or invalid
+            // If this is a string literal (str node), we want the value to be the global string's opCode/index.
+            // Since string contents can vary, we use the string content itself to map to a unique string ID.
+            if (label == "str" && op.getStrVal()) {
+                StringRef strContent = op.getStrVal().value();
+                // We will prefix the content with "STR_" to avoid collision with operator labels
+                std::string strKey = "STR_" + strContent.str();
+                valOrOpCode = opcodeForLabel(strKey);
 
-           if (!opcodeMap.count(label)) {
-               opcodeMap[label] = nextOpcode++;
-           }
-           valOrOpCode = opcodeMap[label];
-
-           // If this is a string literal (str node), we want the value to be the global string's opCode/index.
-           // Since string contents can vary, we use the string content itself to map to a unique string ID.
-           if (label == "str" && op.getStrVal()) {
-               StringRef strContent = op.getStrVal().value();
-               // We will prefix the content with "STR_" to avoid collision with operator labels
-               std::string strKey = "STR_" + strContent.str();
-               if (!opcodeMap.count(strKey)) {
-                   opcodeMap[strKey] = nextOpcode++;
-               }
-               valOrOpCode = opcodeMap[strKey];
-
-               // We must record this payload for later emission as a global string!
-               // Let's create a dummy registry op to carry this over CFG bounds
-               builder.create<pic::graph::RegistryOp>(loc,
-                    builder.getStringAttr(strKey),
-                    builder.getStringAttr(strContent));
-           }
+                // We must record this payload for later emission as a global string!
+                // Let's create a dummy registry op to carry this over CFG bounds
+                builder.create<pic::graph::RegistryOp>(loc,
+                     builder.getStringAttr(strKey),
+                     builder.getStringAttr(strContent));
+            } else {
+                valOrOpCode = opcodeForLabel(label);
+            }
         }
 
         auto allocOp = builder.create<pic::runtime::AllocNodeOp>(
@@ -488,7 +488,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         });
 
         // Generate the Redex Loop (Rules 1-3)
-        bool emitCPU = true;
+        bool emitCPU = !enableGPU;
         if (emitCPU) {
             // Allocate worker args array (5 void pointers: netPtr, queuePtr, headPtr, tailPtr, allocPtr)
             Value argArraySize = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(5 * 8));
@@ -590,7 +590,16 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 #endif
 
                 OpBuilder gpuBuilder(gpuModule.getBodyRegion());
-                auto gpuFuncType = gpuBuilder.getFunctionType({}, {});
+                auto i32Type = gpuBuilder.getI32Type();
+#if __has_include("mlir/Dialect/SPIRV/IR/SPIRVAttributes.h")
+                auto memorySpace = mlir::spirv::StorageClassAttr::get(gpuBuilder.getContext(), mlir::spirv::StorageClass::StorageBuffer);
+#else
+                auto memorySpace = gpu::AddressSpaceAttr::get(gpuBuilder.getContext(), gpu::AddressSpace::Global);
+#endif
+                auto memrefType = mlir::MemRefType::get(
+                    llvm::ArrayRef<int64_t>{1}, i32Type, mlir::MemRefLayoutAttrInterface(), memorySpace);
+                auto gpuFuncType = gpuBuilder.getFunctionType(
+                    mlir::TypeRange{ i32Type, i32Type, i32Type, memrefType }, mlir::TypeRange{});
                 auto gpuFunc = gpuBuilder.create<gpu::GPUFuncOp>(module.getLoc(), "pic_kernel", gpuFuncType);
                 gpuFunc->setAttr("gpu.kernel", gpuBuilder.getUnitAttr());
 #if __has_include("mlir/Dialect/SPIRV/IR/TargetAndABI.h")
@@ -598,8 +607,45 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 gpuFunc->setAttr(mlir::spirv::getEntryPointABIAttrName(), entryAbi);
 #endif
 
+
+
                 Block *entry = gpuFunc.getBody().empty() ? gpuFunc.addEntryBlock() : &gpuFunc.getBody().front();
                 gpuBuilder.setInsertionPointToStart(entry);
+                Value opcodeArg = entry->getArgument(0);
+                Value lhsArg = entry->getArgument(1);
+                Value rhsArg = entry->getArgument(2);
+                Value outArg = entry->getArgument(3);
+
+                auto opcodeConst = [&](StringRef label) {
+                    return gpuBuilder.create<arith::ConstantOp>(module.getLoc(), i32Type,
+                        gpuBuilder.getI32IntegerAttr(static_cast<int32_t>(opcodeForLabel(label))));
+                };
+
+                Value addRes = gpuBuilder.create<arith::AddIOp>(module.getLoc(), lhsArg, rhsArg);
+                Value subRes = gpuBuilder.create<arith::SubIOp>(module.getLoc(), lhsArg, rhsArg);
+                Value mulRes = gpuBuilder.create<arith::MulIOp>(module.getLoc(), lhsArg, rhsArg);
+                Value divRes = gpuBuilder.create<arith::DivSIOp>(module.getLoc(), lhsArg, rhsArg);
+
+                Value ltResI1 = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::slt, lhsArg, rhsArg);
+                Value ltRes = gpuBuilder.create<arith::ExtUIOp>(module.getLoc(), i32Type, ltResI1);
+
+                Value eqResI1 = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::eq, lhsArg, rhsArg);
+                Value eqRes = gpuBuilder.create<arith::ExtUIOp>(module.getLoc(), i32Type, eqResI1);
+
+                Value res = addRes;
+                Value isSub = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::eq, opcodeArg, opcodeConst("sub"));
+                res = gpuBuilder.create<arith::SelectOp>(module.getLoc(), isSub, subRes, res);
+                Value isMul = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::eq, opcodeArg, opcodeConst("mul"));
+                res = gpuBuilder.create<arith::SelectOp>(module.getLoc(), isMul, mulRes, res);
+                Value isDiv = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::eq, opcodeArg, opcodeConst("div"));
+                res = gpuBuilder.create<arith::SelectOp>(module.getLoc(), isDiv, divRes, res);
+                Value isLt = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::eq, opcodeArg, opcodeConst("lt"));
+                res = gpuBuilder.create<arith::SelectOp>(module.getLoc(), isLt, ltRes, res);
+                Value isEq = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::eq, opcodeArg, opcodeConst("eq"));
+                res = gpuBuilder.create<arith::SelectOp>(module.getLoc(), isEq, eqRes, res);
+
+                Value indexZero = gpuBuilder.create<arith::ConstantIndexOp>(module.getLoc(), 0);
+                gpuBuilder.create<memref::StoreOp>(module.getLoc(), res, outArg, ValueRange{indexZero});
                 gpuBuilder.create<gpu::ReturnOp>(module.getLoc());
             }
         }
@@ -613,7 +659,6 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             SmallVector<Block*> caseDestinations;
             SmallVector<ValueRange> caseOperands;
 
-            int32_t caseIdx = 1;
             for (auto &pair : opPayloads) {
                 Block *caseBlock = llvmFunc.addBlock();
                 builder.setInsertionPointToStart(caseBlock);
@@ -739,7 +784,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 Value zeroCase = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0));
                 builder.create<LLVM::ReturnOp>(funcOp.getLoc(), ValueRange{zeroCase});
 
-                caseValues.push_back(caseIdx++);
+                caseValues.push_back(static_cast<int32_t>(opcodeForLabel(pair.first())));
                 caseDestinations.push_back(caseBlock);
                 caseOperands.push_back(ValueRange{});
             }
@@ -769,7 +814,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 Value zeroCase = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0));
                 builder.create<LLVM::ReturnOp>(funcOp.getLoc(), ValueRange{zeroCase});
 
-                caseValues.push_back(caseIdx++);
+                caseValues.push_back(static_cast<int32_t>(opcodeForLabel(strKey)));
                 caseDestinations.push_back(caseBlock);
                 caseOperands.push_back(ValueRange{});
             }
@@ -790,7 +835,6 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
             builder.create<LLVM::SwitchOp>(funcOp.getLoc(), opcodeVal, defaultBlock, ValueRange{}, caseValues, caseDestinations, caseOperands);
         } else {
-            // Return 0
             builder.setInsertionPointToEnd(entryBlock);
             Value zero = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0));
             builder.create<LLVM::ReturnOp>(funcOp.getLoc(), ValueRange{zero});
