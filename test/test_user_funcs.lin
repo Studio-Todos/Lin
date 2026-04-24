@@ -1,0 +1,23 @@
+// RUN: %linc build %s -o %t
+// CHECK: Lowering pass successful. Generated LLVM IR:
+// CHECK: Successfully compiled and linked to
+
+// Tests: basic user-defined function definition and single-argument call.
+// The function agent (gamma+) and application agent (delta-) should form
+// a p0↔p0 redex in the interaction net graph.
+
+import "std/types.lin"
+
+; Single-arg identity function
+identity: func [x [i32!] return: [i32!]] [x]
+
+; One-arg arithmetic
+add-ten: func [x [i32!] return: [i32!]] [x + 10]
+
+; Two-arg binary op
+my-add: func [a [i32!] return: [i32!]] [a + 5]
+
+result1: (identity 42)
+result2: (add-ten 7)
+result3: (my-add 3)
+result1

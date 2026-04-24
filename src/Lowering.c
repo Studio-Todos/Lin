@@ -530,12 +530,13 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         mlirOperationStateAddOperands(&linkFalse, 2, linkFalseOps);
         mlirBlockAppendOwnedOperation(loopBlock, mlirOperationCreate(&linkFalse));
 
+        // env_free MUST precede func.return
+        env_free(&loopEnv, ctx, loopBlock, loc);
+
         // Return the condition from the loop function
         MlirOperationState retState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
         mlirOperationStateAddOperands(&retState, 1, &cond);
         mlirBlockAppendOwnedOperation(loopBlock, mlirOperationCreate(&retState));
-
-        env_free(&loopEnv, ctx, loopBlock, loc);
 
         if (types) free(types);
         if (locs) free(locs);
@@ -904,6 +905,10 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
         }
 
         MlirValue result = lowerExpression(ctx, block, loc, ast->as.func_decl.body, &env);
+
+        // env_free MUST precede func.return — it inserts ERA nodes for unconsumed
+        // variables, and those ops must come before the block terminator.
+        env_free(&env, ctx, block, loc);
 
         MlirOperationState retState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
         mlirOperationStateAddOperands(&retState, 1, &result);

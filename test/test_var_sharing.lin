@@ -1,0 +1,18 @@
+// RUN: %linc build %s -o %t
+// CHECK: Lowering pass successful. Generated LLVM IR:
+// CHECK: Successfully compiled and linked to
+
+// Tests: Variable binding (let-like semantics via assignment) and
+// use of bound variables as function arguments. Ensures that the
+// delta-dup (sharing) agent correctly wires environment lookups.
+
+import "std/types.lin"
+
+; Bind a value, use it twice via different paths
+inc: func [x [i32!] return: [i32!]] [x + 1]
+
+; Bind 10, then use it twice
+base: 10
+r1: (inc base)
+r2: (inc r1)
+r2
