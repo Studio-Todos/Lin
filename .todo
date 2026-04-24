@@ -1,0 +1,82 @@
+# Lin Language TODO
+# Format: [ ] pending  [/] in progress  [x] done
+# Tiers: 🔴 blocking  🟡 important  🟢 nice-to-have
+
+## 🔴 Tier 1 — Blocking (programs don't execute correctly yet)
+
+[ ] 1. AST_PAIR lowering in lowerExpression
+        - Emit a pair agent that holds two ports
+        - Wire left/right sub-expressions into p1/p2
+        - Field access (.0 / .1) selects p1 or p2 via a DUP-split agent
+
+[ ] 1. AST_PAIR lowering in lowerExpression
+        - Emit a pair agent that holds two ports
+        - Wire left/right sub-expressions into p1/p2
+        - Field access (.0 / .1) selects p1 or p2 via a DUP-split agent
+
+[x] 2. `either` reduction rule (if/else at runtime)
+        - CPU worker_thread: BRANCH ~ NUM fires, selects true/false port, erases loser
+        - NODE_BRANCH=7 added to node type encoding
+        - TODO: GPU kernel parity (unified pipeline)
+
+[/] 3. Beta-reduction rule (function application at runtime)
+        - Phase 1: gamma(+,f) ~ delta(-,f) wires aux ports (p1↔p1, p2↔p2)
+        - NODE_FN=5 / NODE_APP=6 added to node type encoding
+        - checkBeta dispatch block added to CPU worker
+        - Phase 2: body-graph cloning for multi-arg / recursive / closure functions
+        - TODO: GPU kernel parity (unified pipeline)
+
+[ ] 4. mlir-op full pipeline connection
+        - User-declared mlir-op in .lin files should register to the same
+          opcode dispatch table as built-in ops
+        - Verify the payload MLIR is cloned into the right switch case
+
+## 🟡 Tier 2 — Language Completeness
+
+[ ] 5. Closure / captured variable support
+        - Thread outer-scope bindings into inner function bodies
+        - In interaction net terms: share the binding's port into the function agent's aux ports
+
+[ ] 6. Binary operator coverage
+        - Add TOKEN_STAR (*), TOKEN_SLASH (/), TOKEN_GREATER (>),
+          TOKEN_GREATER_EQUAL (>=), TOKEN_EQUAL_EQUAL (==),
+          TOKEN_NOT_EQUAL (!=), TOKEN_AND (&&), TOKEN_OR (||)
+        - Wire them to the correct mlir-op labels in lowerExpression AST_BINARY
+
+[ ] 7. Type checking / type-directed dispatch
+        - Use AstFuncArg.type_name for lightweight structural checking
+        - Emit type mismatch errors with source locations
+        - Enables type-directed code gen (e.g., i32 add vs. f32 fadd)
+
+[ ] 8. Multiple return values via pairs
+        - Once AST_PAIR lowering (#1) works, ensure function return types
+          can be pairs and that .0 / .1 access compiles correctly
+
+## 🟢 Tier 3 — Developer Experience
+
+[ ] 9. `linc run` command
+        - Compile to temp binary and execute in one step
+        - Print exit code and stdout
+
+[ ] 10. @gpu / @cpu per-function annotations
+        - Parser: recognize @identifier annotations before func declarations
+        - Lowering: tag gamma agents with dispatch target attr
+        - Runtime: route to gpu_dispatch or cpu worker_thread based on tag
+
+[ ] 11. Human-readable error messages
+        - Source location (file:line:col) on parse errors
+        - Meaningful type mismatch messages instead of raw MLIR verifier output
+
+[ ] 12. Node GC / arena reset
+        - Track live roots after reduction
+        - Reset dead regions of the net buffer
+        - Required for long-running or recursive programs with large working sets
+
+[ ] 13. Unified CPU/GPU reduction pipeline
+        - Define reduction rules (link, beta, either, annihilate, commute, erase)
+          as a single MLIR function using target-independent dialects (scf/arith/memref)
+        - Lower once to LLVM for CPU (via standard MLIR lowering)
+        - Lower once to GPU (via gpu/spirv dialects)
+        - Eliminate the current duplication between PicRuntimeToLLVMPass worker_thread
+          builder code and the separate SPIR-V GPU kernel
+        - Marked in code with TODO(unified-pipeline) comments
