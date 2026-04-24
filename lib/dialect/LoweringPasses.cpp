@@ -574,9 +574,9 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 auto vce = mlir::spirv::VerCapExtAttr::get(
                     mlir::spirv::Version::V_1_0,
                     llvm::ArrayRef<mlir::spirv::Capability>{
-                        mlir::spirv::Capability::Shader,
-                        mlir::spirv::Capability::Linkage},
-                    llvm::ArrayRef<mlir::spirv::Extension>{},
+                        mlir::spirv::Capability::Shader},
+                    llvm::ArrayRef<mlir::spirv::Extension>{
+                        mlir::spirv::Extension::SPV_KHR_storage_buffer_storage_class},
                     module.getContext());
                 gpuModule->setAttr("vce_triple", vce);
                 auto targetEnv = mlir::spirv::TargetEnvAttr::get(
@@ -834,6 +834,25 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             Value opcodeVal = builder.create<LLVM::LoadOp>(funcOp.getLoc(), i32Type, opcodeGEP);
 
             builder.create<LLVM::SwitchOp>(funcOp.getLoc(), opcodeVal, defaultBlock, ValueRange{}, caseValues, caseDestinations, caseOperands);
+        } else if (enableGPU) {
+            builder.setInsertionPointToEnd(entryBlock);
+            auto voidType = LLVM::LLVMVoidType::get(builder.getContext());
+            if (!module.lookupSymbol<LLVM::LLVMFuncOp>("pic_gpu_dispatch")) {
+                auto dispatchType = LLVM::LLVMFunctionType::get(voidType, {i32Type, i32Type, i32Type, ptrType});
+                OpBuilder topBuilder(module.getBodyRegion());
+                topBuilder.setInsertionPointToStart(module.getBody());
+                topBuilder.create<LLVM::LLVMFuncOp>(module.getLoc(), "pic_gpu_dispatch", dispatchType);
+            }
+
+            Value zeroC = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0));
+            Value argA = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(10));
+            Value argB = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(20));
+
+            SmallVector<Value> dispatchArgs = {zeroC, argA, argB, netPtr};
+            builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{}, "pic_gpu_dispatch", dispatchArgs);
+            
+            Value zero = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0));
+            builder.create<LLVM::ReturnOp>(funcOp.getLoc(), ValueRange{zero});
         } else {
             builder.setInsertionPointToEnd(entryBlock);
             Value zero = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0));

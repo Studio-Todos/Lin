@@ -1,4 +1,6 @@
-add_executable(linc main.cpp Parser.c Lowering.c)
+add_executable(linc main.cpp Parser.c Lowering.c gpu_runtime.c)
+
+find_package(Vulkan REQUIRED)
 
 target_link_libraries(linc PRIVATE
   PicDialects
@@ -13,6 +15,7 @@ target_link_libraries(linc PRIVATE
   MLIRCAPIRegisterEverything
   MLIRGPUDialect
   MLIRGPUTransforms
+  Vulkan::Vulkan
 )
 
 target_include_directories(linc PUBLIC

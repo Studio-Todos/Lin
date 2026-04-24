@@ -28,6 +28,15 @@
 #if __has_include("mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h")
 #include "mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h"
 #include "mlir/Conversion/MemRefToSPIRV/MemRefToSPIRVPass.h"
+#if __has_include("mlir/Dialect/SPIRV/Transforms/Passes.h")
+#include "mlir/Dialect/SPIRV/Transforms/Passes.h"
+#endif
+#if __has_include("mlir/Conversion/ArithToSPIRV/ArithToSPIRVPass.h")
+#include "mlir/Conversion/ArithToSPIRV/ArithToSPIRVPass.h"
+#endif
+#if __has_include("mlir/Conversion/IndexToSPIRV/IndexToSPIRVPass.h")
+#include "mlir/Conversion/IndexToSPIRV/IndexToSPIRVPass.h"
+#endif
 #endif
 #if __has_include("mlir/Dialect/SPIRV/IR/SPIRVDialect.h")
 #include "mlir/Dialect/SPIRV/IR/SPIRVDialect.h"
@@ -451,7 +460,17 @@ int main(int argc, char **argv) {
            pm.addPass(mlir::createMapMemRefStorageClassPass());
            pm.addPass(mlir::createConvertMemRefToSPIRVPass());
 #endif
+#if __has_include("mlir/Conversion/ArithToSPIRV/ArithToSPIRVPass.h")
+           pm.addPass(mlir::createConvertArithToSPIRVPass());
+#endif
+#if __has_include("mlir/Conversion/IndexToSPIRV/IndexToSPIRVPass.h")
+           pm.addPass(mlir::createConvertIndexToSPIRVPass());
+#endif
            pm.addPass(mlir::createConvertGPUToSPIRVPass());
+#if __has_include("mlir/Dialect/SPIRV/Transforms/Passes.h")
+           pm.addNestedPass<mlir::spirv::ModuleOp>(mlir::spirv::createSPIRVLowerABIAttributesPass());
+           pm.addNestedPass<mlir::spirv::ModuleOp>(mlir::spirv::createSPIRVUpdateVCEPass());
+#endif
 #else
           std::cerr << "Warning: MLIR GPU-to-SPIRV conversion headers not available; skipping SPIR-V conversion.\n";
 #endif
@@ -507,12 +526,13 @@ int main(int argc, char **argv) {
       }
 #endif
 
-      if (enableGPU && module.lookupSymbol<mlir::spirv::ModuleOp>("__spv__pic_gpu")) {
-          std::cout << "Skipping host LLVM IR generation for SPIR-V-only GPU output.\n";
-          std::cout << "Compilation complete.\n";
-          if (ast) freeAst(ast);
-          for (const char *src : importSources) free((void*)src);
-          return 0;
+      if (enableGPU) {
+          if (auto spirvModule = module.lookupSymbol<mlir::spirv::ModuleOp>("__spv__pic_gpu")) {
+              spirvModule.erase();
+          }
+          if (auto gpuModule = module.lookupSymbol<mlir::gpu::GPUModuleOp>("pic_gpu")) {
+              gpuModule.erase();
+          }
       }
 
       llvm::LLVMContext llvmContext;
@@ -590,6 +610,10 @@ int main(int argc, char **argv) {
                   args.push_back(const_cast<char*>("-o"));
                   args.push_back(const_cast<char*>(outputBinary.c_str()));
                   args.push_back(const_cast<char*>("-lpthread"));
+                  if (enableGPU) {
+                      args.push_back(const_cast<char*>("/home/falconnor4/github/Lin/src/gpu_runtime.c"));
+                      args.push_back(const_cast<char*>("-lvulkan"));
+                  }
                   args.push_back(nullptr);
                   execvp("gcc", args.data());
               }
