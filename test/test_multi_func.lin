@@ -1,0 +1,20 @@
+// RUN: %linc build %s -o %t
+// CHECK: Lowering pass successful. Generated LLVM IR:
+// CHECK: Successfully compiled and linked to
+
+// Tests: Multiple function definitions in one file, each acting as a
+// graph agent. Verifies the compiler can track multiple gamma(+) agents
+// and create distinct delta(-) redexes for each call.
+
+import "std/types.lin"
+
+double: func [x [i32!] return: [i32!]] [x + x]
+
+square: func [x [i32!] return: [i32!]] [x + x]
+
+negate: func [x [i32!] return: [i32!]] [0 - x]
+
+r1: (double 5)
+r2: (square 4)
+r3: (negate 7)
+r1

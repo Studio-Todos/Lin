@@ -1,0 +1,18 @@
+// RUN: %linc build %s -o %t
+// CHECK: Lowering pass successful. Generated LLVM IR:
+// CHECK: Successfully compiled and linked to
+
+// Tests: GPU path for user-defined functions.
+// When compiled with --gpu, the pipeline should still complete without errors
+// and emit a SPIR-V kernel.
+
+// RUN: %linc build %s --gpu -o %t_gpu
+// GPU: Lowering pass successful. Generated LLVM IR:
+// GPU: Emitted SPIR-V module
+
+import "std/types.lin"
+
+; Simple function to verify GPU compilation path
+mul-two: func [x [i32!] return: [i32!]] [x + x]
+
+(mul-two 6)

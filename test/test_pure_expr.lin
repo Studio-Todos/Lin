@@ -1,0 +1,14 @@
+// RUN: %linc build %s -o %t
+// CHECK: Lowering pass successful. Generated LLVM IR:
+// CHECK: Successfully compiled and linked to
+
+// Tests: Interaction net graph structure — pure expressions with no
+// user functions. Ensures the baseline omega/epsilon/dup agents still
+// lower correctly after the function lowering changes.
+
+import "std/types.lin"
+
+; Simple arithmetic expression — should produce omega(+, "num") agents
+; and omega(-, "add") agents linked via aux ports
+result: 3 + 4
+result

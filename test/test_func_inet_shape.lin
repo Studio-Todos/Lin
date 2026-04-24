@@ -1,0 +1,21 @@
+// RUN: %linc build %s -o %t
+// CHECK: Lowering pass successful. Generated LLVM IR:
+// CHECK: Successfully compiled and linked to
+// CHECK: gamma
+// CHECK: delta
+
+// Tests: The MLIR emitted for a function definition+call must contain:
+//   - A gamma(+) agent for the function definition
+//   - A delta(-) agent for the function application
+//   - A link op connecting their p0 ports (the redex)
+// This confirms the interaction net encoding is structurally correct.
+
+import "std/types.lin"
+
+; CHECK: agentType = "gamma"
+; CHECK: agentType = "delta"
+; CHECK: pic_graph.link
+
+add-two: func [x [i32!] return: [i32!]] [x + 2]
+
+(add-two 5)

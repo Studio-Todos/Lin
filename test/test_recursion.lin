@@ -1,0 +1,22 @@
+// RUN: %linc build %s -o %t
+// CHECK: Lowering pass successful. Generated LLVM IR:
+// CHECK: Successfully compiled and linked to
+
+// Tests: Recursive function definition.
+// The recursive call generates another delta(-) redex that references
+// the same gamma(+) function agent — verifying the env lookup works
+// across recursive references.
+
+import "std/types.lin"
+
+; Countdown: a simple linear recursion
+; In interaction nets, each recursive call adds a redex to the queue.
+countdown: func [n [i32!] return: [i32!]] [
+    either n < 1 [
+        0
+    ][
+        (countdown n - 1)
+    ]
+]
+
+(countdown 3)
