@@ -26,11 +26,16 @@
             pkgs.lit
             pkgs.gtest
             pkgs.spirv-tools
+            pkgs.vulkan-headers
+            pkgs.vulkan-loader
+            pkgs.vulkan-validation-layers
           ];
 
           shellHook = ''
             export LLVM_DIR=${llvm.llvm.dev}
             export MLIR_DIR=${llvm.mlir.dev}
+            export LD_LIBRARY_PATH="${pkgs.vulkan-loader}/lib:${pkgs.vulkan-validation-layers}/lib:$LD_LIBRARY_PATH"
+            export VK_LAYER_PATH="${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d"
             echo "Lin Development Environment"
             echo "LLVM/MLIR Version: ${llvm.llvm.version}"
           '';

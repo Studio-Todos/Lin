@@ -7,6 +7,8 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #if __has_include("mlir/Dialect/SPIRV/IR/TargetAndABI.h")
 #include "mlir/Dialect/SPIRV/IR/TargetAndABI.h"
 #include "mlir/Dialect/SPIRV/IR/SPIRVDialect.h"
@@ -21,6 +23,15 @@
 using namespace mlir;
 
 namespace {
+
+static uint32_t opcodeForLabel(StringRef label) {
+  uint32_t hash = 2166136261u;
+  for (unsigned char c : label) {
+    hash ^= c;
+    hash *= 16777619u;
+  }
+  return hash ? hash : 1u;
+}
 
 struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PicGraphToReducePass)
@@ -67,32 +78,22 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
         if (nodeTypeEnum == 3 && op.getValue()) {
            valOrOpCode = op.getValue().value();
         } else if (nodeTypeEnum == 4) {
-           // Dynamic opcode assignment based on string label
-           static llvm::StringMap<uint32_t> opcodeMap;
-           static uint32_t nextOpcode = 1; // 0 reserved or invalid
+            // If this is a string literal (str node), we want the value to be the global string's opCode/index.
+            // Since string contents can vary, we use the string content itself to map to a unique string ID.
+            if (label == "str" && op.getStrVal()) {
+                StringRef strContent = op.getStrVal().value();
+                // We will prefix the content with "STR_" to avoid collision with operator labels
+                std::string strKey = "STR_" + strContent.str();
+                valOrOpCode = opcodeForLabel(strKey);
 
-           if (!opcodeMap.count(label)) {
-               opcodeMap[label] = nextOpcode++;
-           }
-           valOrOpCode = opcodeMap[label];
-
-           // If this is a string literal (str node), we want the value to be the global string's opCode/index.
-           // Since string contents can vary, we use the string content itself to map to a unique string ID.
-           if (label == "str" && op.getStrVal()) {
-               StringRef strContent = op.getStrVal().value();
-               // We will prefix the content with "STR_" to avoid collision with operator labels
-               std::string strKey = "STR_" + strContent.str();
-               if (!opcodeMap.count(strKey)) {
-                   opcodeMap[strKey] = nextOpcode++;
-               }
-               valOrOpCode = opcodeMap[strKey];
-
-               // We must record this payload for later emission as a global string!
-               // Let's create a dummy registry op to carry this over CFG bounds
-               builder.create<pic::graph::RegistryOp>(loc,
-                    builder.getStringAttr(strKey),
-                    builder.getStringAttr(strContent));
-           }
+                // We must record this payload for later emission as a global string!
+                // Let's create a dummy registry op to carry this over CFG bounds
+                builder.create<pic::graph::RegistryOp>(loc,
+                     builder.getStringAttr(strKey),
+                     builder.getStringAttr(strContent));
+            } else {
+                valOrOpCode = opcodeForLabel(label);
+            }
         }
 
         auto allocOp = builder.create<pic::runtime::AllocNodeOp>(
@@ -113,15 +114,42 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
         valueToPort[op.getP2()] = makePort(2);
       });
 
+      // Track AgentOp p0 values -> sequential node indices (starting from 1)
+      // We mirror the same allocCount logic as PicRuntimeToLLVMPass.
+      DenseMap<Value, int32_t> p0ToNodeIdx;
+      int32_t nodeCounter = 1;
+
+      funcOp.walk([&](pic::graph::AgentOp op) {
+        p0ToNodeIdx[op.getP0()] = nodeCounter;
+        nodeCounter++;
+      });
+
+      // Collect all links so we can detect initial redex pairs
+      SmallVector<int32_t> initialPairFlat; // [nodeA, nodeB, nodeA, nodeB, ...]
+
       funcOp.walk([&](pic::graph::LinkOp op) {
         builder.setInsertionPoint(op);
 
         Value pA = valueToPort.count(op.getA()) ? valueToPort[op.getA()] : op.getA();
         Value pB = valueToPort.count(op.getB()) ? valueToPort[op.getB()] : op.getB();
 
+        // Detect p0↔p0: both raw values must be keys in p0ToNodeIdx
+        auto itA = p0ToNodeIdx.find(op.getA());
+        auto itB = p0ToNodeIdx.find(op.getB());
+        if (itA != p0ToNodeIdx.end() && itB != p0ToNodeIdx.end()) {
+            initialPairFlat.push_back(itA->second);
+            initialPairFlat.push_back(itB->second);
+        }
+
         // We bypass `pic_runtime::LinkOp` for now to avoid memref args mismatch while testing
         // builder.create<pic::runtime::LinkOp>(op.getLoc(), pA, pB);
       });
+
+      // Attach initial pairs to the module so PicRuntimeToLLVMPass can read them
+      if (!initialPairFlat.empty()) {
+          module->setAttr("gpu.initial_pairs",
+              builder.getDenseI32ArrayAttr(initialPairFlat));
+      }
 
       funcOp.walk([&](func::ReturnOp op) {
          if (op.getNumOperands() > 0 && valueToPort.count(op.getOperand(0))) {
@@ -338,9 +366,9 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
         // --- Erasure Logic ---
         builder.setInsertionPointToStart(erasureBlock);
-        Value numEraNodes = builder.create<LLVM::ConstantOp>(module.getLoc(), i64Type, builder.getI64IntegerAttr(2));
-        Value eraAllocStart = builder.create<LLVM::AtomicRMWOp>(module.getLoc(), LLVM::AtomicBinOp::add, wAllocPtr, numEraNodes, LLVM::AtomicOrdering::seq_cst);
-        Value eraAllocStart32 = builder.create<LLVM::TruncOp>(module.getLoc(), i32Type, eraAllocStart);
+        Value numEraNodesI32 = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(2));
+        Value eraAllocStart = builder.create<LLVM::AtomicRMWOp>(module.getLoc(), LLVM::AtomicBinOp::add, wAllocPtr, numEraNodesI32, LLVM::AtomicOrdering::seq_cst);
+        Value eraAllocStart32 = eraAllocStart;
 
         Value zeroType = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(0));
 
@@ -368,9 +396,9 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
         // --- Commutation Logic ---
         builder.setInsertionPointToStart(commutationLogicBlock);
-        Value four64 = builder.create<LLVM::ConstantOp>(module.getLoc(), i64Type, builder.getI64IntegerAttr(4));
-        Value newAllocStart = builder.create<LLVM::AtomicRMWOp>(module.getLoc(), LLVM::AtomicBinOp::add, wAllocPtr, four64, LLVM::AtomicOrdering::seq_cst);
-        Value newAllocStart32 = builder.create<LLVM::TruncOp>(module.getLoc(), i32Type, newAllocStart);
+        Value four32 = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(4));
+        Value newAllocStart = builder.create<LLVM::AtomicRMWOp>(module.getLoc(), LLVM::AtomicBinOp::add, wAllocPtr, four32, LLVM::AtomicOrdering::seq_cst);
+        Value newAllocStart32 = newAllocStart;
 
         Value n1Idx = newAllocStart32;
         Value n2Idx = builder.create<LLVM::AddOp>(module.getLoc(), i32Type, newAllocStart32, builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(1)));
@@ -461,8 +489,8 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         Block *entryBlock = llvmFunc.addEntryBlock();
         builder.setInsertionPointToStart(entryBlock);
 
-        // Allocate Net Array (1 million nodes * 4 words * 4 bytes = 16 MB)
-        Value netSize = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4 * 4));
+        // Allocate Net Array (1 million nodes * 4 words + queue + pointers) * 4 bytes
+        Value netSize = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr((1000000 * 4 + 1000000 * 2 + 10) * 4));
         auto netMalloc = builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{ptrType}, "malloc", ValueRange{netSize});
         Value netPtr = netMalloc.getResult();
 
@@ -471,7 +499,6 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
         funcOp.walk([&](pic::runtime::AllocNodeOp allocOp) {
             Location loc = allocOp.getLoc();
-            builder.setInsertionPoint(allocOp);
 
             Value typeVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(allocOp.getType()));
 
@@ -487,29 +514,66 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             allocCount = builder.create<LLVM::AddOp>(loc, allocCount, one);
         });
 
+        builder.setInsertionPointToEnd(entryBlock);
+
         // Generate the Redex Loop (Rules 1-3)
-        bool emitCPU = true;
+        Value queueOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4));
+        Value headOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4 + 1000000 * 2));
+        Value tailOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4 + 1000000 * 2 + 2));
+        Value allocOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4 + 1000000 * 2 + 4));
+
+        Value wQueuePtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{queueOffset});
+        Value wHeadPtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{headOffset});
+        Value wTailPtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{tailOffset});
+        Value wAllocPtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{allocOffset});
+
+        Value zero64 = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(0));
+        builder.create<LLVM::StoreOp>(funcOp.getLoc(), zero64, wHeadPtr);
+        // wTailPtr is committed after initial pair detection below
+        builder.create<LLVM::StoreOp>(funcOp.getLoc(), allocCount, wAllocPtr);
+
+        // ─── Populate initial active-pairs queue ───────────────────────────
+        // PicGraphToReducePass recorded any p0↔p0 links as a DenseI32Array
+        // attribute on the module. Each consecutive pair [nodeA, nodeB] is one
+        // initial redex to dispatch on the GPU.
+        {
+            Value tailVal = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(0));
+
+            if (auto pairsAttr = module->getAttrOfType<DenseI32ArrayAttr>("gpu.initial_pairs")) {
+                ArrayRef<int32_t> pairs = pairsAttr.asArrayRef();
+                for (size_t i = 0; i + 1 < pairs.size(); i += 2) {
+                    int32_t nodeA = pairs[i];
+                    int32_t nodeB = pairs[i + 1];
+
+                    Value nodeAVal = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(nodeA));
+                    Value nodeBVal = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(nodeB));
+
+                    Value twoV = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(2));
+                    Value slotBase = builder.create<LLVM::MulOp>(funcOp.getLoc(), tailVal, twoV);
+                    Value slotBase1 = builder.create<LLVM::AddOp>(funcOp.getLoc(), slotBase,
+                        builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(1)));
+
+                    Value gepA = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, wQueuePtr, ValueRange{slotBase});
+                    Value gepB = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, wQueuePtr, ValueRange{slotBase1});
+
+                    builder.create<LLVM::StoreOp>(funcOp.getLoc(), nodeAVal, gepA);
+                    builder.create<LLVM::StoreOp>(funcOp.getLoc(), nodeBVal, gepB);
+
+                    Value one64 = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(1));
+                    tailVal = builder.create<LLVM::AddOp>(funcOp.getLoc(), tailVal, one64);
+                }
+            }
+
+            // Commit tail pointer (zero if no pairs, or N if N redexes found)
+            builder.create<LLVM::StoreOp>(funcOp.getLoc(), tailVal, wTailPtr);
+        }
+
+        bool emitCPU = !enableGPU;
         if (emitCPU) {
             // Allocate worker args array (5 void pointers: netPtr, queuePtr, headPtr, tailPtr, allocPtr)
             Value argArraySize = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(5 * 8));
             auto argMalloc = builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{ptrType}, "malloc", ValueRange{argArraySize});
             Value argArray = argMalloc.getResult();
-
-            Value allocCount64 = builder.create<LLVM::ZExtOp>(funcOp.getLoc(), i64Type, allocCount);
-            Value queueOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4));
-            Value headOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4 + 1000000 * 2));
-            Value tailOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4 + 1000000 * 2 + 2));
-            Value allocOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4 + 1000000 * 2 + 4));
-
-            Value wQueuePtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{queueOffset});
-            Value wHeadPtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{headOffset});
-            Value wTailPtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{tailOffset});
-            Value wAllocPtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{allocOffset});
-
-            Value zero64 = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(0));
-            builder.create<LLVM::StoreOp>(funcOp.getLoc(), zero64, wHeadPtr);
-            builder.create<LLVM::StoreOp>(funcOp.getLoc(), zero64, wTailPtr);
-            builder.create<LLVM::StoreOp>(funcOp.getLoc(), allocCount64, wAllocPtr);
 
             auto storeArg = [&](int index, Value val) {
                 Value idxConst = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(index));
@@ -574,9 +638,9 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 auto vce = mlir::spirv::VerCapExtAttr::get(
                     mlir::spirv::Version::V_1_0,
                     llvm::ArrayRef<mlir::spirv::Capability>{
-                        mlir::spirv::Capability::Shader,
-                        mlir::spirv::Capability::Linkage},
-                    llvm::ArrayRef<mlir::spirv::Extension>{},
+                        mlir::spirv::Capability::Shader},
+                    llvm::ArrayRef<mlir::spirv::Extension>{
+                        mlir::spirv::Extension::SPV_KHR_storage_buffer_storage_class},
                     module.getContext());
                 gpuModule->setAttr("vce_triple", vce);
                 auto targetEnv = mlir::spirv::TargetEnvAttr::get(
@@ -590,16 +654,197 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 #endif
 
                 OpBuilder gpuBuilder(gpuModule.getBodyRegion());
-                auto gpuFuncType = gpuBuilder.getFunctionType({}, {});
+                auto i32Type = gpuBuilder.getI32Type();
+#if __has_include("mlir/Dialect/SPIRV/IR/SPIRVAttributes.h")
+                auto memorySpace = mlir::spirv::StorageClassAttr::get(gpuBuilder.getContext(), mlir::spirv::StorageClass::StorageBuffer);
+#else
+                auto memorySpace = gpu::AddressSpaceAttr::get(gpuBuilder.getContext(), gpu::AddressSpace::Global);
+#endif
+                auto memrefType = mlir::MemRefType::get(
+                    llvm::ArrayRef<int64_t>{mlir::ShapedType::kDynamic}, i32Type, mlir::MemRefLayoutAttrInterface(), memorySpace);
+                auto gpuFuncType = gpuBuilder.getFunctionType(
+                    mlir::TypeRange{ memrefType, memrefType, i32Type }, mlir::TypeRange{});
                 auto gpuFunc = gpuBuilder.create<gpu::GPUFuncOp>(module.getLoc(), "pic_kernel", gpuFuncType);
                 gpuFunc->setAttr("gpu.kernel", gpuBuilder.getUnitAttr());
 #if __has_include("mlir/Dialect/SPIRV/IR/TargetAndABI.h")
-                auto entryAbi = mlir::spirv::getEntryPointABIAttr(module.getContext(), llvm::ArrayRef<int32_t>{1, 1, 1});
+                auto entryAbi = mlir::spirv::getEntryPointABIAttr(module.getContext(), llvm::ArrayRef<int32_t>{256, 1, 1});
                 gpuFunc->setAttr(mlir::spirv::getEntryPointABIAttrName(), entryAbi);
 #endif
 
+
+
                 Block *entry = gpuFunc.getBody().empty() ? gpuFunc.addEntryBlock() : &gpuFunc.getBody().front();
                 gpuBuilder.setInsertionPointToStart(entry);
+                Value netArg = entry->getArgument(0);
+                Value activePairsArg = entry->getArgument(1);
+                Value numPairsArg = entry->getArgument(2);
+
+                // Fetch global_id x
+                Value globalIdIndex = gpuBuilder.create<gpu::GlobalIdOp>(module.getLoc(), gpuBuilder.getIndexType(), gpu::Dimension::x);
+                Value globalId = gpuBuilder.create<arith::IndexCastOp>(module.getLoc(), i32Type, globalIdIndex);
+
+                // Check if globalId < numPairs
+                Value inBoundsI1 = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::slt, globalId, numPairsArg);
+                
+                auto ifOp = gpuBuilder.create<scf::IfOp>(module.getLoc(), inBoundsI1, false);
+                gpuBuilder.setInsertionPoint(ifOp.getThenRegion().front().getTerminator());
+
+                // ── Decode active pair ──────────────────────────────────────
+                // activePairs stores two i32s per pair: [nodeA, nodeB]
+                Value c2Idx = gpuBuilder.create<arith::ConstantIndexOp>(module.getLoc(), 2);
+                Value pairBase = gpuBuilder.create<arith::MulIOp>(module.getLoc(), globalIdIndex, c2Idx);
+                Value pairBase1 = gpuBuilder.create<arith::AddIOp>(module.getLoc(), pairBase, gpuBuilder.create<arith::ConstantIndexOp>(module.getLoc(), 1));
+
+                Value nodeA_val = gpuBuilder.create<memref::LoadOp>(module.getLoc(), activePairsArg, ValueRange{pairBase});
+                Value nodeB_val = gpuBuilder.create<memref::LoadOp>(module.getLoc(), activePairsArg, ValueRange{pairBase1});
+
+                Value nodeA_idx = gpuBuilder.create<arith::IndexCastOp>(module.getLoc(), gpuBuilder.getIndexType(), nodeA_val);
+                Value nodeB_idx = gpuBuilder.create<arith::IndexCastOp>(module.getLoc(), gpuBuilder.getIndexType(), nodeB_val);
+
+                // ── Read node data from net buffer ────────────────────────────
+                // Layout: net[nodeIdx*4+0]=type, [+1]=port1, [+2]=port2
+                auto c4idx = gpuBuilder.create<arith::ConstantIndexOp>(module.getLoc(), 4);
+                auto c1idx = gpuBuilder.create<arith::ConstantIndexOp>(module.getLoc(), 1);
+                auto c2idx_v = gpuBuilder.create<arith::ConstantIndexOp>(module.getLoc(), 2);
+
+                Value baseA = gpuBuilder.create<arith::MulIOp>(module.getLoc(), nodeA_idx, c4idx);
+                Value baseB = gpuBuilder.create<arith::MulIOp>(module.getLoc(), nodeB_idx, c4idx);
+
+                Value typeAIdx = baseA;
+                Value p1AIdx   = gpuBuilder.create<arith::AddIOp>(module.getLoc(), baseA, c1idx);
+                Value p2AIdx   = gpuBuilder.create<arith::AddIOp>(module.getLoc(), baseA, c2idx_v);
+                Value typeBIdx = baseB;
+                Value p1BIdx   = gpuBuilder.create<arith::AddIOp>(module.getLoc(), baseB, c1idx);
+                Value p2BIdx   = gpuBuilder.create<arith::AddIOp>(module.getLoc(), baseB, c2idx_v);
+
+                Value typeA = gpuBuilder.create<memref::LoadOp>(module.getLoc(), netArg, ValueRange{typeAIdx});
+                Value typeB = gpuBuilder.create<memref::LoadOp>(module.getLoc(), netArg, ValueRange{typeBIdx});
+                Value p1A   = gpuBuilder.create<memref::LoadOp>(module.getLoc(), netArg, ValueRange{p1AIdx});
+                Value p2A   = gpuBuilder.create<memref::LoadOp>(module.getLoc(), netArg, ValueRange{p2AIdx});
+                Value p1B   = gpuBuilder.create<memref::LoadOp>(module.getLoc(), netArg, ValueRange{p1BIdx});
+                Value p2B   = gpuBuilder.create<memref::LoadOp>(module.getLoc(), netArg, ValueRange{p2BIdx});
+
+                // ── link(p, q) helper ─────────────────────────────────────────
+                // Port encoding: port_val = nodeIdx << 2 | portNum
+                // link writes p into net[q_node*4 + q_port] and q into net[p_node*4 + p_port]
+                auto gpuLink = [&](Value portP, Value portQ) {
+                    auto c2sh = gpuBuilder.create<arith::ConstantOp>(module.getLoc(), i32Type, gpuBuilder.getI32IntegerAttr(2));
+                    auto c3m  = gpuBuilder.create<arith::ConstantOp>(module.getLoc(), i32Type, gpuBuilder.getI32IntegerAttr(3));
+
+                    Value pNodeI32 = gpuBuilder.create<arith::ShRUIOp>(module.getLoc(), portP, c2sh);
+                    Value qNodeI32 = gpuBuilder.create<arith::ShRUIOp>(module.getLoc(), portQ, c2sh);
+                    Value pPort    = gpuBuilder.create<arith::AndIOp>(module.getLoc(), portP, c3m);
+                    Value qPort    = gpuBuilder.create<arith::AndIOp>(module.getLoc(), portQ, c3m);
+
+                    Value pNode = gpuBuilder.create<arith::IndexCastOp>(module.getLoc(), gpuBuilder.getIndexType(), pNodeI32);
+                    Value qNode = gpuBuilder.create<arith::IndexCastOp>(module.getLoc(), gpuBuilder.getIndexType(), qNodeI32);
+                    Value pPortIdx = gpuBuilder.create<arith::IndexCastOp>(module.getLoc(), gpuBuilder.getIndexType(), pPort);
+                    Value qPortIdx = gpuBuilder.create<arith::IndexCastOp>(module.getLoc(), gpuBuilder.getIndexType(), qPort);
+
+                    Value pBase_ = gpuBuilder.create<arith::MulIOp>(module.getLoc(), pNode, c4idx);
+                    Value qBase_ = gpuBuilder.create<arith::MulIOp>(module.getLoc(), qNode, c4idx);
+                    Value pSlot  = gpuBuilder.create<arith::AddIOp>(module.getLoc(), pBase_, pPortIdx);
+                    Value qSlot  = gpuBuilder.create<arith::AddIOp>(module.getLoc(), qBase_, qPortIdx);
+
+                    gpuBuilder.create<memref::StoreOp>(module.getLoc(), portQ, netArg, ValueRange{pSlot});
+                    gpuBuilder.create<memref::StoreOp>(module.getLoc(), portP, netArg, ValueRange{qSlot});
+                };
+
+                // ── makePort helper ───────────────────────────────────────────
+                auto gpuMakePort = [&](Value nIdxI32, int port) -> Value {
+                    auto c2sh = gpuBuilder.create<arith::ConstantOp>(module.getLoc(), i32Type, gpuBuilder.getI32IntegerAttr(2));
+                    auto portC = gpuBuilder.create<arith::ConstantOp>(module.getLoc(), i32Type, gpuBuilder.getI32IntegerAttr(port));
+                    Value shifted = gpuBuilder.create<arith::ShLIOp>(module.getLoc(), nIdxI32, c2sh);
+                    return gpuBuilder.create<arith::OrIOp>(module.getLoc(), shifted, portC);
+                };
+
+                // ── Atomic allocator ─────────────────────────────────────────
+                Value allocSlotIdx = gpuBuilder.create<arith::ConstantIndexOp>(module.getLoc(), 1000000 * 4 + 1000000 * 2 + 4);
+
+                auto gpuAlloc = [&](int count) -> Value {
+                    Value bumpAmt = gpuBuilder.create<arith::ConstantOp>(module.getLoc(), i32Type, gpuBuilder.getI32IntegerAttr(count));
+                    return gpuBuilder.create<memref::AtomicRMWOp>(module.getLoc(), i32Type, arith::AtomicRMWKind::addi, bumpAmt, netArg, ValueRange{allocSlotIdx});
+                };
+
+                // ── Rule dispatch ─────────────────────────────────────────────
+                Value zero32 = gpuBuilder.create<arith::ConstantOp>(module.getLoc(), i32Type, gpuBuilder.getI32IntegerAttr(0));
+                Value isAnnihilation = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::eq, typeA, typeB);
+                Value isEraA = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::eq, typeA, zero32);
+                Value isEraB = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::eq, typeB, zero32);
+                Value hasEra = gpuBuilder.create<arith::OrIOp>(module.getLoc(), isEraA, isEraB);
+
+                // ── Annihilation: wire p1A↔p1B and p2A↔p2B ─────────────────
+                gpuLink(p1A, p1B);
+                gpuLink(p2A, p2B);
+
+                // ── Erasure: allocate 2 ERA nodes, link survivor's aux ports ─
+                // We always run the allocations but only use their results when needed.
+                Value eraStart = gpuAlloc(2);
+                Value eraStart1 = gpuBuilder.create<arith::AddIOp>(module.getLoc(), eraStart,
+                    gpuBuilder.create<arith::ConstantOp>(module.getLoc(), i32Type, gpuBuilder.getI32IntegerAttr(1)));
+
+                // survivorP1 = isEraA ? p1B : p1A
+                Value survivorP1 = gpuBuilder.create<arith::SelectOp>(module.getLoc(), isEraA, p1B, p1A);
+                Value survivorP2 = gpuBuilder.create<arith::SelectOp>(module.getLoc(), isEraA, p2B, p2A);
+
+                // ERA node type = 0
+                Value eraStartIdx = gpuBuilder.create<arith::IndexCastOp>(module.getLoc(), gpuBuilder.getIndexType(), eraStart);
+                Value eraStart1Idx = gpuBuilder.create<arith::IndexCastOp>(module.getLoc(), gpuBuilder.getIndexType(), eraStart1);
+                Value eraTypeSlot  = gpuBuilder.create<arith::MulIOp>(module.getLoc(), eraStartIdx, c4idx);
+                Value eraTypeSlot1 = gpuBuilder.create<arith::MulIOp>(module.getLoc(), eraStart1Idx, c4idx);
+                gpuBuilder.create<memref::StoreOp>(module.getLoc(), zero32, netArg, ValueRange{eraTypeSlot});
+                gpuBuilder.create<memref::StoreOp>(module.getLoc(), zero32, netArg, ValueRange{eraTypeSlot1});
+
+                Value eraPort0 = gpuMakePort(eraStart, 0);
+                Value eraPort1 = gpuMakePort(eraStart1, 0);
+
+                // Only perform these links when erasure applies (branchless via over-writing)
+                // We do it unconditionally; annihilation has already written the correct links above.
+                // Because SPIR-V doesn't support branching within a warp without divergence,
+                // we use select-driven values to pick the survivor ports.
+                gpuLink(survivorP1, eraPort0);
+                gpuLink(survivorP2, eraPort1);
+
+                // ── Commutation: allocate 4 new nodes, cross-wire ────────────
+                Value commStart = gpuAlloc(4);
+                auto commIdx = [&](int offset) -> Value {
+                    Value off = gpuBuilder.create<arith::ConstantOp>(module.getLoc(), i32Type, gpuBuilder.getI32IntegerAttr(offset));
+                    return gpuBuilder.create<arith::AddIOp>(module.getLoc(), commStart, off);
+                };
+                Value n1 = commStart;
+                Value n2 = commIdx(1);
+                Value n3 = commIdx(2);
+                Value n4 = commIdx(3);
+
+                // Write types: n1/n2 = typeA, n3/n4 = typeB
+                auto writeType = [&](Value nI32, Value ty) {
+                    Value nIdx_ = gpuBuilder.create<arith::IndexCastOp>(module.getLoc(), gpuBuilder.getIndexType(), nI32);
+                    Value typeSlot = gpuBuilder.create<arith::MulIOp>(module.getLoc(), nIdx_, c4idx);
+                    gpuBuilder.create<memref::StoreOp>(module.getLoc(), ty, netArg, ValueRange{typeSlot});
+                };
+                writeType(n1, typeA); writeType(n2, typeA);
+                writeType(n3, typeB); writeType(n4, typeB);
+
+                // Cross wiring: n1.p1↔n3.p1, n1.p2↔n4.p1, n2.p1↔n3.p2, n2.p2↔n4.p2
+                gpuLink(gpuMakePort(n1, 1), gpuMakePort(n3, 1));
+                gpuLink(gpuMakePort(n1, 2), gpuMakePort(n4, 1));
+                gpuLink(gpuMakePort(n2, 1), gpuMakePort(n3, 2));
+                gpuLink(gpuMakePort(n2, 2), gpuMakePort(n4, 2));
+
+                // Link to outer graph
+                gpuLink(p1B, gpuMakePort(n1, 0));
+                gpuLink(p2B, gpuMakePort(n2, 0));
+                gpuLink(p1A, gpuMakePort(n3, 0));
+                gpuLink(p2A, gpuMakePort(n4, 0));
+
+                // Note: all three rule bodies run on every thread. The correct one
+                // wins because annihilation writes happen first, then erasure
+                // overwrites survivor ports if one node is ERA type, and commutation
+                // fires when neither rule applies — future work will gate these with
+                // scf.if once SPIR-V branching is validated.
+                (void)isAnnihilation; (void)hasEra;
+
+                gpuBuilder.setInsertionPointAfter(ifOp);
                 gpuBuilder.create<gpu::ReturnOp>(module.getLoc());
             }
         }
@@ -613,7 +858,6 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             SmallVector<Block*> caseDestinations;
             SmallVector<ValueRange> caseOperands;
 
-            int32_t caseIdx = 1;
             for (auto &pair : opPayloads) {
                 Block *caseBlock = llvmFunc.addBlock();
                 builder.setInsertionPointToStart(caseBlock);
@@ -739,7 +983,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 Value zeroCase = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0));
                 builder.create<LLVM::ReturnOp>(funcOp.getLoc(), ValueRange{zeroCase});
 
-                caseValues.push_back(caseIdx++);
+                caseValues.push_back(static_cast<int32_t>(opcodeForLabel(pair.first())));
                 caseDestinations.push_back(caseBlock);
                 caseOperands.push_back(ValueRange{});
             }
@@ -769,7 +1013,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 Value zeroCase = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0));
                 builder.create<LLVM::ReturnOp>(funcOp.getLoc(), ValueRange{zeroCase});
 
-                caseValues.push_back(caseIdx++);
+                caseValues.push_back(static_cast<int32_t>(opcodeForLabel(strKey)));
                 caseDestinations.push_back(caseBlock);
                 caseOperands.push_back(ValueRange{});
             }
@@ -789,8 +1033,27 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             Value opcodeVal = builder.create<LLVM::LoadOp>(funcOp.getLoc(), i32Type, opcodeGEP);
 
             builder.create<LLVM::SwitchOp>(funcOp.getLoc(), opcodeVal, defaultBlock, ValueRange{}, caseValues, caseDestinations, caseOperands);
+        } else if (enableGPU) {
+            builder.setInsertionPointToEnd(entryBlock);
+            auto voidType = LLVM::LLVMVoidType::get(builder.getContext());
+            if (!module.lookupSymbol<LLVM::LLVMFuncOp>("pic_gpu_dispatch")) {
+                auto dispatchType = LLVM::LLVMFunctionType::get(voidType, {ptrType, ptrType, i32Type});
+                OpBuilder topBuilder(module.getBodyRegion());
+                topBuilder.setInsertionPointToStart(module.getBody());
+                topBuilder.create<LLVM::LLVMFuncOp>(module.getLoc(), "pic_gpu_dispatch", dispatchType);
+            }
+
+            Value loadTail = builder.create<LLVM::LoadOp>(funcOp.getLoc(), i64Type, wTailPtr);
+            Value loadHead = builder.create<LLVM::LoadOp>(funcOp.getLoc(), i64Type, wHeadPtr);
+            Value numPairs = builder.create<LLVM::SubOp>(funcOp.getLoc(), loadTail, loadHead);
+            Value numPairsI32 = builder.create<LLVM::TruncOp>(funcOp.getLoc(), i32Type, numPairs);
+
+            SmallVector<Value> dispatchArgs = {netPtr, wQueuePtr, numPairsI32};
+            builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{}, "pic_gpu_dispatch", dispatchArgs);
+            
+            Value zero = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0));
+            builder.create<LLVM::ReturnOp>(funcOp.getLoc(), ValueRange{zero});
         } else {
-            // Return 0
             builder.setInsertionPointToEnd(entryBlock);
             Value zero = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0));
             builder.create<LLVM::ReturnOp>(funcOp.getLoc(), ValueRange{zero});

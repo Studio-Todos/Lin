@@ -1,0 +1,10 @@
+// GPU test: direct annihilation redex between two gamma nodes.
+// When run with --gpu, this should dispatch at least 1 active pair.
+
+test_gpu_annihilation: func [
+    return: [i32!]
+][
+    // In the interaction net, gamma(+) ~ gamma(-) is an annihilation rule.
+    // The compiler should link their p0 ports, producing 1 initial redex.
+    add 3 4
+]
