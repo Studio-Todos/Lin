@@ -41,6 +41,14 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
     OpBuilder builder(module.getContext());
 
     module.walk([&](func::FuncOp funcOp) {
+      // Only lower the entry-point function. Inner functions (user-defined functions
+      // like "add-one") remain as pic_graph.port-typed interaction net definitions.
+      // They will be inlined/reduced by the CPU/GPU reduction engine at runtime
+      // when a call redex fires. Lowering them here causes type mismatches since
+      // their block args are still pic_graph.port typed.
+      StringRef symName = funcOp.getSymName();
+      if (symName != "main_inet_entry") return;
+
       builder.setInsertionPointToStart(&funcOp.getBody().front());
 
       auto i32Type = builder.getI32Type();
@@ -128,11 +136,6 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
       SmallVector<int32_t> initialPairFlat; // [nodeA, nodeB, nodeA, nodeB, ...]
 
       funcOp.walk([&](pic::graph::LinkOp op) {
-        builder.setInsertionPoint(op);
-
-        Value pA = valueToPort.count(op.getA()) ? valueToPort[op.getA()] : op.getA();
-        Value pB = valueToPort.count(op.getB()) ? valueToPort[op.getB()] : op.getB();
-
         // Detect p0↔p0: both raw values must be keys in p0ToNodeIdx
         auto itA = p0ToNodeIdx.find(op.getA());
         auto itB = p0ToNodeIdx.find(op.getB());
@@ -140,10 +143,19 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
             initialPairFlat.push_back(itA->second);
             initialPairFlat.push_back(itB->second);
         }
-
-        // We bypass `pic_runtime::LinkOp` for now to avoid memref args mismatch while testing
-        // builder.create<pic::runtime::LinkOp>(op.getLoc(), pA, pB);
       });
+
+      // Erase all pic_graph.link ops from the entry function. Their connectivity
+      // is already captured in gpu.initial_pairs and the AllocNode layout.
+      // Attempting to rewrite operands to i32 fails MLIR type verification.
+      SmallVector<Operation*> linksToErase;
+      funcOp.walk([&](pic::graph::LinkOp op) {
+        linksToErase.push_back(op.getOperation());
+      });
+      for (auto *op : linksToErase) {
+        op->dropAllUses();
+        op->erase();
+      }
 
       // Attach initial pairs to the module so PicRuntimeToLLVMPass can read them
       if (!initialPairFlat.empty()) {
@@ -477,7 +489,10 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
     SmallVector<func::FuncOp> funcsToConvert;
     module.walk([&](func::FuncOp funcOp) {
-        funcsToConvert.push_back(funcOp);
+        // Only lower the entry-point. User-defined functions remain as
+        // pic_graph.port-typed interaction net definitions (handled by runtime).
+        if (funcOp.getSymName() == "main_inet_entry")
+            funcsToConvert.push_back(funcOp);
     });
 
     for (auto funcOp : funcsToConvert) {
@@ -625,8 +640,8 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             emitJoin(2);
             emitJoin(3);
 
-            builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{voidType}, "free", ValueRange{threadArray});
-            builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{voidType}, "free", ValueRange{argArray});
+            builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{}, "free", ValueRange{threadArray});
+            builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{}, "free", ValueRange{argArray});
         }
 
         if (enableGPU) {
@@ -1063,6 +1078,15 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
     for (auto funcOp : funcsToConvert) {
         funcOp.erase();
     }
+
+    // Erase any remaining func::FuncOp ops (user-defined interaction net functions).
+    // These are pic_graph.port-typed interaction net definitions that cannot be
+    // translated to LLVM IR. The runtime will interpret them via the reduction engine.
+    SmallVector<func::FuncOp> remainingFuncs;
+    module.walk([&](func::FuncOp op) {
+        remainingFuncs.push_back(op);
+    });
+    for (auto op : remainingFuncs) op.erase();
   }
 };
 
