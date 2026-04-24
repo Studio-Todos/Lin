@@ -114,15 +114,42 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
         valueToPort[op.getP2()] = makePort(2);
       });
 
+      // Track AgentOp p0 values -> sequential node indices (starting from 1)
+      // We mirror the same allocCount logic as PicRuntimeToLLVMPass.
+      DenseMap<Value, int32_t> p0ToNodeIdx;
+      int32_t nodeCounter = 1;
+
+      funcOp.walk([&](pic::graph::AgentOp op) {
+        p0ToNodeIdx[op.getP0()] = nodeCounter;
+        nodeCounter++;
+      });
+
+      // Collect all links so we can detect initial redex pairs
+      SmallVector<int32_t> initialPairFlat; // [nodeA, nodeB, nodeA, nodeB, ...]
+
       funcOp.walk([&](pic::graph::LinkOp op) {
         builder.setInsertionPoint(op);
 
         Value pA = valueToPort.count(op.getA()) ? valueToPort[op.getA()] : op.getA();
         Value pB = valueToPort.count(op.getB()) ? valueToPort[op.getB()] : op.getB();
 
+        // Detect p0↔p0: both raw values must be keys in p0ToNodeIdx
+        auto itA = p0ToNodeIdx.find(op.getA());
+        auto itB = p0ToNodeIdx.find(op.getB());
+        if (itA != p0ToNodeIdx.end() && itB != p0ToNodeIdx.end()) {
+            initialPairFlat.push_back(itA->second);
+            initialPairFlat.push_back(itB->second);
+        }
+
         // We bypass `pic_runtime::LinkOp` for now to avoid memref args mismatch while testing
         // builder.create<pic::runtime::LinkOp>(op.getLoc(), pA, pB);
       });
+
+      // Attach initial pairs to the module so PicRuntimeToLLVMPass can read them
+      if (!initialPairFlat.empty()) {
+          module->setAttr("gpu.initial_pairs",
+              builder.getDenseI32ArrayAttr(initialPairFlat));
+      }
 
       funcOp.walk([&](func::ReturnOp op) {
          if (op.getNumOperands() > 0 && valueToPort.count(op.getOperand(0))) {
@@ -502,8 +529,44 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
         Value zero64 = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(0));
         builder.create<LLVM::StoreOp>(funcOp.getLoc(), zero64, wHeadPtr);
-        builder.create<LLVM::StoreOp>(funcOp.getLoc(), zero64, wTailPtr);
+        // wTailPtr is committed after initial pair detection below
         builder.create<LLVM::StoreOp>(funcOp.getLoc(), allocCount, wAllocPtr);
+
+        // ─── Populate initial active-pairs queue ───────────────────────────
+        // PicGraphToReducePass recorded any p0↔p0 links as a DenseI32Array
+        // attribute on the module. Each consecutive pair [nodeA, nodeB] is one
+        // initial redex to dispatch on the GPU.
+        {
+            Value tailVal = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(0));
+
+            if (auto pairsAttr = module->getAttrOfType<DenseI32ArrayAttr>("gpu.initial_pairs")) {
+                ArrayRef<int32_t> pairs = pairsAttr.asArrayRef();
+                for (size_t i = 0; i + 1 < pairs.size(); i += 2) {
+                    int32_t nodeA = pairs[i];
+                    int32_t nodeB = pairs[i + 1];
+
+                    Value nodeAVal = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(nodeA));
+                    Value nodeBVal = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(nodeB));
+
+                    Value twoV = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(2));
+                    Value slotBase = builder.create<LLVM::MulOp>(funcOp.getLoc(), tailVal, twoV);
+                    Value slotBase1 = builder.create<LLVM::AddOp>(funcOp.getLoc(), slotBase,
+                        builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(1)));
+
+                    Value gepA = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, wQueuePtr, ValueRange{slotBase});
+                    Value gepB = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, wQueuePtr, ValueRange{slotBase1});
+
+                    builder.create<LLVM::StoreOp>(funcOp.getLoc(), nodeAVal, gepA);
+                    builder.create<LLVM::StoreOp>(funcOp.getLoc(), nodeBVal, gepB);
+
+                    Value one64 = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(1));
+                    tailVal = builder.create<LLVM::AddOp>(funcOp.getLoc(), tailVal, one64);
+                }
+            }
+
+            // Commit tail pointer (zero if no pairs, or N if N redexes found)
+            builder.create<LLVM::StoreOp>(funcOp.getLoc(), tailVal, wTailPtr);
+        }
 
         bool emitCPU = !enableGPU;
         if (emitCPU) {
