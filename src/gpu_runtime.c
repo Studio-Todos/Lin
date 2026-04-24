@@ -188,7 +188,7 @@ void pic_gpu_dispatch(int32_t* netPtr, int32_t* activePairsPtr, int32_t numPairs
     VkDeviceMemory memoryNet, memoryPairs, memoryNumPairs;
     
     size_t netBufferSize = (1000000 * 4 + 1000000 * 2 + 10) * 4;
-    size_t pairsBufferSize = (numPairs > 0 ? numPairs : 1) * sizeof(int32_t);
+    size_t pairsBufferSize = (numPairs > 0 ? numPairs : 1) * 2 * sizeof(int32_t);
 
     createBuffer(device, physicalDevice, netBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &stagingBufferNet, &stagingMemoryNet);
     createBuffer(device, physicalDevice, pairsBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &stagingBufferPairs, &stagingMemoryPairs);

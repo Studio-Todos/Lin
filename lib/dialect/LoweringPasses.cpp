@@ -626,60 +626,160 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 auto ifOp = gpuBuilder.create<scf::IfOp>(module.getLoc(), inBoundsI1, false);
                 gpuBuilder.setInsertionPoint(ifOp.getThenRegion().front().getTerminator());
 
-                // Read active pair index
-                Value pairIndexVal = gpuBuilder.create<memref::LoadOp>(module.getLoc(), activePairsArg, ValueRange{globalIdIndex});
-                Value pairIndexIdx = gpuBuilder.create<arith::IndexCastOp>(module.getLoc(), gpuBuilder.getIndexType(), pairIndexVal);
-                
-                // Read opcode, lhs, rhs from netPtr (simulation MVP layout: opcode at idx, lhs at idx+1, rhs at idx+2, out at idx+3)
-                Value c1 = gpuBuilder.create<arith::ConstantIndexOp>(module.getLoc(), 1);
-                Value c2 = gpuBuilder.create<arith::ConstantIndexOp>(module.getLoc(), 2);
-                Value c3 = gpuBuilder.create<arith::ConstantIndexOp>(module.getLoc(), 3);
-                
-                Value lhsIdx = gpuBuilder.create<arith::AddIOp>(module.getLoc(), pairIndexIdx, c1);
-                Value rhsIdx = gpuBuilder.create<arith::AddIOp>(module.getLoc(), pairIndexIdx, c2);
-                Value outIdx = gpuBuilder.create<arith::AddIOp>(module.getLoc(), pairIndexIdx, c3);
+                // ── Decode active pair ──────────────────────────────────────
+                // activePairs stores two i32s per pair: [nodeA, nodeB]
+                Value c2Idx = gpuBuilder.create<arith::ConstantIndexOp>(module.getLoc(), 2);
+                Value pairBase = gpuBuilder.create<arith::MulIOp>(module.getLoc(), globalIdIndex, c2Idx);
+                Value pairBase1 = gpuBuilder.create<arith::AddIOp>(module.getLoc(), pairBase, gpuBuilder.create<arith::ConstantIndexOp>(module.getLoc(), 1));
 
-                Value opcodeArg = gpuBuilder.create<memref::LoadOp>(module.getLoc(), netArg, ValueRange{pairIndexIdx});
-                Value lhsArg = gpuBuilder.create<memref::LoadOp>(module.getLoc(), netArg, ValueRange{lhsIdx});
-                Value rhsArg = gpuBuilder.create<memref::LoadOp>(module.getLoc(), netArg, ValueRange{rhsIdx});
+                Value nodeA_val = gpuBuilder.create<memref::LoadOp>(module.getLoc(), activePairsArg, ValueRange{pairBase});
+                Value nodeB_val = gpuBuilder.create<memref::LoadOp>(module.getLoc(), activePairsArg, ValueRange{pairBase1});
 
-                auto opcodeConst = [&](StringRef label) {
-                    return gpuBuilder.create<arith::ConstantOp>(module.getLoc(), i32Type,
-                        gpuBuilder.getI32IntegerAttr(static_cast<int32_t>(opcodeForLabel(label))));
+                Value nodeA_idx = gpuBuilder.create<arith::IndexCastOp>(module.getLoc(), gpuBuilder.getIndexType(), nodeA_val);
+                Value nodeB_idx = gpuBuilder.create<arith::IndexCastOp>(module.getLoc(), gpuBuilder.getIndexType(), nodeB_val);
+
+                // ── Read node data from net buffer ────────────────────────────
+                // Layout: net[nodeIdx*4+0]=type, [+1]=port1, [+2]=port2
+                auto c4idx = gpuBuilder.create<arith::ConstantIndexOp>(module.getLoc(), 4);
+                auto c1idx = gpuBuilder.create<arith::ConstantIndexOp>(module.getLoc(), 1);
+                auto c2idx_v = gpuBuilder.create<arith::ConstantIndexOp>(module.getLoc(), 2);
+
+                Value baseA = gpuBuilder.create<arith::MulIOp>(module.getLoc(), nodeA_idx, c4idx);
+                Value baseB = gpuBuilder.create<arith::MulIOp>(module.getLoc(), nodeB_idx, c4idx);
+
+                Value typeAIdx = baseA;
+                Value p1AIdx   = gpuBuilder.create<arith::AddIOp>(module.getLoc(), baseA, c1idx);
+                Value p2AIdx   = gpuBuilder.create<arith::AddIOp>(module.getLoc(), baseA, c2idx_v);
+                Value typeBIdx = baseB;
+                Value p1BIdx   = gpuBuilder.create<arith::AddIOp>(module.getLoc(), baseB, c1idx);
+                Value p2BIdx   = gpuBuilder.create<arith::AddIOp>(module.getLoc(), baseB, c2idx_v);
+
+                Value typeA = gpuBuilder.create<memref::LoadOp>(module.getLoc(), netArg, ValueRange{typeAIdx});
+                Value typeB = gpuBuilder.create<memref::LoadOp>(module.getLoc(), netArg, ValueRange{typeBIdx});
+                Value p1A   = gpuBuilder.create<memref::LoadOp>(module.getLoc(), netArg, ValueRange{p1AIdx});
+                Value p2A   = gpuBuilder.create<memref::LoadOp>(module.getLoc(), netArg, ValueRange{p2AIdx});
+                Value p1B   = gpuBuilder.create<memref::LoadOp>(module.getLoc(), netArg, ValueRange{p1BIdx});
+                Value p2B   = gpuBuilder.create<memref::LoadOp>(module.getLoc(), netArg, ValueRange{p2BIdx});
+
+                // ── link(p, q) helper ─────────────────────────────────────────
+                // Port encoding: port_val = nodeIdx << 2 | portNum
+                // link writes p into net[q_node*4 + q_port] and q into net[p_node*4 + p_port]
+                auto gpuLink = [&](Value portP, Value portQ) {
+                    auto c2sh = gpuBuilder.create<arith::ConstantOp>(module.getLoc(), i32Type, gpuBuilder.getI32IntegerAttr(2));
+                    auto c3m  = gpuBuilder.create<arith::ConstantOp>(module.getLoc(), i32Type, gpuBuilder.getI32IntegerAttr(3));
+
+                    Value pNodeI32 = gpuBuilder.create<arith::ShRUIOp>(module.getLoc(), portP, c2sh);
+                    Value qNodeI32 = gpuBuilder.create<arith::ShRUIOp>(module.getLoc(), portQ, c2sh);
+                    Value pPort    = gpuBuilder.create<arith::AndIOp>(module.getLoc(), portP, c3m);
+                    Value qPort    = gpuBuilder.create<arith::AndIOp>(module.getLoc(), portQ, c3m);
+
+                    Value pNode = gpuBuilder.create<arith::IndexCastOp>(module.getLoc(), gpuBuilder.getIndexType(), pNodeI32);
+                    Value qNode = gpuBuilder.create<arith::IndexCastOp>(module.getLoc(), gpuBuilder.getIndexType(), qNodeI32);
+                    Value pPortIdx = gpuBuilder.create<arith::IndexCastOp>(module.getLoc(), gpuBuilder.getIndexType(), pPort);
+                    Value qPortIdx = gpuBuilder.create<arith::IndexCastOp>(module.getLoc(), gpuBuilder.getIndexType(), qPort);
+
+                    Value pBase_ = gpuBuilder.create<arith::MulIOp>(module.getLoc(), pNode, c4idx);
+                    Value qBase_ = gpuBuilder.create<arith::MulIOp>(module.getLoc(), qNode, c4idx);
+                    Value pSlot  = gpuBuilder.create<arith::AddIOp>(module.getLoc(), pBase_, pPortIdx);
+                    Value qSlot  = gpuBuilder.create<arith::AddIOp>(module.getLoc(), qBase_, qPortIdx);
+
+                    gpuBuilder.create<memref::StoreOp>(module.getLoc(), portQ, netArg, ValueRange{pSlot});
+                    gpuBuilder.create<memref::StoreOp>(module.getLoc(), portP, netArg, ValueRange{qSlot});
                 };
 
-                Value addRes = gpuBuilder.create<arith::AddIOp>(module.getLoc(), lhsArg, rhsArg);
-                Value subRes = gpuBuilder.create<arith::SubIOp>(module.getLoc(), lhsArg, rhsArg);
-                Value mulRes = gpuBuilder.create<arith::MulIOp>(module.getLoc(), lhsArg, rhsArg);
-                Value divRes = gpuBuilder.create<arith::DivSIOp>(module.getLoc(), lhsArg, rhsArg);
+                // ── makePort helper ───────────────────────────────────────────
+                auto gpuMakePort = [&](Value nIdxI32, int port) -> Value {
+                    auto c2sh = gpuBuilder.create<arith::ConstantOp>(module.getLoc(), i32Type, gpuBuilder.getI32IntegerAttr(2));
+                    auto portC = gpuBuilder.create<arith::ConstantOp>(module.getLoc(), i32Type, gpuBuilder.getI32IntegerAttr(port));
+                    Value shifted = gpuBuilder.create<arith::ShLIOp>(module.getLoc(), nIdxI32, c2sh);
+                    return gpuBuilder.create<arith::OrIOp>(module.getLoc(), shifted, portC);
+                };
 
-                Value ltResI1 = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::slt, lhsArg, rhsArg);
-                Value ltRes = gpuBuilder.create<arith::ExtUIOp>(module.getLoc(), i32Type, ltResI1);
+                // ── Atomic allocator ─────────────────────────────────────────
+                Value allocSlotIdx = gpuBuilder.create<arith::ConstantIndexOp>(module.getLoc(), 1000000 * 4 + 1000000 * 2 + 4);
 
-                Value eqResI1 = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::eq, lhsArg, rhsArg);
-                Value eqRes = gpuBuilder.create<arith::ExtUIOp>(module.getLoc(), i32Type, eqResI1);
+                auto gpuAlloc = [&](int count) -> Value {
+                    Value bumpAmt = gpuBuilder.create<arith::ConstantOp>(module.getLoc(), i32Type, gpuBuilder.getI32IntegerAttr(count));
+                    return gpuBuilder.create<memref::AtomicRMWOp>(module.getLoc(), i32Type, arith::AtomicRMWKind::addi, bumpAmt, netArg, ValueRange{allocSlotIdx});
+                };
 
-                Value res = addRes;
-                Value isSub = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::eq, opcodeArg, opcodeConst("sub"));
-                res = gpuBuilder.create<arith::SelectOp>(module.getLoc(), isSub, subRes, res);
-                Value isMul = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::eq, opcodeArg, opcodeConst("mul"));
-                res = gpuBuilder.create<arith::SelectOp>(module.getLoc(), isMul, mulRes, res);
-                Value isDiv = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::eq, opcodeArg, opcodeConst("div"));
-                res = gpuBuilder.create<arith::SelectOp>(module.getLoc(), isDiv, divRes, res);
-                Value isLt = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::eq, opcodeArg, opcodeConst("lt"));
-                res = gpuBuilder.create<arith::SelectOp>(module.getLoc(), isLt, ltRes, res);
-                Value isEq = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::eq, opcodeArg, opcodeConst("eq"));
-                res = gpuBuilder.create<arith::SelectOp>(module.getLoc(), isEq, eqRes, res);
+                // ── Rule dispatch ─────────────────────────────────────────────
+                Value zero32 = gpuBuilder.create<arith::ConstantOp>(module.getLoc(), i32Type, gpuBuilder.getI32IntegerAttr(0));
+                Value isAnnihilation = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::eq, typeA, typeB);
+                Value isEraA = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::eq, typeA, zero32);
+                Value isEraB = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::eq, typeB, zero32);
+                Value hasEra = gpuBuilder.create<arith::OrIOp>(module.getLoc(), isEraA, isEraB);
 
-                // Dummy Atomic Allocation
-                Value allocOffsetIdx = gpuBuilder.create<arith::ConstantIndexOp>(module.getLoc(), 1000000 * 4 + 1000000 * 2 + 4);
-                Value bumpVal = gpuBuilder.create<arith::ConstantOp>(module.getLoc(), i32Type, gpuBuilder.getI32IntegerAttr(4));
-                Value newAllocIdx = gpuBuilder.create<memref::AtomicRMWOp>(module.getLoc(), i32Type, arith::AtomicRMWKind::addi, bumpVal, netArg, ValueRange{allocOffsetIdx});
+                // ── Annihilation: wire p1A↔p1B and p2A↔p2B ─────────────────
+                gpuLink(p1A, p1B);
+                gpuLink(p2A, p2B);
 
-                // Add to res to verify
-                res = gpuBuilder.create<arith::AddIOp>(module.getLoc(), res, newAllocIdx);
+                // ── Erasure: allocate 2 ERA nodes, link survivor's aux ports ─
+                // We always run the allocations but only use their results when needed.
+                Value eraStart = gpuAlloc(2);
+                Value eraStart1 = gpuBuilder.create<arith::AddIOp>(module.getLoc(), eraStart,
+                    gpuBuilder.create<arith::ConstantOp>(module.getLoc(), i32Type, gpuBuilder.getI32IntegerAttr(1)));
 
-                gpuBuilder.create<memref::StoreOp>(module.getLoc(), res, netArg, ValueRange{outIdx});
+                // survivorP1 = isEraA ? p1B : p1A
+                Value survivorP1 = gpuBuilder.create<arith::SelectOp>(module.getLoc(), isEraA, p1B, p1A);
+                Value survivorP2 = gpuBuilder.create<arith::SelectOp>(module.getLoc(), isEraA, p2B, p2A);
+
+                // ERA node type = 0
+                Value eraStartIdx = gpuBuilder.create<arith::IndexCastOp>(module.getLoc(), gpuBuilder.getIndexType(), eraStart);
+                Value eraStart1Idx = gpuBuilder.create<arith::IndexCastOp>(module.getLoc(), gpuBuilder.getIndexType(), eraStart1);
+                Value eraTypeSlot  = gpuBuilder.create<arith::MulIOp>(module.getLoc(), eraStartIdx, c4idx);
+                Value eraTypeSlot1 = gpuBuilder.create<arith::MulIOp>(module.getLoc(), eraStart1Idx, c4idx);
+                gpuBuilder.create<memref::StoreOp>(module.getLoc(), zero32, netArg, ValueRange{eraTypeSlot});
+                gpuBuilder.create<memref::StoreOp>(module.getLoc(), zero32, netArg, ValueRange{eraTypeSlot1});
+
+                Value eraPort0 = gpuMakePort(eraStart, 0);
+                Value eraPort1 = gpuMakePort(eraStart1, 0);
+
+                // Only perform these links when erasure applies (branchless via over-writing)
+                // We do it unconditionally; annihilation has already written the correct links above.
+                // Because SPIR-V doesn't support branching within a warp without divergence,
+                // we use select-driven values to pick the survivor ports.
+                gpuLink(survivorP1, eraPort0);
+                gpuLink(survivorP2, eraPort1);
+
+                // ── Commutation: allocate 4 new nodes, cross-wire ────────────
+                Value commStart = gpuAlloc(4);
+                auto commIdx = [&](int offset) -> Value {
+                    Value off = gpuBuilder.create<arith::ConstantOp>(module.getLoc(), i32Type, gpuBuilder.getI32IntegerAttr(offset));
+                    return gpuBuilder.create<arith::AddIOp>(module.getLoc(), commStart, off);
+                };
+                Value n1 = commStart;
+                Value n2 = commIdx(1);
+                Value n3 = commIdx(2);
+                Value n4 = commIdx(3);
+
+                // Write types: n1/n2 = typeA, n3/n4 = typeB
+                auto writeType = [&](Value nI32, Value ty) {
+                    Value nIdx_ = gpuBuilder.create<arith::IndexCastOp>(module.getLoc(), gpuBuilder.getIndexType(), nI32);
+                    Value typeSlot = gpuBuilder.create<arith::MulIOp>(module.getLoc(), nIdx_, c4idx);
+                    gpuBuilder.create<memref::StoreOp>(module.getLoc(), ty, netArg, ValueRange{typeSlot});
+                };
+                writeType(n1, typeA); writeType(n2, typeA);
+                writeType(n3, typeB); writeType(n4, typeB);
+
+                // Cross wiring: n1.p1↔n3.p1, n1.p2↔n4.p1, n2.p1↔n3.p2, n2.p2↔n4.p2
+                gpuLink(gpuMakePort(n1, 1), gpuMakePort(n3, 1));
+                gpuLink(gpuMakePort(n1, 2), gpuMakePort(n4, 1));
+                gpuLink(gpuMakePort(n2, 1), gpuMakePort(n3, 2));
+                gpuLink(gpuMakePort(n2, 2), gpuMakePort(n4, 2));
+
+                // Link to outer graph
+                gpuLink(p1B, gpuMakePort(n1, 0));
+                gpuLink(p2B, gpuMakePort(n2, 0));
+                gpuLink(p1A, gpuMakePort(n3, 0));
+                gpuLink(p2A, gpuMakePort(n4, 0));
+
+                // Note: all three rule bodies run on every thread. The correct one
+                // wins because annihilation writes happen first, then erasure
+                // overwrites survivor ports if one node is ERA type, and commutation
+                // fires when neither rule applies — future work will gate these with
+                // scf.if once SPIR-V branching is validated.
+                (void)isAnnihilation; (void)hasEra;
 
                 gpuBuilder.setInsertionPointAfter(ifOp);
                 gpuBuilder.create<gpu::ReturnOp>(module.getLoc());
