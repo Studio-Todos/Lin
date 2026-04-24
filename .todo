@@ -2,51 +2,88 @@
 # Format: [ ] pending  [/] in progress  [x] done
 # Tiers: 🔴 blocking  🟡 important  🟢 nice-to-have
 
-## 🔴 Tier 1 — Blocking (programs don't execute correctly yet)
+# Architecture reference:
+#   pic.graph  → abstract combinator graph (γ⁺ γ⁻ δ ε ω + boundaries)
+#   pic.reduce → scheduling-aware reduction ops (annihilate/dup/erase/fire_op)
+#   pic.runtime→ CPU/GPU dispatch (cpu_dispatch, gpu_batch, sync_point)
+#
+# Node set (5 nodes):
+#   γ⁺  Constructor  principal(+), aux(left, right)
+#   γ⁻  Destructor   principal(-), aux(left, right)
+#   δ   Duplicator   principal(*), aux(left, right)
+#   ε   Eraser       principal(*), no aux
+#   ω   Operation    principal(+/-), aux(inputs..., outputs...)
+#
+# 4 Rules: Annihilation, Duplication, Erasure, Congruence
+# Rules should be mostly user-defined via a lookup table.
+
+## 🔴 Tier 1 — Architecture (core correctness)
+
+[/] A1. pic.reduce pass: implement the actual reduction rules
+        - PicReduceToRuntimePass::runOnOperation() is currently a no-op {}
+        - Should emit pic_reduce.annihilate / duplicate / erase / fire_op ops
+          for each active pair detected in pic.graph
+        - This is the CPU/GPU parity linchpin: rules defined here lower to
+          both LLVM (CPU) and SPIR-V (GPU) via standard MLIR lowerings
+
+[ ] A2. Rule lookup table (user-extensible dispatch)
+        - Currently: hardcoded if-else CondBrOp chain in worker_thread builder
+        - Should be: table keyed on (agentType_A, label_A, agentType_B, label_B)
+          → rule function pointer / pic_reduce op
+        - Enables user-defined reduction rules from .lin code
+        - GPU: same table, different lowering target
+
+[/] A3. Fix γ⁺/γ⁻ encoding for function agents
+        - NODE_FN=5 / NODE_APP=6 are wrong per PIC spec
+        - Function definition = γ⁺ (constructor), application = γ⁻ (destructor)
+        - They should annihilate via the standard Rule 1 (same-type annihilation)
+        - The "beta block" we added is just annihilation in disguise — collapse it
+        - The label (function name) encodes which function, not the node type
+
+[ ] A4. Boundary [ ] lowering
+        - BoundaryOp is declared in PicGraphDialect.td but not lowered
+        - Needed for: E-graph congruence (Rule 4), effect scoping (B1-B3)
+        - MLIR regions map naturally to boundaries
+        - Lowering: boundary dissolves when inner graph fully reduces
+
+## 🔴 Tier 1 — Language Semantics (blocking for correct execution)
 
 [ ] 1. AST_PAIR lowering in lowerExpression
         - Emit a pair agent that holds two ports
         - Wire left/right sub-expressions into p1/p2
-        - Field access (.0 / .1) selects p1 or p2 via a DUP-split agent
-
-[ ] 1. AST_PAIR lowering in lowerExpression
-        - Emit a pair agent that holds two ports
-        - Wire left/right sub-expressions into p1/p2
-        - Field access (.0 / .1) selects p1 or p2 via a DUP-split agent
+        - Field access (.0 / .1) selects p1 or p2 via a δ-split agent
 
 [x] 2. `either` reduction rule (if/else at runtime)
         - CPU worker_thread: BRANCH ~ NUM fires, selects true/false port, erases loser
-        - NODE_BRANCH=7 added to node type encoding
-        - TODO: GPU kernel parity (unified pipeline)
+        - NODE_BRANCH=7 added to node type encoding (to be collapsed into ω later)
+        - TODO(A3): should be ω(+, branch) ⋈ ω(-, branch) op annihilation
+        - TODO(A1): GPU kernel parity via unified pic.reduce pass
 
 [/] 3. Beta-reduction rule (function application at runtime)
-        - Phase 1: gamma(+,f) ~ delta(-,f) wires aux ports (p1↔p1, p2↔p2)
-        - NODE_FN=5 / NODE_APP=6 added to node type encoding
-        - checkBeta dispatch block added to CPU worker
-        - Phase 2: body-graph cloning for multi-arg / recursive / closure functions
-        - TODO: GPU kernel parity (unified pipeline)
+        - Phase 1: γ(+,f) ~ δ(-,f) wires aux ports (p1↔p1, p2↔p2)
+        - TODO(A3): should be γ⁺ ⋈ γ⁻ standard annihilation — no separate beta block needed
+        - TODO(A1): GPU kernel parity via unified pic.reduce pass
 
 [ ] 4. mlir-op full pipeline connection
-        - User-declared mlir-op in .lin files should register to the same
-          opcode dispatch table as built-in ops
-        - Verify the payload MLIR is cloned into the right switch case
+        - User-declared mlir-op in .lin files should register to the rule lookup table (A2)
+        - ω(+, f) ⋈ ω(-, f) → fires the MLIR payload for label f
 
 ## 🟡 Tier 2 — Language Completeness
 
 [ ] 5. Closure / captured variable support
-        - Thread outer-scope bindings into inner function bodies
-        - In interaction net terms: share the binding's port into the function agent's aux ports
+        - Thread outer-scope bindings into inner γ⁺ function agents via aux ports
+        - Sharing → δ (duplicator) nodes for multi-use bindings
 
 [ ] 6. Binary operator coverage
         - Add TOKEN_STAR (*), TOKEN_SLASH (/), TOKEN_GREATER (>),
           TOKEN_GREATER_EQUAL (>=), TOKEN_EQUAL_EQUAL (==),
           TOKEN_NOT_EQUAL (!=), TOKEN_AND (&&), TOKEN_OR (||)
-        - Wire them to the correct mlir-op labels in lowerExpression AST_BINARY
+        - All map to ω agents with appropriate MLIR op labels
 
 [ ] 7. Type checking / type-directed dispatch
         - Use AstFuncArg.type_name for lightweight structural checking
         - Emit type mismatch errors with source locations
-        - Enables type-directed code gen (e.g., i32 add vs. f32 fadd)
+        - Type-directed code gen (e.g., i32 add vs. f32 fadd via ω label)
 
 [ ] 8. Multiple return values via pairs
         - Once AST_PAIR lowering (#1) works, ensure function return types
@@ -54,29 +91,38 @@
 
 ## 🟢 Tier 3 — Developer Experience
 
-[ ] 9. `linc run` command
+[ ] 9.  `linc run` command
         - Compile to temp binary and execute in one step
-        - Print exit code and stdout
 
 [ ] 10. @gpu / @cpu per-function annotations
-        - Parser: recognize @identifier annotations before func declarations
-        - Lowering: tag gamma agents with dispatch target attr
-        - Runtime: route to gpu_dispatch or cpu worker_thread based on tag
+        - Parser: recognize @identifier annotations
+        - pic.reduce → pic.runtime routing based on annotation attr
+        - No pragma needed: graph structure encodes parallelism by default
 
 [ ] 11. Human-readable error messages
         - Source location (file:line:col) on parse errors
-        - Meaningful type mismatch messages instead of raw MLIR verifier output
 
 [ ] 12. Node GC / arena reset
-        - Track live roots after reduction
-        - Reset dead regions of the net buffer
-        - Required for long-running or recursive programs with large working sets
+        - Erasure propagation IS GC (Rule 3 parallel ε sweep)
+        - Arena reset for long-running programs
 
-[ ] 13. Unified CPU/GPU reduction pipeline
-        - Define reduction rules (link, beta, either, annihilate, commute, erase)
-          as a single MLIR function using target-independent dialects (scf/arith/memref)
-        - Lower once to LLVM for CPU (via standard MLIR lowering)
-        - Lower once to GPU (via gpu/spirv dialects)
-        - Eliminate the current duplication between PicRuntimeToLLVMPass worker_thread
-          builder code and the separate SPIR-V GPU kernel
-        - Marked in code with TODO(unified-pipeline) comments
+## 🔵 Architecture — Unified Pipeline
+
+[ ] 13. Unified CPU/GPU reduction pipeline via pic.reduce
+        - Implement PicReduceToRuntimePass: pic.reduce ops → cpu_dispatch / gpu_batch
+        - CPU path: lower pic_reduce.annihilate → LLVM atomic store/GEP sequence
+        - GPU path: lower pic_reduce.annihilate → gpu.launch / spirv ops
+        - Eliminates the LLVM IR builder duplication in PicRuntimeToLLVMPass
+        - Marked in code with TODO(unified-pipeline)
+        - This is the path to shader support (CPU / general GPU / high-perf GPU)
+
+[ ] 14. 128-bit node layout audit
+        - Current: int32_t[4] per node (128 bits — correct size)
+        - Verify field encoding matches spec: principal port as atomic bit-field
+        - Polarity encoded in port value, not separate field
+        - Enables lock-free redex detection via single atomic CAS
+
+[ ] 15. Congruence / E-graph rule (Rule 4)
+        - Inside boundaries: hash normal forms, merge identical subgraphs
+        - Fires continuously during reduction (not a post-pass)
+        - Integrate with boundary lowering (A4)
