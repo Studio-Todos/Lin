@@ -24,6 +24,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
 #if __has_include("mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h")
 #include "mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h"
@@ -406,6 +407,7 @@ int main(int argc, char **argv) {
   registry.insert<mlir::memref::MemRefDialect>();
   registry.insert<mlir::LLVM::LLVMDialect>();
   registry.insert<mlir::gpu::GPUDialect>();
+  registry.insert<mlir::scf::SCFDialect>();
 #if __has_include("mlir/Dialect/SPIRV/IR/SPIRVDialect.h")
   registry.insert<mlir::spirv::SPIRVDialect>();
 #endif
