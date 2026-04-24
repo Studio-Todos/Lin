@@ -73,14 +73,33 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
 
         StringRef agentType = op.getAgentType();
         StringRef label = op.getLabel();
+        StringRef polarity = op.getPolarity();
 
+        // Node type encoding:
+        //   0 = NODE_ERA   (epsilon / erasure)
+        //   1 = NODE_CON   (generic constructor / gamma)
+        //   2 = NODE_DUP   (duplicator / delta with label="dup")
+        //   3 = NODE_NUM   (number literal omega)
+        //   4 = NODE_OP    (built-in operator omega)
+        //   5 = NODE_FN    (function constructor: gamma(+, name))
+        //   6 = NODE_APP   (function application: delta(-, name))
+        //   7 = NODE_BRANCH (either / branch)
         uint8_t nodeTypeEnum = 0; // NODE_ERA = 0
-        if (agentType == "gamma_plus" || agentType == "gamma_minus") nodeTypeEnum = 1; // NODE_CON
-        else if (agentType == "delta") nodeTypeEnum = 2; // NODE_DUP
-        else if (agentType == "omega") {
-          if (label == "num" || label == "f32" || label == "f64") nodeTypeEnum = 3; // NODE_NUM
+        if (agentType == "gamma") {
+          if (polarity == "+") nodeTypeEnum = 5; // NODE_FN
+          else nodeTypeEnum = 1;                 // NODE_CON (generic gamma minus)
+        } else if (agentType == "delta") {
+          if (label == "dup" || polarity == "*") nodeTypeEnum = 2; // NODE_DUP
+          else if (polarity == "-") nodeTypeEnum = 6;              // NODE_APP
+          else nodeTypeEnum = 2;
+        } else if (agentType == "omega") {
+          if (label == "branch") nodeTypeEnum = 7;                 // NODE_BRANCH
+          else if (label == "num" || label == "f32" || label == "f64") nodeTypeEnum = 3; // NODE_NUM
           else nodeTypeEnum = 4; // NODE_OP
         }
+        // gamma_plus / gamma_minus legacy
+        if (agentType == "gamma_plus")  nodeTypeEnum = 5;
+        if (agentType == "gamma_minus") nodeTypeEnum = 1;
 
         uint32_t valOrOpCode = 0;
         if (nodeTypeEnum == 3 && op.getValue()) {
@@ -298,23 +317,125 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         Value typeA = readPort(nodeAPtr, 0);
         Value typeB = readPort(nodeBPtr, 0);
 
+        // Node type constants (mirror encoding in PicGraphToReducePass)
+        Value NODE_FN     = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(5));
+        Value NODE_APP    = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(6));
+        Value NODE_BRANCH = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(7));
+        Value NODE_NUM    = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(3));
+
+        // Pre-compute all predicates in the loopBody block (valid SSA: single def, multiple uses)
         Value isAnnihilation = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeA, typeB);
 
-        Block *annihilationBlock = workerFunc.addBlock();
-        Block *commutationBlock = workerFunc.addBlock();
-        Block *endReductionBlock = workerFunc.addBlock();
+        Value aIsFN   = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeA, NODE_FN);
+        Value bIsAPP  = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeB, NODE_APP);
+        Value aIsAPP  = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeA, NODE_APP);
+        Value bIsFN   = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeB, NODE_FN);
+        Value isBeta  = builder.create<LLVM::OrOp>(module.getLoc(), builder.getI1Type(),
+                            builder.create<LLVM::AndOp>(module.getLoc(), builder.getI1Type(), aIsFN, bIsAPP),
+                            builder.create<LLVM::AndOp>(module.getLoc(), builder.getI1Type(), aIsAPP, bIsFN));
+
+        Value aIsBranch = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeA, NODE_BRANCH);
+        Value bIsNum    = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeB, NODE_NUM);
+        Value aIsNum    = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeA, NODE_NUM);
+        Value bIsBranch = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeB, NODE_BRANCH);
+        Value isEither  = builder.create<LLVM::OrOp>(module.getLoc(), builder.getI1Type(),
+                              builder.create<LLVM::AndOp>(module.getLoc(), builder.getI1Type(), aIsBranch, bIsNum),
+                              builder.create<LLVM::AndOp>(module.getLoc(), builder.getI1Type(), aIsNum,    bIsBranch));
+
+        // Dispatch blocks — each has exactly one terminator (proper SSA CFG)
+        // Chain: loopBody → checkBeta → checkEither → commutation
+        Block *annihilationBlock  = workerFunc.addBlock();
+        Block *checkBetaBlock     = workerFunc.addBlock(); // dispatch: isBeta?
+        Block *betaBlock          = workerFunc.addBlock(); // action: beta reduction
+        Block *checkEitherBlock   = workerFunc.addBlock(); // dispatch: isEither?
+        Block *eitherBlock        = workerFunc.addBlock(); // action: either reduction
+        Block *commutationBlock   = workerFunc.addBlock();
+        Block *endReductionBlock  = workerFunc.addBlock();
 
         Value p1A = readPort(nodeAPtr, 1);
         Value p1B = readPort(nodeBPtr, 1);
         Value p2A = readPort(nodeAPtr, 2);
         Value p2B = readPort(nodeBPtr, 2);
 
-        builder.create<LLVM::CondBrOp>(module.getLoc(), isAnnihilation, annihilationBlock, commutationBlock);
+        // Dispatch entry: annihilation first (same-type rule)
+        builder.create<LLVM::CondBrOp>(module.getLoc(), isAnnihilation, annihilationBlock, checkBetaBlock);
 
+        // ── checkBeta: is this a function application redex? ─────────────────
+        builder.setInsertionPointToStart(checkBetaBlock);
+        builder.create<LLVM::CondBrOp>(module.getLoc(), isBeta, betaBlock, checkEitherBlock);
+
+        // ── checkEither: is this a branch-condition redex? ───────────────────
+        builder.setInsertionPointToStart(checkEitherBlock);
+        builder.create<LLVM::CondBrOp>(module.getLoc(), isEither, eitherBlock, commutationBlock);
+
+        // ── Annihilation (same-type rule): wire aux ports together ────────────
+        // NOTE: `link` lambda is defined later; we rely on SSA dominance —
+        // annihilationBlock is populated after link is defined below.
+
+        // ── Beta-reduction ────────────────────────────────────────────────────
+        // Rule: gamma(+, f) ~ delta(-, f)  →  wire body aux ports to call aux ports
+        // Phase 1 (this PR): treat as annihilation (wire p1↔p1, p2↔p2).
+        //   This correctly threads the argument into the function body for
+        //   single-arity functions. Multi-arity / closure capture in Phase 2.
+        // TODO(unified-pipeline): move this into a shared `inet_reduce` MLIR func
+        //   that lowers to both LLVM and SPIR-V for CPU/GPU parity.
+        builder.setInsertionPointToStart(betaBlock);
+        // beta wiring happens after link() is defined (below)
+
+        // ── Either-reduction ──────────────────────────────────────────────────
+        // Rule: branch(true_port, false_port) ~ num(value)
+        //   → if value != 0: propagate true_port; erase false_port
+        //     else:          propagate false_port; erase true_port
+        builder.setInsertionPointToStart(eitherBlock);
+        {
+            Value branchPtr  = builder.create<LLVM::SelectOp>(module.getLoc(), aIsBranch, nodeAPtr, nodeBPtr);
+            Value numNodePtr = builder.create<LLVM::SelectOp>(module.getLoc(), aIsNum,    nodeAPtr, nodeBPtr);
+            Value branchP1   = readPort(branchPtr,  1); // true-branch aux port
+            Value branchP2   = readPort(branchPtr,  2); // false-branch aux port
+            Value numVal     = readPort(numNodePtr,  1); // numeric condition value
+
+            Value zero32      = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(0));
+            Value condIsTrue  = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::ne, numVal, zero32);
+
+            Value winnerPort  = builder.create<LLVM::SelectOp>(module.getLoc(), condIsTrue, branchP1, branchP2);
+            Value loserPort   = builder.create<LLVM::SelectOp>(module.getLoc(), condIsTrue, branchP2, branchP1);
+
+            // Allocate an ERA node to erase the losing branch
+            Value oneConst = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(1));
+            Value eraIdx   = builder.create<LLVM::AtomicRMWOp>(module.getLoc(), LLVM::AtomicBinOp::add,
+                                                                wAllocPtr, oneConst, LLVM::AtomicOrdering::seq_cst);
+            Value eraPtr   = getNodePtr(eraIdx);
+            builder.create<LLVM::StoreOp>(module.getLoc(), zero32, eraPtr);
+
+            Value eraPort  = builder.create<LLVM::ShlOp>(module.getLoc(), i32Type, eraIdx, shift1Const);
+            // (port 0 of ERA = eraIdx << 2 | 0, shift1Const is already <<2)
+
+            // p2A is the output wire of the branch agent (connects to the rest of the graph)
+            // winnerPort propagates; loserPort is sent to ERA
+            // We use eitherBlock-local link helpers since link() is defined below
+            // Inline the link logic here:
+            auto eitherLink = [&](Value portX, Value portY) {
+                Value nx = builder.create<LLVM::LShrOp>(module.getLoc(), portX, shift1Const);
+                Value ny = builder.create<LLVM::LShrOp>(module.getLoc(), portY, shift1Const);
+                Value px = builder.create<LLVM::AndOp>(module.getLoc(), i32Type, portX, mask3Const);
+                Value py = builder.create<LLVM::AndOp>(module.getLoc(), i32Type, portY, mask3Const);
+                Value gepX = builder.create<LLVM::GEPOp>(module.getLoc(), ptrType, i32Type, getNodePtr(nx), ValueRange{px});
+                Value gepY = builder.create<LLVM::GEPOp>(module.getLoc(), ptrType, i32Type, getNodePtr(ny), ValueRange{py});
+                builder.create<LLVM::StoreOp>(module.getLoc(), portY, gepX);
+                builder.create<LLVM::StoreOp>(module.getLoc(), portX, gepY);
+            };
+            eitherLink(winnerPort, p2A);
+            eitherLink(loserPort,  eraPort);
+        }
+        builder.create<LLVM::BrOp>(module.getLoc(), ValueRange{}, endReductionBlock);
+
+
+        // ── Annihilation (same-type rule) ──────────────────────────────────────
         builder.setInsertionPointToStart(annihilationBlock);
 
-        // Annihilation (Rule 1): a.p1 <-> b.p1 and a.p2 <-> b.p2
-
+        // The `link` helper wires two ports together and enqueues new redexes.
+        // TODO(unified-pipeline): extract into a shared `inet_link` MLIR func
+        // that lowers to both LLVM (CPU) and SPIR-V (GPU) via standard dialects.
         auto link = [&](Value p1, Value p2) {
             Value n1Idx = builder.create<LLVM::LShrOp>(module.getLoc(), p1, shift1Const);
             Value n2Idx = builder.create<LLVM::LShrOp>(module.getLoc(), p2, shift1Const);
@@ -330,37 +451,42 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             builder.create<LLVM::StoreOp>(module.getLoc(), p2, gep1);
             builder.create<LLVM::StoreOp>(module.getLoc(), p1, gep2);
 
-            // Active pair detection: If both connected ports are principal ports (port 0), they form a redex
+            // Active pair detection: If both ports are p0, they form a new redex
             Value isPrincipal1 = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, port1, builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(0)));
             Value isPrincipal2 = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, port2, builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(0)));
             Value isRedex = builder.create<LLVM::AndOp>(module.getLoc(), builder.getI1Type(), isPrincipal1, isPrincipal2);
 
-            // Create blocks for redex enqueue
-            Block *currentBlock = builder.getInsertionBlock();
-            Block *enqueueBlock = workerFunc.addBlock();
+            Block *enqueueBlock  = workerFunc.addBlock();
             Block *continueBlock = workerFunc.addBlock();
-
             builder.create<LLVM::CondBrOp>(module.getLoc(), isRedex, enqueueBlock, continueBlock);
 
             builder.setInsertionPointToStart(enqueueBlock);
             Value qTailIdx = builder.create<LLVM::AtomicRMWOp>(module.getLoc(), LLVM::AtomicBinOp::add, wTailPtr, one64, LLVM::AtomicOrdering::seq_cst);
             Value qTailGep = builder.create<LLVM::GEPOp>(module.getLoc(), ptrType, i64Type, wQueuePtr, ValueRange{qTailIdx});
 
-            Value n1Idx64 = builder.create<LLVM::ZExtOp>(module.getLoc(), i64Type, n1Idx);
-            Value n2Idx64 = builder.create<LLVM::ZExtOp>(module.getLoc(), i64Type, n2Idx);
-            Value shift64Const = builder.create<LLVM::ConstantOp>(module.getLoc(), i64Type, builder.getI64IntegerAttr(32));
-            Value n2Shifted = builder.create<LLVM::ShlOp>(module.getLoc(), i64Type, n2Idx64, shift64Const);
-            Value redexValPair = builder.create<LLVM::OrOp>(module.getLoc(), i64Type, n1Idx64, n2Shifted);
-
-            builder.create<LLVM::StoreOp>(module.getLoc(), redexValPair, qTailGep);
+            Value n1Idx64    = builder.create<LLVM::ZExtOp>(module.getLoc(), i64Type, n1Idx);
+            Value n2Idx64    = builder.create<LLVM::ZExtOp>(module.getLoc(), i64Type, n2Idx);
+            Value shift64C   = builder.create<LLVM::ConstantOp>(module.getLoc(), i64Type, builder.getI64IntegerAttr(32));
+            Value n2Shifted  = builder.create<LLVM::ShlOp>(module.getLoc(), i64Type, n2Idx64, shift64C);
+            Value pairVal    = builder.create<LLVM::OrOp>(module.getLoc(), i64Type, n1Idx64, n2Shifted);
+            builder.create<LLVM::StoreOp>(module.getLoc(), pairVal, qTailGep);
             builder.create<LLVM::BrOp>(module.getLoc(), ValueRange{}, continueBlock);
-
             builder.setInsertionPointToStart(continueBlock);
         };
 
+        // Annihilation: wire aux ports
         link(p1A, p1B);
         link(p2A, p2B);
+        builder.create<LLVM::BrOp>(module.getLoc(), ValueRange{}, endReductionBlock);
 
+        // ── Beta-reduction (Phase 1): same wiring as annihilation ─────────────
+        // gamma(+,f) ~ delta(-,f)  →  wire body_p1↔arg_p1, body_p2↔arg_p2
+        // For single-arity functions this correctly threads the argument into
+        // the function body, creating new reducible graph structure.
+        // Phase 2 will add body-graph cloning for multi-arg / closures.
+        builder.setInsertionPointToStart(betaBlock);
+        link(p1A, p1B);
+        link(p2A, p2B);
         builder.create<LLVM::BrOp>(module.getLoc(), ValueRange{}, endReductionBlock);
 
         builder.setInsertionPointToStart(commutationBlock);
