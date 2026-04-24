@@ -44,6 +44,41 @@ void createBuffer(VkDevice device, VkPhysicalDevice physicalDevice, VkDeviceSize
     vkBindBufferMemory(device, *buffer, *bufferMemory, 0);
 }
 
+void copyBuffer(VkDevice device, VkCommandPool commandPool, VkQueue computeQueue, VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
+    VkCommandBufferAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandPool = commandPool;
+    allocInfo.commandBufferCount = 1;
+
+    VkCommandBuffer commandBuffer;
+    VK_CHECK(vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer));
+
+    VkCommandBufferBeginInfo beginInfo = {};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+    VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
+
+    VkBufferCopy copyRegion = {};
+    copyRegion.srcOffset = 0;
+    copyRegion.dstOffset = 0;
+    copyRegion.size = size;
+    vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
+
+    VK_CHECK(vkEndCommandBuffer(commandBuffer));
+
+    VkSubmitInfo submitInfo = {};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+
+    VK_CHECK(vkQueueSubmit(computeQueue, 1, &submitInfo, VK_NULL_HANDLE));
+    VK_CHECK(vkQueueWaitIdle(computeQueue));
+
+    vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+}
+
 void pic_gpu_dispatch(int32_t* netPtr, int32_t* activePairsPtr, int32_t numPairs) {
     printf("[GPU DISPATCH] Launching parallel kernel for %d active pairs\n", numPairs);
 
@@ -137,44 +172,55 @@ void pic_gpu_dispatch(int32_t* netPtr, int32_t* activePairsPtr, int32_t numPairs
     VkShaderModule computeShaderModule;
     VK_CHECK(vkCreateShaderModule(device, &shaderModuleCreateInfo, NULL, &computeShaderModule));
 
-    // Create 3 buffers: netPtr, activePairs, numPairs
+    VkCommandPoolCreateInfo cmdPoolInfo = {};
+    cmdPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    cmdPoolInfo.queueFamilyIndex = computeFamily;
+
+    VkCommandPool commandPool;
+    VK_CHECK(vkCreateCommandPool(device, &cmdPoolInfo, NULL, &commandPool));
+
+    // Staging buffers
+    VkBuffer stagingBufferNet, stagingBufferPairs, stagingBufferNumPairs;
+    VkDeviceMemory stagingMemoryNet, stagingMemoryPairs, stagingMemoryNumPairs;
+    
+    // Device buffers
     VkBuffer bufferNet, bufferPairs, bufferNumPairs;
     VkDeviceMemory memoryNet, memoryPairs, memoryNumPairs;
     
-    // Allocate 16MB for the network graph (simulation size for MVP)
-    size_t netBufferSize = 16 * 1024 * 1024;
-    size_t pairsBufferSize = numPairs * sizeof(int32_t);
+    size_t netBufferSize = (1000000 * 4 + 1000000 * 2 + 10) * 4;
+    size_t pairsBufferSize = (numPairs > 0 ? numPairs : 1) * sizeof(int32_t);
 
-    createBuffer(device, physicalDevice, netBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &bufferNet, &memoryNet);
-    createBuffer(device, physicalDevice, pairsBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &bufferPairs, &memoryPairs);
-    createBuffer(device, physicalDevice, sizeof(int32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &bufferNumPairs, &memoryNumPairs);
+    createBuffer(device, physicalDevice, netBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &stagingBufferNet, &stagingMemoryNet);
+    createBuffer(device, physicalDevice, pairsBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &stagingBufferPairs, &stagingMemoryPairs);
+    createBuffer(device, physicalDevice, sizeof(int32_t), VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &stagingBufferNumPairs, &stagingMemoryNumPairs);
+
+    createBuffer(device, physicalDevice, netBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &bufferNet, &memoryNet);
+    createBuffer(device, physicalDevice, pairsBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &bufferPairs, &memoryPairs);
+    createBuffer(device, physicalDevice, sizeof(int32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &bufferNumPairs, &memoryNumPairs);
 
     void* data;
-    
-    // Copy the dummy simulation data into the active pairs buffer
-    vkMapMemory(device, memoryPairs, 0, pairsBufferSize, 0, &data);
-    int32_t* pairsData = (int32_t*)data;
-    for (int i = 0; i < numPairs; i++) {
-        // Each pair occupies 4 elements in the net buffer
-        pairsData[i] = i * 4;
-    }
-    vkUnmapMemory(device, memoryPairs);
 
-    // Initialize the network with dummy math ops (add, 10, i, out)
-    vkMapMemory(device, memoryNet, 0, netBufferSize, 0, &data);
-    int32_t* netData = (int32_t*)data;
-    for (int i = 0; i < numPairs; i++) {
-        int idx = i * 4;
-        netData[idx] = 0; // opcode 0
-        netData[idx + 1] = 10; // lhs
-        netData[idx + 2] = i;  // rhs
-        netData[idx + 3] = -1; // output initialized to -1
+    // Copy the active pairs from host
+    vkMapMemory(device, stagingMemoryPairs, 0, pairsBufferSize, 0, &data);
+    if (numPairs > 0 && activePairsPtr != NULL) {
+        memcpy(data, activePairsPtr, pairsBufferSize);
     }
-    vkUnmapMemory(device, memoryNet);
+    vkUnmapMemory(device, stagingMemoryPairs);
 
-    vkMapMemory(device, memoryNumPairs, 0, sizeof(int32_t), 0, &data);
+    // Copy the network graph from host
+    vkMapMemory(device, stagingMemoryNet, 0, netBufferSize, 0, &data);
+    if (netPtr != NULL) {
+        memcpy(data, netPtr, netBufferSize);
+    }
+    vkUnmapMemory(device, stagingMemoryNet);
+
+    vkMapMemory(device, stagingMemoryNumPairs, 0, sizeof(int32_t), 0, &data);
     memcpy(data, &numPairs, sizeof(int32_t));
-    vkUnmapMemory(device, memoryNumPairs);
+    vkUnmapMemory(device, stagingMemoryNumPairs);
+
+    copyBuffer(device, commandPool, computeQueue, stagingBufferNet, bufferNet, netBufferSize);
+    copyBuffer(device, commandPool, computeQueue, stagingBufferPairs, bufferPairs, pairsBufferSize);
+    copyBuffer(device, commandPool, computeQueue, stagingBufferNumPairs, bufferNumPairs, sizeof(int32_t));
 
     VkDescriptorSetLayoutBinding bindings[3];
     for (int i = 0; i < 3; i++) {
@@ -254,13 +300,6 @@ void pic_gpu_dispatch(int32_t* netPtr, int32_t* activePairsPtr, int32_t numPairs
     VkPipeline computePipeline;
     VK_CHECK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &computePipeline));
 
-    VkCommandPoolCreateInfo cmdPoolInfo = {};
-    cmdPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    cmdPoolInfo.queueFamilyIndex = computeFamily;
-
-    VkCommandPool commandPool;
-    VK_CHECK(vkCreateCommandPool(device, &cmdPoolInfo, NULL, &commandPool));
-
     VkCommandBufferAllocateInfo cmdAllocInfo = {};
     cmdAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     cmdAllocInfo.commandPool = commandPool;
@@ -290,25 +329,16 @@ void pic_gpu_dispatch(int32_t* netPtr, int32_t* activePairsPtr, int32_t numPairs
     VK_CHECK(vkQueueSubmit(computeQueue, 1, &submitInfo, VK_NULL_HANDLE));
     VK_CHECK(vkQueueWaitIdle(computeQueue));
 
-    // Verify Output
-    vkMapMemory(device, memoryNet, 0, netBufferSize, 0, &data);
-    netData = (int32_t*)data;
-    
-    int successCount = 0;
-    for (int i = 0; i < numPairs; i++) {
-        int idx = i * 4;
-        int expected = 10 + i;
-        if (netData[idx + 3] == expected) {
-            successCount++;
-        } else {
-            if (i < 10) {
-                printf("[GPU DISPATCH] Error at pair %d: Expected %d, got %d\n", i, expected, netData[idx + 3]);
-            }
-        }
-    }
-    vkUnmapMemory(device, memoryNet);
+    // Read results back to host
+    copyBuffer(device, commandPool, computeQueue, bufferNet, stagingBufferNet, netBufferSize);
 
-    printf("[GPU DISPATCH] Processed %d pairs. Success: %d / %d\n", numPairs, successCount, numPairs);
+    vkMapMemory(device, stagingMemoryNet, 0, netBufferSize, 0, &data);
+    if (netPtr != NULL) {
+        memcpy(netPtr, data, netBufferSize);
+    }
+    vkUnmapMemory(device, stagingMemoryNet);
+
+    printf("[GPU DISPATCH] Completed successfully.\n");
 
     vkDestroyCommandPool(device, commandPool, NULL);
     vkDestroyPipeline(device, computePipeline, NULL);
@@ -319,6 +349,10 @@ void pic_gpu_dispatch(int32_t* netPtr, int32_t* activePairsPtr, int32_t numPairs
     vkDestroyBuffer(device, bufferNet, NULL); vkFreeMemory(device, memoryNet, NULL);
     vkDestroyBuffer(device, bufferPairs, NULL); vkFreeMemory(device, memoryPairs, NULL);
     vkDestroyBuffer(device, bufferNumPairs, NULL); vkFreeMemory(device, memoryNumPairs, NULL);
+
+    vkDestroyBuffer(device, stagingBufferNet, NULL); vkFreeMemory(device, stagingMemoryNet, NULL);
+    vkDestroyBuffer(device, stagingBufferPairs, NULL); vkFreeMemory(device, stagingMemoryPairs, NULL);
+    vkDestroyBuffer(device, stagingBufferNumPairs, NULL); vkFreeMemory(device, stagingMemoryNumPairs, NULL);
 
     vkDestroyShaderModule(device, computeShaderModule, NULL);
     vkDestroyDevice(device, NULL);

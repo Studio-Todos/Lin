@@ -339,9 +339,9 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
         // --- Erasure Logic ---
         builder.setInsertionPointToStart(erasureBlock);
-        Value numEraNodes = builder.create<LLVM::ConstantOp>(module.getLoc(), i64Type, builder.getI64IntegerAttr(2));
-        Value eraAllocStart = builder.create<LLVM::AtomicRMWOp>(module.getLoc(), LLVM::AtomicBinOp::add, wAllocPtr, numEraNodes, LLVM::AtomicOrdering::seq_cst);
-        Value eraAllocStart32 = builder.create<LLVM::TruncOp>(module.getLoc(), i32Type, eraAllocStart);
+        Value numEraNodesI32 = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(2));
+        Value eraAllocStart = builder.create<LLVM::AtomicRMWOp>(module.getLoc(), LLVM::AtomicBinOp::add, wAllocPtr, numEraNodesI32, LLVM::AtomicOrdering::seq_cst);
+        Value eraAllocStart32 = eraAllocStart;
 
         Value zeroType = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(0));
 
@@ -369,9 +369,9 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
         // --- Commutation Logic ---
         builder.setInsertionPointToStart(commutationLogicBlock);
-        Value four64 = builder.create<LLVM::ConstantOp>(module.getLoc(), i64Type, builder.getI64IntegerAttr(4));
-        Value newAllocStart = builder.create<LLVM::AtomicRMWOp>(module.getLoc(), LLVM::AtomicBinOp::add, wAllocPtr, four64, LLVM::AtomicOrdering::seq_cst);
-        Value newAllocStart32 = builder.create<LLVM::TruncOp>(module.getLoc(), i32Type, newAllocStart);
+        Value four32 = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(4));
+        Value newAllocStart = builder.create<LLVM::AtomicRMWOp>(module.getLoc(), LLVM::AtomicBinOp::add, wAllocPtr, four32, LLVM::AtomicOrdering::seq_cst);
+        Value newAllocStart32 = newAllocStart;
 
         Value n1Idx = newAllocStart32;
         Value n2Idx = builder.create<LLVM::AddOp>(module.getLoc(), i32Type, newAllocStart32, builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(1)));
@@ -462,8 +462,8 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         Block *entryBlock = llvmFunc.addEntryBlock();
         builder.setInsertionPointToStart(entryBlock);
 
-        // Allocate Net Array (1 million nodes * 4 words * 4 bytes = 16 MB)
-        Value netSize = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4 * 4));
+        // Allocate Net Array (1 million nodes * 4 words + queue + pointers) * 4 bytes
+        Value netSize = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr((1000000 * 4 + 1000000 * 2 + 10) * 4));
         auto netMalloc = builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{ptrType}, "malloc", ValueRange{netSize});
         Value netPtr = netMalloc.getResult();
 
@@ -472,7 +472,6 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
         funcOp.walk([&](pic::runtime::AllocNodeOp allocOp) {
             Location loc = allocOp.getLoc();
-            builder.setInsertionPoint(allocOp);
 
             Value typeVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(allocOp.getType()));
 
@@ -488,29 +487,30 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             allocCount = builder.create<LLVM::AddOp>(loc, allocCount, one);
         });
 
+        builder.setInsertionPointToEnd(entryBlock);
+
         // Generate the Redex Loop (Rules 1-3)
+        Value queueOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4));
+        Value headOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4 + 1000000 * 2));
+        Value tailOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4 + 1000000 * 2 + 2));
+        Value allocOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4 + 1000000 * 2 + 4));
+
+        Value wQueuePtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{queueOffset});
+        Value wHeadPtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{headOffset});
+        Value wTailPtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{tailOffset});
+        Value wAllocPtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{allocOffset});
+
+        Value zero64 = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(0));
+        builder.create<LLVM::StoreOp>(funcOp.getLoc(), zero64, wHeadPtr);
+        builder.create<LLVM::StoreOp>(funcOp.getLoc(), zero64, wTailPtr);
+        builder.create<LLVM::StoreOp>(funcOp.getLoc(), allocCount, wAllocPtr);
+
         bool emitCPU = !enableGPU;
         if (emitCPU) {
             // Allocate worker args array (5 void pointers: netPtr, queuePtr, headPtr, tailPtr, allocPtr)
             Value argArraySize = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(5 * 8));
             auto argMalloc = builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{ptrType}, "malloc", ValueRange{argArraySize});
             Value argArray = argMalloc.getResult();
-
-            Value allocCount64 = builder.create<LLVM::ZExtOp>(funcOp.getLoc(), i64Type, allocCount);
-            Value queueOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4));
-            Value headOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4 + 1000000 * 2));
-            Value tailOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4 + 1000000 * 2 + 2));
-            Value allocOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000 * 4 + 1000000 * 2 + 4));
-
-            Value wQueuePtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{queueOffset});
-            Value wHeadPtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{headOffset});
-            Value wTailPtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{tailOffset});
-            Value wAllocPtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{allocOffset});
-
-            Value zero64 = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(0));
-            builder.create<LLVM::StoreOp>(funcOp.getLoc(), zero64, wHeadPtr);
-            builder.create<LLVM::StoreOp>(funcOp.getLoc(), zero64, wTailPtr);
-            builder.create<LLVM::StoreOp>(funcOp.getLoc(), allocCount64, wAllocPtr);
 
             auto storeArg = [&](int index, Value val) {
                 Value idxConst = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(index));
@@ -670,6 +670,14 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 res = gpuBuilder.create<arith::SelectOp>(module.getLoc(), isLt, ltRes, res);
                 Value isEq = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::eq, opcodeArg, opcodeConst("eq"));
                 res = gpuBuilder.create<arith::SelectOp>(module.getLoc(), isEq, eqRes, res);
+
+                // Dummy Atomic Allocation
+                Value allocOffsetIdx = gpuBuilder.create<arith::ConstantIndexOp>(module.getLoc(), 1000000 * 4 + 1000000 * 2 + 4);
+                Value bumpVal = gpuBuilder.create<arith::ConstantOp>(module.getLoc(), i32Type, gpuBuilder.getI32IntegerAttr(4));
+                Value newAllocIdx = gpuBuilder.create<memref::AtomicRMWOp>(module.getLoc(), i32Type, arith::AtomicRMWKind::addi, bumpVal, netArg, ValueRange{allocOffsetIdx});
+
+                // Add to res to verify
+                res = gpuBuilder.create<arith::AddIOp>(module.getLoc(), res, newAllocIdx);
 
                 gpuBuilder.create<memref::StoreOp>(module.getLoc(), res, netArg, ValueRange{outIdx});
 
@@ -872,9 +880,12 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 topBuilder.create<LLVM::LLVMFuncOp>(module.getLoc(), "pic_gpu_dispatch", dispatchType);
             }
 
-            Value dummyNumPairs = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1000000));
-            Value nullPtr = builder.create<LLVM::ZeroOp>(funcOp.getLoc(), ptrType);
-            SmallVector<Value> dispatchArgs = {netPtr, nullPtr, dummyNumPairs};
+            Value loadTail = builder.create<LLVM::LoadOp>(funcOp.getLoc(), i64Type, wTailPtr);
+            Value loadHead = builder.create<LLVM::LoadOp>(funcOp.getLoc(), i64Type, wHeadPtr);
+            Value numPairs = builder.create<LLVM::SubOp>(funcOp.getLoc(), loadTail, loadHead);
+            Value numPairsI32 = builder.create<LLVM::TruncOp>(funcOp.getLoc(), i32Type, numPairs);
+
+            SmallVector<Value> dispatchArgs = {netPtr, wQueuePtr, numPairsI32};
             builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{}, "pic_gpu_dispatch", dispatchArgs);
             
             Value zero = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0));
