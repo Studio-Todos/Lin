@@ -21,6 +21,8 @@ This will drop you into a shell with `LLVM_DIR` and `MLIR_DIR` exported correctl
 
 ## Building the Compiler
 
+The initial implementation heavily leverages MLIR to establish a robust baseline and bootstrap the compiler quickly.
+
 Lin uses CMake and Ninja for its build system. Inside the `nix develop` shell, compile the project with:
 
 ```bash
@@ -33,7 +35,7 @@ This generates the `linc` compiler executable.
 
 ## Running Tests
 
-Lin uses the `lit` (LLVM Integrated Tester) framework. The tests verify parser behavior, AST generation, MLIR lowering, and end-to-end execution.
+Lin utilizes the `lit` (LLVM Integrated Tester) framework for its core testing suite. The tests verify parser behavior, AST generation, MLIR lowering, and end-to-end execution.
 
 To run the test suite:
 
@@ -48,7 +50,7 @@ ninja check-linc
 
 ## Project Structure
 
-- `src/`: Core C/C++ source code. Contains the parser (`Parser.c`), AST definition, compiler driver (`main.cpp`), and C-to-MLIR lowering logic (`Lowering.c`). Code is mostly C, utilizing C++ mainly for MLIR/LLVM integrations.
+- `src/`: Core C/C++ source code. Contains the parser (`Parser.c`), AST definition, compiler driver (`main.cpp`), and C-to-MLIR lowering logic (`Lowering.c`). The codebase is primarily written in C, utilizing C++ strictly where necessary to interface with MLIR and LLVM APIs.
 - `include/lin/`: Headers for the parser and lowering modules.
 - `lib/dialect/`: TableGen definitions (`.td` files) and C++ implementations for the `pic.graph`, `pic.reduce`, and `pic.runtime` MLIR dialects. These form the Polarized Interaction Combinators graph rules.
 - `lib/runtime/`: C runtime implementation (linked with compiled `.line` Lin binaries).

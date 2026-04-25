@@ -6,7 +6,7 @@ To lower the language, the compiler translates an optimized, compile-time Intera
 
 Both architectures (CPU & GPU) treat the interaction net as a flat, addressable **atomic bit-field array** where physical memory offsets replace pointers. This allows both CPU SIMD lanes and GPU threads to execute the same "swap-and-link" logic using standardized hardware-level atomic instructions.
 
-This architecture fundamentally avoids virtual machines.
+This architecture fundamentally avoids virtual machines, distinguishing it from earlier iterations of Lin. The approach shares conceptual similarities with HVM3, but relies entirely on MLIR for lowering rather than using custom C++ or CUDA backends. By maintaining a 128-bit memory layout per node and using polarized nets, the system achieves lock-free redexes managed through a specialized rule lookup table.
 
 ## Compiler Pipeline
 
@@ -199,25 +199,53 @@ When everything inside a boundary normalizes to one thing, it disappears.
 
 ## How Each Feature Emerges
 
-*   **Garbage collection:** Dead code is a subgraph with $\varepsilon$ at its root. Rule 3 propagates it in parallel.
-*   **Algebraic effects:** Unhandled ops float via B1. The handler holds the continuation. Resume = feed value, Abort = feed $\varepsilon$.
-*   **Lazy evaluation:** $\delta$ delays copying until copies diverge.
-*   **Operator fusion:** Ops producing the same result inside a boundary collapse via Rule 4.
-*   **Parallel execution:** Active pairs with no shared nodes fire simultaneously (by construction).
-*   **CPU/GPU routing:** Active pair labels determine routing (two queues, zero programmer annotation).
+*   **Garbage collection:** Dead code is just a subgraph with an $\varepsilon$ at its root. Rule 3 propagates it in parallel. You never write a GC — erasure IS GC.
+*   **Algebraic effects:** Unhandled ops float via B1. The handler holds the continuation. Resume = feed a value into that wire. Abort = attach $\varepsilon$ to it. No special effect machinery needed.
+*   **Lazy evaluation:** $\delta$ doesn't copy until its duplicates diverge. Sharing is the default. Copying is the exception, triggered only by actual demand.
+*   **Operator fusion:** Two ops that produce the same result inside a boundary collapse via Rule 4. The fused version is whatever the congruence hash resolves to — which you can bias toward efficient ops by ordering your boundary contents.
+*   **Parallel execution:** Any two active pairs with no shared nodes fire simultaneously. This is a theorem about the system, not an optimization. The programmer cannot accidentally introduce a race condition because the rewrite rules are locally confluent by construction.
+*   **CPU/GPU routing:** Active pair labels determine routing. The runtime maintains two queues. No programmer annotation. No pragma. No async/await. The graph structure encodes the parallelism.
+
+
+---
 
 ## The Invariants
 
-1.  **Linearity of principal ports:** Every principal port connects to exactly one wire (non-interfering).
-2.  **Boundary interface consistency:** Both sides of a boundary must agree on wire polarity.
-3.  **Confluence:** Rules 1-4 are confluent.
+Three properties you must preserve in the implementation:
 
-## The MLIR Dialects
+**1. Linearity of principal ports**
+Every principal port connects to exactly one wire. This is what makes reductions non-interfering. If you break this, you break the parallelism guarantee.
 
-Three dialects lower sequentially:
+**2. Boundary interface consistency**
+When a wire crosses a boundary, both sides must agree on the wire's polarity. This is what makes effect bubbling well-defined.
 
-*   **`pic.graph`**: ops: agent, wire, boundary, active_pair (abstract combinator graph)
-*   **`pic.reduce`**: ops: annihilate, duplicate, erase, fire_op, merge_boundary (reduction engine, scheduling-aware)
-*   **`pic.runtime`**: ops: cpu_dispatch, gpu_batch, sync_point (maps to LLVM/GPU)
+**3. Confluence**
+Rules 1-4 must be confluent — any order of reduction reaches the same result. This holds for standard IC. You need to verify it holds for your op labels, particularly for ops with side effects, which is why effect tokens or boundary sequencing matter.
 
-The `pic.graph` $\rightarrow$ `pic.reduce` pass normalizes the interaction net. The `pic.reduce` $\rightarrow$ `pic.runtime` pass acts as the CPU/GPU router based on `fire_op` labels.
+Confluence is what lets you throw the work at any number of CPU cores and GPU threads without coordination. It's the mathematical foundation of the whole architecture.
+
+---
+
+## What The MLIR Dialect Needs
+
+Three dialects, each lowering into the next:
+
+```
+pic.graph
+    ops: agent, wire, boundary, active_pair
+    this is the combinator graph, fully abstract
+
+pic.reduce
+    ops: annihilate, duplicate, erase, fire_op, merge_boundary
+    this is the reduction engine, scheduling-aware
+
+pic.runtime
+    ops: cpu_dispatch, gpu_batch, sync_point
+    this maps to llvm + gpu dialects
+```
+
+The key pass is `pic.graph` $\rightarrow$ `pic.reduce`, which is your interaction net normalizer. It detects active pairs and emits the appropriate reduction op. The `pic.reduce` $\rightarrow$ `pic.runtime` pass is your CPU/GPU router — it looks at `fire_op` labels and decides where they execute.
+
+The goal is simplicity, extensibility, and expressibility.
+
+

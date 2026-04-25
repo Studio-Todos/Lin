@@ -70,11 +70,13 @@ fib: func [
 While Lin currently supports a minimal core, it is fundamentally a multi-paradigm language. The following features are planned for future releases:
 
 1. **Stochastic/Accuracy System:**
-   Part of the standard library will include a stochastic accuracy system, similar to EnerJ, Rely, or Microsoft’s `Uncertain<T>`. This allows programmers to focus on correctness and let the compiler utilize LLVM approximate passes (like PUMPKIN). Not every function needs to be completely accurate.
+   Part of the standard library will introduce a stochastic accuracy system, drawing inspiration from tools like EnerJ, Rely, or Microsoft’s `Uncertain<T>`. This allows programmers to focus on correctness while allowing the compiler to leverage LLVM approximate passes (such as PUMPKIN) using specific accuracy metadata. Not every function requires exact precision.
 
    ```lin
    add-noise/accuracy 0.95 [img kernel]
+
    blur/exact img
+
    convolve/within 0.01 kernel img   ; within ±0.01 absolute error
    ```
 
