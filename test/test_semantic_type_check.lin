@@ -1,0 +1,17 @@
+// RUN: not %linc test %s 2>&1 | FileCheck %s
+
+// CHECK: Semantic Error: Type 'unknown_type' used in argument 'a' is undeclared.
+// CHECK: Semantic Error: Return type 'another_unknown' used in function 'f' is undeclared.
+
+f: func [
+    a [unknown_type!]
+    return: [another_unknown!]
+][
+    0
+]
+
+main: func [
+    return: [i32!]
+][
+    f 0
+]

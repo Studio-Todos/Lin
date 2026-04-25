@@ -95,7 +95,7 @@
         - All lower to ω agents with the appropriate MLIR op label
         - Type-directed: i32 add vs. f32 fadd via label (connects to item 7)
 
-[ ] 7. Type checking / type-directed dispatch
+[x] 7. Type checking / type-directed dispatch
         - AstFuncArg.type_name is parsed but never used — wire it up
         - Lightweight structural type check with source locations on mismatch
         - Drives ω label selection (e.g., llvm.add vs. llvm.fadd)

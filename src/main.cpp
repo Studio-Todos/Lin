@@ -85,9 +85,25 @@ static bool isIdiomaticCase(const char* str, int len) {
 
 #include <unordered_set>
 #include <string>
+#include <unordered_map>
+
+static std::string safeString(const char* ptr, int len) {
+    if (!ptr || len <= 0) return "";
+    return std::string(ptr, len);
+}
+
+// Helper to set resolved type
+static void setResolvedType(AstNode *node, const std::string& typeName) {
+    if (!node) return;
+    if (!typeName.empty()) {
+        node->resolved_type = strdup(typeName.c_str());
+        node->resolved_type_len = typeName.length();
+    }
+}
 
 // Semantic type checking to ensure argument and return types resolve to declared types or mlir-ops.
-static int semanticTypeCheckAst(AstNode *node, std::unordered_set<std::string>& declaredTypes) {
+// Also performs structural type checking and infers expression types.
+static int semanticTypeCheckAst(AstNode *node, std::unordered_set<std::string>& declaredTypes, std::unordered_map<std::string, std::string>& varTypes, std::unordered_map<std::string, AstNode*>& functions) {
     if (!node) return 0;
     int errors = 0;
 
@@ -97,68 +113,182 @@ static int semanticTypeCheckAst(AstNode *node, std::unordered_set<std::string>& 
             for (int i = 0; i < node->as.block.count; ++i) {
                 AstNode *stmt = node->as.block.statements[i];
                 if (stmt->type == AST_FUNC_DECL) {
-                    declaredTypes.insert(std::string(stmt->as.func_decl.name, stmt->as.func_decl.name_len));
+                    std::string funcName = safeString(stmt->as.func_decl.name, stmt->as.func_decl.name_len);
+                    declaredTypes.insert(funcName);
+                    functions[funcName] = stmt;
                 } else if (stmt->type == AST_MLIR_OP) {
-                    declaredTypes.insert(std::string(stmt->as.mlir_op.name, stmt->as.mlir_op.name_len));
+                    std::string opName = safeString(stmt->as.mlir_op.name, stmt->as.mlir_op.name_len);
+                    declaredTypes.insert(opName);
+                    functions[opName] = stmt;
                 } else if (stmt->type == AST_ASSIGNMENT) {
-                    declaredTypes.insert(std::string(stmt->as.assignment.name, stmt->as.assignment.name_len));
+                    declaredTypes.insert(safeString(stmt->as.assignment.name, stmt->as.assignment.name_len));
                 }
             }
 
             // Second pass: validate types within the block
             for (int i = 0; i < node->as.block.count; ++i) {
-                errors += semanticTypeCheckAst(node->as.block.statements[i], declaredTypes);
+                errors += semanticTypeCheckAst(node->as.block.statements[i], declaredTypes, varTypes, functions);
+                // Propagate type of the last statement to the block
+                if (i == node->as.block.count - 1 && node->as.block.statements[i]->resolved_type) {
+                    setResolvedType(node, safeString(node->as.block.statements[i]->resolved_type, node->as.block.statements[i]->resolved_type_len));
+                }
             }
             break;
         }
         case AST_FUNC_DECL: {
+            std::unordered_map<std::string, std::string> innerVarTypes = varTypes;
             for (int i = 0; i < node->as.func_decl.arg_count; ++i) {
-                std::string argTypeName(node->as.func_decl.args[i].type_name, node->as.func_decl.args[i].type_name_len);
-                if (declaredTypes.find(argTypeName) == declaredTypes.end()) {
-                    std::cerr << "Semantic Error: Type '" << argTypeName << "' used in argument '" << std::string(node->as.func_decl.args[i].name, node->as.func_decl.args[i].name_len) << "' is undeclared.\n";
+                std::string argTypeName = safeString(node->as.func_decl.args[i].type_name, node->as.func_decl.args[i].type_name_len);
+                if (!argTypeName.empty() && declaredTypes.find(argTypeName) == declaredTypes.end()) {
+                    std::cerr << "Semantic Error: Type '" << argTypeName << "' used in argument '" << safeString(node->as.func_decl.args[i].name, node->as.func_decl.args[i].name_len) << "' is undeclared.\n";
                     errors++;
                 }
+                innerVarTypes[safeString(node->as.func_decl.args[i].name, node->as.func_decl.args[i].name_len)] = argTypeName;
             }
+            std::string returnTypeName;
             if (node->as.func_decl.return_type_len > 0) {
-                std::string returnTypeName(node->as.func_decl.return_type_name, node->as.func_decl.return_type_len);
-                if (declaredTypes.find(returnTypeName) == declaredTypes.end()) {
-                    std::cerr << "Semantic Error: Return type '" << returnTypeName << "' used in function '" << std::string(node->as.func_decl.name, node->as.func_decl.name_len) << "' is undeclared.\n";
+                returnTypeName = safeString(node->as.func_decl.return_type_name, node->as.func_decl.return_type_len);
+                if (!returnTypeName.empty() && declaredTypes.find(returnTypeName) == declaredTypes.end()) {
+                    std::cerr << "Semantic Error: Return type '" << returnTypeName << "' used in function '" << safeString(node->as.func_decl.name, node->as.func_decl.name_len) << "' is undeclared.\n";
                     errors++;
                 }
             }
-            errors += semanticTypeCheckAst(node->as.func_decl.body, declaredTypes);
+            errors += semanticTypeCheckAst(node->as.func_decl.body, declaredTypes, innerVarTypes, functions);
+
+            // Check return type
+            if (!returnTypeName.empty() && node->as.func_decl.body->resolved_type) {
+                std::string bodyType = safeString(node->as.func_decl.body->resolved_type, node->as.func_decl.body->resolved_type_len);
+                std::string normalizedReturn = returnTypeName;
+                if (!normalizedReturn.empty() && normalizedReturn.back() == '!') normalizedReturn.pop_back();
+                std::string normalizedBody = bodyType;
+                if (!normalizedBody.empty() && normalizedBody.back() == '!') normalizedBody.pop_back();
+
+                // Allow "pair" outputs to be handled loosely for now
+                if (normalizedBody != normalizedReturn && normalizedReturn != "str" && normalizedBody != "str" && normalizedBody.find(" ") == std::string::npos && normalizedReturn.find(" ") == std::string::npos && normalizedBody != "ptr" && normalizedReturn != "ptr") {
+                    std::cerr << "Semantic Error: Function '" << std::string(node->as.func_decl.name, node->as.func_decl.name_len)
+                              << "' return type mismatch. Expected '" << normalizedReturn
+                              << "', got '" << normalizedBody << "'.\n";
+                    errors++;
+                }
+            }
             break;
         }
         case AST_ASSIGNMENT: {
-            errors += semanticTypeCheckAst(node->as.assignment.value, declaredTypes);
+            errors += semanticTypeCheckAst(node->as.assignment.value, declaredTypes, varTypes, functions);
+            if (node->as.assignment.value->resolved_type) {
+                std::string valType = safeString(node->as.assignment.value->resolved_type, node->as.assignment.value->resolved_type_len);
+                varTypes[safeString(node->as.assignment.name, node->as.assignment.name_len)] = valType;
+                setResolvedType(node, valType);
+            }
             break;
         }
         case AST_CALL: {
             for (int i = 0; i < node->as.call.arg_count; ++i) {
-                errors += semanticTypeCheckAst(node->as.call.args[i], declaredTypes);
+                errors += semanticTypeCheckAst(node->as.call.args[i], declaredTypes, varTypes, functions);
+            }
+            std::string calleeName = safeString(node->as.call.callee, node->as.call.callee_len);
+            if (functions.find(calleeName) != functions.end()) {
+                AstNode* funcNode = functions[calleeName];
+                if (funcNode->type == AST_FUNC_DECL) {
+                    if (node->as.call.arg_count != funcNode->as.func_decl.arg_count) {
+                         // Arity mismatch
+                         std::cerr << "Semantic Error: Function '" << calleeName << "' expects " << funcNode->as.func_decl.arg_count << " argument(s), got " << node->as.call.arg_count << ".\n";
+                         errors++;
+                    } else {
+                        for (int i = 0; i < node->as.call.arg_count; ++i) {
+                            if (node->as.call.args[i]->resolved_type) {
+                                std::string expectedType = safeString(funcNode->as.func_decl.args[i].type_name, funcNode->as.func_decl.args[i].type_name_len);
+                                if (!expectedType.empty() && expectedType.back() == '!') expectedType.pop_back();
+                                std::string actualType = safeString(node->as.call.args[i]->resolved_type, node->as.call.args[i]->resolved_type_len);
+                                if (!actualType.empty() && actualType.back() == '!') actualType.pop_back();
+
+                                if (expectedType != actualType && expectedType != "str" && actualType != "str" && expectedType != "ptr" && actualType != "ptr") {
+                                    std::cerr << "Semantic Error: Function '" << calleeName << "' argument " << i << " expects '" << expectedType << "', got '" << actualType << "'.\n";
+                                    errors++;
+                                }
+                            }
+                        }
+                    }
+
+                    if (funcNode->as.func_decl.return_type_len > 0) {
+                        std::string retType = safeString(funcNode->as.func_decl.return_type_name, funcNode->as.func_decl.return_type_len);
+                        if (!retType.empty() && retType.back() == '!') retType.pop_back();
+                        setResolvedType(node, retType);
+                    }
+                } else if (funcNode->type == AST_MLIR_OP) {
+                    // We skip structural type checking for mlir-ops for now because inputs parsing is a single string.
+                    // Parse output type from mlir_op declaration if possible
+                    std::string outputs = safeString(funcNode->as.mlir_op.outputs, funcNode->as.mlir_op.outputs_len);
+                    size_t bracketPos = outputs.find('[');
+                    size_t endBracketPos = outputs.find(']', bracketPos);
+                    if (bracketPos != std::string::npos && endBracketPos != std::string::npos) {
+                        std::string typeDecl = outputs.substr(bracketPos + 1, endBracketPos - bracketPos - 1);
+                        if (!typeDecl.empty() && typeDecl.back() == '!') typeDecl.pop_back();
+                        setResolvedType(node, typeDecl);
+                    }
+                }
+            } else if (calleeName == "either") {
+               if (node->as.call.arg_count == 2 && node->as.call.args[1]->type == AST_PAIR && node->as.call.args[1]->as.pair.left->resolved_type) {
+                   setResolvedType(node, safeString(node->as.call.args[1]->as.pair.left->resolved_type, node->as.call.args[1]->as.pair.left->resolved_type_len));
+               }
             }
             break;
         }
         case AST_BINARY: {
-            errors += semanticTypeCheckAst(node->as.binary.left, declaredTypes);
-            errors += semanticTypeCheckAst(node->as.binary.right, declaredTypes);
+            errors += semanticTypeCheckAst(node->as.binary.left, declaredTypes, varTypes, functions);
+            errors += semanticTypeCheckAst(node->as.binary.right, declaredTypes, varTypes, functions);
+
+            std::string leftType, rightType;
+            if (node->as.binary.left->resolved_type) leftType = safeString(node->as.binary.left->resolved_type, node->as.binary.left->resolved_type_len);
+            if (node->as.binary.right->resolved_type) rightType = safeString(node->as.binary.right->resolved_type, node->as.binary.right->resolved_type_len);
+
+            // Normalize bang
+            if (!leftType.empty() && leftType.back() == '!') leftType.pop_back();
+            if (!rightType.empty() && rightType.back() == '!') rightType.pop_back();
+
+            if (leftType != rightType && !leftType.empty() && !rightType.empty()) {
+                std::cerr << "Semantic Error: Binary operator type mismatch. Left side is '" << leftType << "', right side is '" << rightType << "'.\n";
+                errors++;
+            }
+
+            if (node->as.binary.op == TOKEN_LESS) {
+                setResolvedType(node, "i1");
+            } else {
+                setResolvedType(node, leftType.empty() ? "i32" : leftType);
+            }
             break;
         }
         case AST_WHILE: {
-            errors += semanticTypeCheckAst(node->as.while_loop.condition, declaredTypes);
-            errors += semanticTypeCheckAst(node->as.while_loop.body, declaredTypes);
+            errors += semanticTypeCheckAst(node->as.while_loop.condition, declaredTypes, varTypes, functions);
+            errors += semanticTypeCheckAst(node->as.while_loop.body, declaredTypes, varTypes, functions);
             break;
         }
         case AST_PAIR: {
-            errors += semanticTypeCheckAst(node->as.pair.left, declaredTypes);
-            errors += semanticTypeCheckAst(node->as.pair.right, declaredTypes);
+            errors += semanticTypeCheckAst(node->as.pair.left, declaredTypes, varTypes, functions);
+            errors += semanticTypeCheckAst(node->as.pair.right, declaredTypes, varTypes, functions);
             break;
         }
-        case AST_IDENTIFIER:
+        case AST_IDENTIFIER: {
+            std::string varName = safeString(node->as.identifier.name, node->as.identifier.length);
+            if (varTypes.find(varName) != varTypes.end()) {
+                std::string typeName = varTypes[varName];
+                if (!typeName.empty() && typeName.back() == '!') typeName.pop_back();
+                setResolvedType(node, typeName);
+            }
+            break;
+        }
         case AST_NUMBER:
+            setResolvedType(node, "i32");
+            break;
         case AST_FLOAT:
+            setResolvedType(node, "f32");
+            break;
         case AST_BOOL:
+            setResolvedType(node, "i1");
+            break;
         case AST_STRING:
+            setResolvedType(node, "str");
+            break;
         case AST_MLIR_OP:
         case AST_IMPORT:
             break;
@@ -433,8 +563,10 @@ int main(int argc, char **argv) {
   if (ast) {
       // Perform semantic type checking
       std::unordered_set<std::string> declaredTypes;
+      std::unordered_map<std::string, std::string> varTypes;
+      std::unordered_map<std::string, AstNode*> functions;
 
-      int semanticErrors = semanticTypeCheckAst(ast, declaredTypes);
+      int semanticErrors = semanticTypeCheckAst(ast, declaredTypes, varTypes, functions);
       if (semanticErrors > 0) {
           std::cerr << "Semantic analysis failed with " << semanticErrors << " error(s).\n";
           if (ast) freeAst(ast);

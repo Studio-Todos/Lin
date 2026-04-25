@@ -325,8 +325,29 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         MlirNamedAttribute polNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), polAttr);
 
         const char* labelStr = "add";
-        if (expr->as.binary.op == TOKEN_MINUS) labelStr = "sub";
-        else if (expr->as.binary.op == TOKEN_LESS) labelStr = "lt";
+        bool isF32 = (expr->resolved_type && expr->resolved_type_len == 3 && strncmp(expr->resolved_type, "f32", 3) == 0) ||
+                     (expr->as.binary.left && expr->as.binary.left->resolved_type && expr->as.binary.left->resolved_type_len == 3 && strncmp(expr->as.binary.left->resolved_type, "f32", 3) == 0);
+        bool isF64 = (expr->resolved_type && expr->resolved_type_len == 3 && strncmp(expr->resolved_type, "f64", 3) == 0) ||
+                     (expr->as.binary.left && expr->as.binary.left->resolved_type && expr->as.binary.left->resolved_type_len == 3 && strncmp(expr->as.binary.left->resolved_type, "f64", 3) == 0);
+        bool isI64 = (expr->resolved_type && expr->resolved_type_len == 3 && strncmp(expr->resolved_type, "i64", 3) == 0) ||
+                     (expr->as.binary.left && expr->as.binary.left->resolved_type && expr->as.binary.left->resolved_type_len == 3 && strncmp(expr->as.binary.left->resolved_type, "i64", 3) == 0);
+
+        if (isF32) {
+            if (expr->as.binary.op == TOKEN_MINUS) labelStr = "fsub";
+            else if (expr->as.binary.op == TOKEN_LESS) labelStr = "flt";
+            else labelStr = "fadd";
+        } else if (isF64) {
+            if (expr->as.binary.op == TOKEN_MINUS) labelStr = "fsub64";
+            else if (expr->as.binary.op == TOKEN_LESS) labelStr = "flt64";
+            else labelStr = "fadd64";
+        } else if (isI64) {
+            if (expr->as.binary.op == TOKEN_MINUS) labelStr = "sub64";
+            else if (expr->as.binary.op == TOKEN_LESS) labelStr = "lt64";
+            else labelStr = "add64";
+        } else {
+            if (expr->as.binary.op == TOKEN_MINUS) labelStr = "sub";
+            else if (expr->as.binary.op == TOKEN_LESS) labelStr = "lt";
+        }
 
         MlirAttribute labelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(labelStr));
         MlirNamedAttribute labelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), labelAttr);

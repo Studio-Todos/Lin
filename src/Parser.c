@@ -207,6 +207,8 @@ static AstNode* createNode(Parser *parser, AstNodeType type) {
         return NULL;
     }
     node->type = type;
+    node->resolved_type = NULL;
+    node->resolved_type_len = 0;
     return node;
 }
 
@@ -571,6 +573,9 @@ static AstNode* parseFuncDecl(Parser *parser) {
 
 void freeAst(AstNode *node) {
     if (!node) return;
+    if (node->resolved_type) {
+        free((void*)node->resolved_type);
+    }
     if (node->type == AST_BINARY) {
         freeAst(node->as.binary.left);
         freeAst(node->as.binary.right);
