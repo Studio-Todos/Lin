@@ -48,7 +48,6 @@ typedef enum {
     TOKEN_LBRACE,
     TOKEN_RBRACE,
     TOKEN_DOT,
-    TOKEN_STR,
 } TokenType;
 
 typedef struct {
