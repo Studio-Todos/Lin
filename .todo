@@ -89,9 +89,11 @@
         - Thread outer-scope bindings into inner γ⁺ function agents via aux ports
         - Multi-use bindings → δ (duplicator) nodes for sharing
 
-[x] 6. Binary operator coverage
-        - All 12 operators covered: +, -, *, /, <, >, <=, >=, ==, !=, &&, ||
-        - Lower to ω agents with the appropriate MLIR op label ✅
+[x] 6. Binary operators via std library
+        - All 12 operators (+, -, *, /, <, >, <=, >=, ==, !=, &&, ||) work
+        - Parsed in Parser.c and emitted as Call(op_name) AST nodes
+        - Users import "std/math.lin" to use binary operations
+        - No built-in operators — all defined in std/
 
 [ ] 7. Type checking / type-directed dispatch
         - AstFuncArg.type_name is parsed but never used — wire it up
