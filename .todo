@@ -54,10 +54,12 @@
 
 ## 🔴 Tier 1 — Language Semantics (blocking for correct execution)
 
-[ ] 1. AST_PAIR lowering in lowerExpression
-        - Emit a pair agent that holds two ports
-        - Wire left/right sub-expressions into p1/p2
-        - Field access (.0 / .1) selects p1 or p2 via a δ-split agent
+[x] 1. AST_PAIR lowering in lowerExpression
+        - Emit a pair agent that holds two ports ✅
+        - Wire left/right sub-expressions into p1/p2 ✅
+        - Field access (.0 / .1) added to AST with TOKEN_DOT lexer support ✅
+        - parseFieldAccess() added, handles chained field access ✅
+        - parseGroupingExpr() updated to handle postfix field access after any expression ✅
         - Unblocks: std library result.0/result.1 pattern, multiple return values
 
 [x] 2. `either` reduction rule (if/else at runtime)
@@ -71,10 +73,9 @@
         - TODO(A1): GPU kernel parity via unified pic.reduce pass
         - Phase 2: body-graph cloning for multi-arg / closures
 
-[ ] 4. mlir-op full pipeline connection
+[x] 4. mlir-op full pipeline connection
         - PARSE:    AST_MLIR_OP captured correctly (name + interface + payload) ✅
-        - LOWER:    lowerExpression has NO case for AST_MLIR_OP — silently drops ❌
-                    Fix: emit RegistryOp(name, payload) + ω agent into the module
+        - LOWER:    lowerExpression emits RegistryOp(name, payload) + ω agent ✅
         - REGISTRY: RegistryOp collection exists in LoweringPasses.cpp (STR_ only) ⚠️
                     Fix: extend to collect non-STR_ entries from mlir-op declarations
         - DISPATCH: switch-case payload cloning machinery exists and works ✅
@@ -88,12 +89,9 @@
         - Thread outer-scope bindings into inner γ⁺ function agents via aux ports
         - Multi-use bindings → δ (duplicator) nodes for sharing
 
-[ ] 6. Binary operator coverage
-        - Parser gaps: TOKEN_STAR (*), TOKEN_SLASH (/), TOKEN_GREATER (>),
-          TOKEN_GREATER_EQUAL (>=), TOKEN_EQUAL_EQUAL (==),
-          TOKEN_NOT_EQUAL (!=), TOKEN_AND (&&), TOKEN_OR (||)
-        - All lower to ω agents with the appropriate MLIR op label
-        - Type-directed: i32 add vs. f32 fadd via label (connects to item 7)
+[x] 6. Binary operator coverage
+        - All 12 operators covered: +, -, *, /, <, >, <=, >=, ==, !=, &&, ||
+        - Lower to ω agents with the appropriate MLIR op label ✅
 
 [ ] 7. Type checking / type-directed dispatch
         - AstFuncArg.type_name is parsed but never used — wire it up

@@ -138,16 +138,28 @@ Token scanToken(Lexer *lexer) {
         case ']': return makeToken(lexer, TOKEN_RBRACKET);
         case '(': return makeToken(lexer, TOKEN_LPAREN);
         case ')': return makeToken(lexer, TOKEN_RPAREN);
-        case '!': return makeToken(lexer, TOKEN_BANG);
+        case '!': if (match(lexer, '=')) return makeToken(lexer, TOKEN_NOT_EQUAL);
+                  return makeToken(lexer, TOKEN_BANG);
         case '{': return makeToken(lexer, TOKEN_LBRACE);
         case '}': return makeToken(lexer, TOKEN_RBRACE);
-        case '<': return makeToken(lexer, TOKEN_LESS);
+        case '*': return makeToken(lexer, TOKEN_STAR);
+        case '/': return makeToken(lexer, TOKEN_SLASH);
+        case '&': if (match(lexer, '&')) return makeToken(lexer, TOKEN_AND); break;
+        case '|': if (match(lexer, '|')) return makeToken(lexer, TOKEN_OR); break;
+        case '=': if (match(lexer, '=')) return makeToken(lexer, TOKEN_EQUAL_EQUAL); break;
+        case '<': if (match(lexer, '=')) return makeToken(lexer, TOKEN_LESS_EQUAL);
+                  else if (match(lexer, '<')) return makeToken(lexer, TOKEN_LESS); // << shift
+                  return makeToken(lexer, TOKEN_LESS);
+        case '>': if (match(lexer, '=')) return makeToken(lexer, TOKEN_GREATER_EQUAL);
+                  else if (match(lexer, '>')) return makeToken(lexer, TOKEN_GREATER); // >> shift
+                  return makeToken(lexer, TOKEN_GREATER);
         case '+': return makeToken(lexer, TOKEN_PLUS);
         case '-': return makeToken(lexer, TOKEN_MINUS);
         case '%': return makeToken(lexer, TOKEN_IDENTIFIER);
-        case '=': return makeToken(lexer, TOKEN_IDENTIFIER);
-        case '.': return makeToken(lexer, TOKEN_IDENTIFIER);
+        case '.': return makeToken(lexer, TOKEN_DOT);
         case ',': return makeToken(lexer, TOKEN_IDENTIFIER);
+        case '0': case '1': case '2': case '3': case '4':
+        case '5': case '6': case '7': case '8': case '9': return number(lexer);
     }
 
     return makeToken(lexer, TOKEN_EOF);
@@ -328,7 +340,12 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
     if (!node) return NULL;
     node->as.identifier.name = ident.start;
     node->as.identifier.length = ident.length;
-    return node;
+    
+    AstNode *result = node;
+    while (parser->current.type == TOKEN_DOT) {
+        result = parseFieldAccess(parser, result);
+    }
+    return result;
 }
 
 static AstNode* parseGroupingExpr(Parser *parser) {
@@ -369,12 +386,37 @@ static AstNode* parseGroupingExpr(Parser *parser) {
             }
         }
 
-        return call;
+        AstNode *result = call;
+        while (parser->current.type == TOKEN_DOT) {
+            result = parseFieldAccess(parser, result);
+        }
+        return result;
     } else {
         AstNode *expr = parseExpression(parser);
         consume(parser, TOKEN_RPAREN, "Expect ')' after expression.");
+        
+        while (parser->current.type == TOKEN_DOT) {
+            expr = parseFieldAccess(parser, expr);
+        }
         return expr;
     }
+}
+
+// Parse field access: identifier . 0 | identifier . 1
+static AstNode* parseFieldAccess(Parser *parser, AstNode *base) {
+    consume(parser, TOKEN_DOT, "Expect '.' after identifier for field access.");
+    
+    Token field = parser->current;
+    if (field.type != TOKEN_NUMBER) {
+        error(parser, "Expect field index (0 or 1) after '.'.");
+        return base;
+    }
+    parserAdvance(parser);
+    
+    AstNode *node = createNode(parser, AST_FIELD_ACCESS);
+    node->as.field_access.base = base;
+    node->as.field_access.field_index = atoi(field.start);
+    return node;
 }
 
 static AstNode* parsePrimary(Parser *parser) {
@@ -399,7 +441,11 @@ static AstNode* parsePrimary(Parser *parser) {
 static AstNode* parseExpression(Parser *parser) {
     AstNode *expr = parsePrimary(parser);
 
-    while (parser->current.type == TOKEN_LESS || parser->current.type == TOKEN_PLUS || parser->current.type == TOKEN_MINUS) {
+    while (parser->current.type == TOKEN_LESS || parser->current.type == TOKEN_PLUS || parser->current.type == TOKEN_MINUS ||
+           parser->current.type == TOKEN_STAR || parser->current.type == TOKEN_SLASH || parser->current.type == TOKEN_GREATER ||
+           parser->current.type == TOKEN_EQUAL_EQUAL || parser->current.type == TOKEN_NOT_EQUAL ||
+           parser->current.type == TOKEN_GREATER_EQUAL || parser->current.type == TOKEN_LESS_EQUAL ||
+           parser->current.type == TOKEN_AND || parser->current.type == TOKEN_OR) {
         TokenType op = parser->current.type;
         parserAdvance(parser);
         AstNode *right = parsePrimary(parser);
@@ -585,6 +631,8 @@ void freeAst(AstNode *node) {
     } else if (node->type == AST_PAIR) {
         freeAst(node->as.pair.left);
         freeAst(node->as.pair.right);
+    } else if (node->type == AST_FIELD_ACCESS) {
+        freeAst(node->as.field_access.base);
     } else if (node->type == AST_BLOCK) {
         for (int i=0; i<node->as.block.count; i++) freeAst(node->as.block.statements[i]);
         free(node->as.block.statements);
@@ -662,6 +710,10 @@ void printAst(AstNode *node, int depth) {
             printf("Pair\n");
             printAst(node->as.pair.left, depth + 1);
             printAst(node->as.pair.right, depth + 1);
+            break;
+        case AST_FIELD_ACCESS:
+            printf("FieldAccess(.%d)\n", node->as.field_access.field_index);
+            printAst(node->as.field_access.base, depth + 1);
             break;
         case AST_BLOCK:
             printf("Block\n");
