@@ -318,13 +318,24 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         Value typeB = readPort(nodeBPtr, 0);
 
         // Node type constants (mirror encoding in PicGraphToReducePass)
+        Value NODE_ERA    = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(0));
         Value NODE_FN     = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(5));
         Value NODE_APP    = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(6));
         Value NODE_BRANCH = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(7));
         Value NODE_NUM    = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(3));
 
         // Pre-compute all predicates in the loopBody block (valid SSA: single def, multiple uses)
-        Value isAnnihilation = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeA, typeB);
+        // Exclude epsilon-epsilon pairs from annihilation to prevent infinite loops
+        Value isEpsilonA = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeA, NODE_ERA);
+        Value isEpsilonB = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeB, NODE_ERA);
+        Value isEpsilonPair = builder.create<LLVM::AndOp>(module.getLoc(), builder.getI1Type(), isEpsilonA, isEpsilonB);
+        
+        Value typesMatch = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeA, typeB);
+        // NOT isEpsilonPair using select: if isEpsilonPair then false else true
+        Value trueVal = builder.create<LLVM::ConstantOp>(module.getLoc(), builder.getI1Type(), builder.getBoolAttr(true));
+        Value falseVal = builder.create<LLVM::ConstantOp>(module.getLoc(), builder.getI1Type(), builder.getBoolAttr(false));
+        Value notEpsilonPair = builder.create<LLVM::SelectOp>(module.getLoc(), isEpsilonPair, falseVal, trueVal);
+        Value isAnnihilation = builder.create<LLVM::AndOp>(module.getLoc(), builder.getI1Type(), typesMatch, notEpsilonPair);
 
         Value aIsFN   = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeA, NODE_FN);
         Value bIsAPP  = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeB, NODE_APP);

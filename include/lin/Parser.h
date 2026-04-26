@@ -17,9 +17,18 @@ typedef enum {
     TOKEN_RPAREN,       // )
     TOKEN_BANG,         // !
     TOKEN_STRING,       // "..."
+    TOKEN_STAR,         // *
+    TOKEN_SLASH,        // /
     TOKEN_LESS,         // <
+    TOKEN_GREATER,      // >
+    TOKEN_EQUAL_EQUAL,  // ==
+    TOKEN_NOT_EQUAL,   // !=
+    TOKEN_GREATER_EQUAL, // >=
+    TOKEN_LESS_EQUAL,   // <=
     TOKEN_PLUS,         // +
     TOKEN_MINUS,        // -
+    TOKEN_AND,         // &&
+    TOKEN_OR,          // ||
     // Keywords
     TOKEN_FUNC,
     TOKEN_RETURN,
@@ -37,7 +46,9 @@ typedef enum {
     TOKEN_IMPORT,
     TOKEN_MLIR_OP,
     TOKEN_LBRACE,
-    TOKEN_RBRACE
+    TOKEN_RBRACE,
+    TOKEN_DOT,
+    TOKEN_STR,
 } TokenType;
 
 typedef struct {
@@ -71,7 +82,8 @@ typedef enum {
     AST_IMPORT,
     AST_BOOL,
     AST_WHILE,
-    AST_PAIR
+    AST_PAIR,
+    AST_FIELD_ACCESS
 } AstNodeType;
 
 typedef struct AstNode {
@@ -105,6 +117,7 @@ typedef struct AstNode {
         struct { const char *path; int length; struct AstNode *module_block; } import_stmt;
         struct { struct AstNode *condition; struct AstNode *body; } while_loop;
         struct { struct AstNode *left; struct AstNode *right; } pair;
+        struct { struct AstNode *base; int field_index; } field_access;
     } as;
 } AstNode;
 
