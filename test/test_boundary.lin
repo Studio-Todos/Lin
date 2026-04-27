@@ -1,0 +1,10 @@
+// RUN: %linc %s -o %t 2 | FileCheck %s
+// Test A4: Boundary lowering - E-graph congruence
+
+// A4: A simple test that exercises the boundary infrastructure
+// Boundaries are used for effect scoping
+
+entry: func [] [i32!] [
+    42
+]
+// CHECK: i32 {{.*}} = 42
