@@ -643,10 +643,22 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         return callResult;
     }
 
-    if (expr->type == AST_FUNC_DECL) {
+if (expr->type == AST_FUNC_DECL) {
         // Emit a func.func into the module body
         char funcNameStr[256];
         snprintf(funcNameStr, sizeof(funcNameStr), "%.*s", expr->as.func_decl.name_len, expr->as.func_decl.name);
+
+        // Skip type declaration functions to avoid duplicate symbol errors
+        // std/types.lin defines i1, i8, i16, i32, i64, f32, f64, bool, str as type tags
+        if (strcmp(funcNameStr, "i1") == 0 || strcmp(funcNameStr, "i8") == 0 ||
+            strcmp(funcNameStr, "i16") == 0 || strcmp(funcNameStr, "i32") == 0 ||
+            strcmp(funcNameStr, "i64") == 0 || strcmp(funcNameStr, "f32") == 0 ||
+            strcmp(funcNameStr, "f64") == 0 || strcmp(funcNameStr, "bool") == 0 ||
+            strcmp(funcNameStr, "str") == 0) {
+            // Skip type declarations - return null (caller should handle)
+            MlirValue nullVal = {NULL};
+            return nullVal;
+        }
 
         int arg_count = expr->as.func_decl.arg_count;
         MlirType portType = getPicPortType(ctx);

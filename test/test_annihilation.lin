@@ -1,0 +1,13 @@
+test_op: mlir-op [
+    inputs: [a [i32!]]
+    outputs: [res [i32!]]
+] {
+    %res = llvm.add %a, %a : i32
+}
+
+entry: func [
+    return: [i32!]
+][
+    (test_op 42)
+    0
+]
