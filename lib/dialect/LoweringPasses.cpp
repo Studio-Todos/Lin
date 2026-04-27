@@ -199,7 +199,60 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
 
 struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PicReduceToRuntimePass)
-  void runOnOperation() override {}
+
+  void runOnOperation() override {
+    ModuleOp module = getOperation();
+    OpBuilder builder(module.getContext());
+    using namespace mlir::pic::reduce;
+
+    // Find all pic.graph functions and emit reduction rules
+    module.walk([&](func::FuncOp func) {
+      func.walk([&](Block *block) {
+        // Collect agents by label for annihilation detection
+        std::map<std::string, std::vector<Operation*>> agentsByLabel;
+        
+        for (auto &op : block->getOperations()) {
+          if (op.getName().getStringRef() == "pic_graph.agent") {
+            auto labelAttr = op.getAttrOfType<StringAttr>("label");
+            if (labelAttr) {
+              agentsByLabel[std::string(labelAttr.getValue())].push_back(&op);
+            }
+          }
+        }
+
+        // Insert before return op
+        Operation *returnOp = nullptr;
+        for (auto &op : block->getOperations()) {
+          if (op.getName().getStringRef() == "func.return") {
+            returnOp = &op;
+            break;
+          }
+        }
+        if (returnOp) {
+          builder.setInsertionPoint(returnOp);
+        }
+
+        // Rule 1: γ⁺ ~ γ⁻ (annihilation)
+        for (auto &[key, agentList] : agentsByLabel) {
+          if (agentList.size() >= 2) {
+            Operation *plusOp = nullptr, *minusOp = nullptr;
+            for (auto *op : agentList) {
+              auto pol = op->getAttrOfType<StringAttr>("polarity");
+              if (pol && pol.getValue() == "+") plusOp = op;
+              if (pol && pol.getValue() == "-") minusOp = op;
+            }
+            if (plusOp && minusOp) {
+              builder.create<AnnihilateOp>(plusOp->getLoc());
+            }
+          }
+        }
+
+        // Rule 2: δ duplication - when label is "pair" with multiple uses
+        // Rule 3: ε erasure - handled automatically 
+        // Rule 4: fire_op - when ω has all inputs linked
+      });
+    });
+  }
 };
 
 struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, OperationPass<ModuleOp>> {
