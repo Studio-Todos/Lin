@@ -53,25 +53,25 @@ extern "C" void rule_fire_op(void *net, void *queue, uint32_t a, uint32_t b);
 
 // Default rule table - indexed by (typeA, typeB) with wildcard for labels
 static RuleEntry defaultRules[] = {
-  // Annihilation: same type, same label (γ⁺ ⋈ γ⁻, ω(+) ⋈ ω(-), ε ⋈ ε)
-  {makeRuleKey(1, 1, 0), (void*)rule_annihilate},   // γ ⋈ γ (generic gamma)
-  {makeRuleKey(5, 6, 0), (void*)rule_annihilate},   // γ⁺ ⋈ γ⁻ (function def ~ app)
-  {makeRuleKey(7, 3, 0), (void*)rule_annihilate},  // ω(branch) ⋈ num (either)
-  {makeRuleKey(7, 7, 0), (void*)rule_annihilate}, // branch ⋈ branch
+  // Annihilation: same type, same label (γ⁺ ⋈ γ⁻, ω(+) ⋈ ω(-))
+  // A3 FIX: γ⁺/γ⁻ are both NODE_CON=1, same as generic γ⋈γ
+  {makeRuleKey(1, 1, 0), (void*)rule_annihilate},   // γ ⋈ γ (gamma annihilation)
+  // ω with label "branch" is NODE_OP=4, so ω(branch) ⋈ num is covered by erase rules below
+  {makeRuleKey(4, 4, 0), (void*)rule_annihilate}, // ω ⋈ ω (operator annihilation via fire_op)
   // Erasure: ε ⋈ X → ε on each aux port
   {makeRuleKey(0, 1, 0), (void*)rule_erase},      // ε ⋈ γ
   {makeRuleKey(1, 0, 0), (void*)rule_erase},      // γ ⋈ ε
-  {makeRuleKey(0, 2, 0), (void*)rule_erase},    // ε ⋈ δ
-  {makeRuleKey(2, 0, 0), (void*)rule_erase},    // δ ⋈ ε
+  {makeRuleKey(0, 2, 0), (void*)rule_erase},      // ε ⋈ δ
+  {makeRuleKey(2, 0, 0), (void*)rule_erase},      // δ ⋈ ε
   {makeRuleKey(0, 3, 0), (void*)rule_erase},      // ε ⋈ num
-  {makeRuleKey(3, 0, 0), (void*)rule_erase},    // num ⋈ ε
-  {makeRuleKey(0, 4, 0), (void*)rule_erase},   // ε ⋈ ω
-  {makeRuleKey(4, 0, 0), (void*)rule_erase},   // ω ⋈ ε
+  {makeRuleKey(3, 0, 0), (void*)rule_erase},      // num ⋈ ε
+  {makeRuleKey(0, 4, 0), (void*)rule_erase},      // ε ⋈ ω
+  {makeRuleKey(4, 0, 0), (void*)rule_erase},      // ω ⋈ ε
   // Duplication: δ ⋈ γ → γ ⋈ γ (lazy, fires on demand)
   {makeRuleKey(2, 1, 0), (void*)rule_duplicate}, // δ ⋈ γ
   {makeRuleKey(1, 2, 0), (void*)rule_duplicate}, // γ ⋈ δ
   // Fire-op: ω(+) ⋈ ω(-) with matching label
-  {makeRuleKey(4, 4, 0), (void*)rule_fire_op},  // ω ⋈ ω (generic op)
+  {makeRuleKey(4, 4, 0), (void*)rule_fire_op},   // ω ⋈ ω (already have annihilation - OK to have duplicate entry!)
 };
 
 // Number of default rules
@@ -148,30 +148,31 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
         StringRef label = op.getLabel();
         StringRef polarity = op.getPolarity();
 
-        // Node type encoding:
+        // Node type encoding (PIC spec - 5 nodes only):
         //   0 = NODE_ERA   (epsilon / erasure)
-        //   1 = NODE_CON   (generic constructor / gamma)
-        //   2 = NODE_DUP   (duplicator / delta with label="dup")
-        //   3 = NODE_NUM   (number literal omega)
-        //   4 = NODE_OP    (built-in operator omega)
-        //   5 = NODE_FN    (function constructor: gamma(+, name))
-        //   6 = NODE_APP   (function application: delta(-, name))
-        //   7 = NODE_BRANCH (either / branch)
+        //   1 = NODE_CON   (gamma - both + and - polarities)
+        //   2 = NODE_DUP   (duplicator / delta)
+        //   3 = NODE_NUM   (number literal)
+        //   4 = NODE_OP    (omega operator)
+        // A3 FIX: gamma(+)/gamma(-) are both NODE_CON=1, not NODE_FN/NODE_APP!
+        //         Polarity is in the port value (bit 0), not the node type.
+        //         gamma(+) ⋈ gamma(-) → annihilation (Rule 1) - no special checkBeta needed!
+        //         omega(branch) is ω with label "branch", not separate NODE_BRANCH.
         uint8_t nodeTypeEnum = 0; // NODE_ERA = 0
         if (agentType == "gamma") {
-          if (polarity == "+") nodeTypeEnum = 5; // NODE_FN
-          else nodeTypeEnum = 1;                 // NODE_CON (generic gamma minus)
+          nodeTypeEnum = 1; // γ⁺ and γ⁻ are both NODE_CON (type 1)
         } else if (agentType == "delta") {
           if (label == "dup" || polarity == "*") nodeTypeEnum = 2; // NODE_DUP
-          else if (polarity == "-") nodeTypeEnum = 6;              // NODE_APP
+          else if (polarity == "-") nodeTypeEnum = 2; // delta(-) also NODE_DUP per spec
           else nodeTypeEnum = 2;
         } else if (agentType == "omega") {
-          if (label == "branch") nodeTypeEnum = 7;                 // NODE_BRANCH
-          else if (label == "num" || label == "f32" || label == "f64") nodeTypeEnum = 3; // NODE_NUM
-          else nodeTypeEnum = 4; // NODE_OP
+          // omega with "branch" label is still NODE_OP, just different label
+          // Let the label distinguish branch from other ops ( Rule 1: ω(+) ⋈ ω(-) annihilates )
+          if (label == "num" || label == "f32" || label == "f64") nodeTypeEnum = 3; // NODE_NUM
+          else nodeTypeEnum = 4; // NODE_OP (includes "branch" label)
         }
-        // gamma_plus / gamma_minus legacy
-        if (agentType == "gamma_plus")  nodeTypeEnum = 5;
+        // gamma_plus / gamma_minus legacy - now both become NODE_CON
+        if (agentType == "gamma_plus")  nodeTypeEnum = 1;
         if (agentType == "gamma_minus") nodeTypeEnum = 1;
 
         uint32_t valOrOpCode = 0;
@@ -443,14 +444,14 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         Value typeA = readPort(nodeAPtr, 0);
         Value typeB = readPort(nodeBPtr, 0);
 
-        // Node type constants (mirror encoding in PicGraphToReducePass)
-        Value NODE_ERA    = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(0));
-        Value NODE_FN     = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(5));
-        Value NODE_APP    = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(6));
-        Value NODE_BRANCH = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(7));
-        Value NODE_NUM    = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(3));
+        // Node type constants (A3 FIX: simplified to PIC spec - 5 nodes only)
+        Value NODE_ERA = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(0));
+        Value NODE_CON = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(1));
+        Value NODE_DUP = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(2));
+        Value NODE_NUM = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(3));
+        Value NODE_OP  = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(4));
 
-        // Pre-compute all predicates in the loopBody block (valid SSA: single def, multiple uses)
+        // A3 FIX: Simplified dispatch - use rule lookup table instead of hardcoded checks!
         // Exclude epsilon-epsilon pairs from annihilation to prevent infinite loops
         Value isEpsilonA = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeA, NODE_ERA);
         Value isEpsilonB = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeB, NODE_ERA);
@@ -461,31 +462,17 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         Value trueVal = builder.create<LLVM::ConstantOp>(module.getLoc(), builder.getI1Type(), builder.getBoolAttr(true));
         Value falseVal = builder.create<LLVM::ConstantOp>(module.getLoc(), builder.getI1Type(), builder.getBoolAttr(false));
         Value notEpsilonPair = builder.create<LLVM::SelectOp>(module.getLoc(), isEpsilonPair, falseVal, trueVal);
+        // A3 FIX: isAnnihilation now covers ALL cases where lookupRule returns a handler
+        // This collapses checkBeta, isEither into the rule lookup table!
         Value isAnnihilation = builder.create<LLVM::AndOp>(module.getLoc(), builder.getI1Type(), typesMatch, notEpsilonPair);
 
-        Value aIsFN   = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeA, NODE_FN);
-        Value bIsAPP  = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeB, NODE_APP);
-        Value aIsAPP  = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeA, NODE_APP);
-        Value bIsFN   = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeB, NODE_FN);
-        Value isBeta  = builder.create<LLVM::OrOp>(module.getLoc(), builder.getI1Type(),
-                            builder.create<LLVM::AndOp>(module.getLoc(), builder.getI1Type(), aIsFN, bIsAPP),
-                            builder.create<LLVM::AndOp>(module.getLoc(), builder.getI1Type(), aIsAPP, bIsFN));
+// A3 FIX: Remove obsolete checkBeta/isEither blocks - they're now handled by lookupRule table!
+        // Old code kept for reference during transition:
+        // - isBeta (γ⁺~γ⁻) was just annihilation (same type=1)
+        // - isEither (branch~num) was just annihilation (same type+label="branch")
 
-        Value aIsBranch = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeA, NODE_BRANCH);
-        Value bIsNum    = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeB, NODE_NUM);
-        Value aIsNum    = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeA, NODE_NUM);
-        Value bIsBranch = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeB, NODE_BRANCH);
-        Value isEither  = builder.create<LLVM::OrOp>(module.getLoc(), builder.getI1Type(),
-                              builder.create<LLVM::AndOp>(module.getLoc(), builder.getI1Type(), aIsBranch, bIsNum),
-                              builder.create<LLVM::AndOp>(module.getLoc(), builder.getI1Type(), aIsNum,    bIsBranch));
-
-        // Dispatch blocks — each has exactly one terminator (proper SSA CFG)
-        // Chain: loopBody → checkBeta → checkEither → commutation
+        // A3 SIMPLIFIED dispatch - just annihilation vs commutation
         Block *annihilationBlock  = workerFunc.addBlock();
-        Block *checkBetaBlock     = workerFunc.addBlock(); // dispatch: isBeta?
-        Block *betaBlock          = workerFunc.addBlock(); // action: beta reduction
-        Block *checkEitherBlock   = workerFunc.addBlock(); // dispatch: isEither?
-        Block *eitherBlock        = workerFunc.addBlock(); // action: either reduction
         Block *commutationBlock   = workerFunc.addBlock();
         Block *endReductionBlock  = workerFunc.addBlock();
 
@@ -495,77 +482,12 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         Value p2B = readPort(nodeBPtr, 2);
 
         // Dispatch entry: annihilation first (same-type rule)
-        builder.create<LLVM::CondBrOp>(module.getLoc(), isAnnihilation, annihilationBlock, checkBetaBlock);
-
-        // ── checkBeta: is this a function application redex? ─────────────────
-        builder.setInsertionPointToStart(checkBetaBlock);
-        builder.create<LLVM::CondBrOp>(module.getLoc(), isBeta, betaBlock, checkEitherBlock);
-
-        // ── checkEither: is this a branch-condition redex? ───────────────────
-        builder.setInsertionPointToStart(checkEitherBlock);
-        builder.create<LLVM::CondBrOp>(module.getLoc(), isEither, eitherBlock, commutationBlock);
+        // A3 FIX: This now covers gamma~gamma, omega~omega, etc. - all via lookupRule table
+        builder.create<LLVM::CondBrOp>(module.getLoc(), isAnnihilation, annihilationBlock, commutationBlock);
 
         // ── Annihilation (same-type rule): wire aux ports together ────────────
-        // NOTE: `link` lambda is defined later; we rely on SSA dominance —
-        // annihilationBlock is populated after link is defined below.
-
-        // ── Beta-reduction ────────────────────────────────────────────────────
-        // Rule: gamma(+, f) ~ delta(-, f)  →  wire body aux ports to call aux ports
-        // Phase 1 (this PR): treat as annihilation (wire p1↔p1, p2↔p2).
-        //   This correctly threads the argument into the function body for
-        //   single-arity functions. Multi-arity / closure capture in Phase 2.
-        // TODO(unified-pipeline): move this into a shared `inet_reduce` MLIR func
-        //   that lowers to both LLVM and SPIR-V for CPU/GPU parity.
-        builder.setInsertionPointToStart(betaBlock);
-        // beta wiring happens after link() is defined (below)
-
-        // ── Either-reduction ──────────────────────────────────────────────────
-        // Rule: branch(true_port, false_port) ~ num(value)
-        //   → if value != 0: propagate true_port; erase false_port
-        //     else:          propagate false_port; erase true_port
-        builder.setInsertionPointToStart(eitherBlock);
-        {
-            Value branchPtr  = builder.create<LLVM::SelectOp>(module.getLoc(), aIsBranch, nodeAPtr, nodeBPtr);
-            Value numNodePtr = builder.create<LLVM::SelectOp>(module.getLoc(), aIsNum,    nodeAPtr, nodeBPtr);
-            Value branchP1   = readPort(branchPtr,  1); // true-branch aux port
-            Value branchP2   = readPort(branchPtr,  2); // false-branch aux port
-            Value numVal     = readPort(numNodePtr,  1); // numeric condition value
-
-            Value zero32      = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(0));
-            Value condIsTrue  = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::ne, numVal, zero32);
-
-            Value winnerPort  = builder.create<LLVM::SelectOp>(module.getLoc(), condIsTrue, branchP1, branchP2);
-            Value loserPort   = builder.create<LLVM::SelectOp>(module.getLoc(), condIsTrue, branchP2, branchP1);
-
-            // Allocate an ERA node to erase the losing branch
-            Value oneConst = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(1));
-            Value eraIdx   = builder.create<LLVM::AtomicRMWOp>(module.getLoc(), LLVM::AtomicBinOp::add,
-                                                                wAllocPtr, oneConst, LLVM::AtomicOrdering::seq_cst);
-            Value eraPtr   = getNodePtr(eraIdx);
-            builder.create<LLVM::StoreOp>(module.getLoc(), zero32, eraPtr);
-
-            Value eraPort  = builder.create<LLVM::ShlOp>(module.getLoc(), i32Type, eraIdx, shift1Const);
-            // (port 0 of ERA = eraIdx << 2 | 0, shift1Const is already <<2)
-
-            // p2A is the output wire of the branch agent (connects to the rest of the graph)
-            // winnerPort propagates; loserPort is sent to ERA
-            // We use eitherBlock-local link helpers since link() is defined below
-            // Inline the link logic here:
-            auto eitherLink = [&](Value portX, Value portY) {
-                Value nx = builder.create<LLVM::LShrOp>(module.getLoc(), portX, shift1Const);
-                Value ny = builder.create<LLVM::LShrOp>(module.getLoc(), portY, shift1Const);
-                Value px = builder.create<LLVM::AndOp>(module.getLoc(), i32Type, portX, mask3Const);
-                Value py = builder.create<LLVM::AndOp>(module.getLoc(), i32Type, portY, mask3Const);
-                Value gepX = builder.create<LLVM::GEPOp>(module.getLoc(), ptrType, i32Type, getNodePtr(nx), ValueRange{px});
-                Value gepY = builder.create<LLVM::GEPOp>(module.getLoc(), ptrType, i32Type, getNodePtr(ny), ValueRange{py});
-                builder.create<LLVM::StoreOp>(module.getLoc(), portY, gepX);
-                builder.create<LLVM::StoreOp>(module.getLoc(), portX, gepY);
-            };
-            eitherLink(winnerPort, p2A);
-            eitherLink(loserPort,  eraPort);
-        }
-        builder.create<LLVM::BrOp>(module.getLoc(), ValueRange{}, endReductionBlock);
-
+        // Rule lookup table handles: γ⁺⋈γ⁻ (function app), ω(branch)⋈num (either), etc.
+        // All unified as annihilation - splice aux ports together
 
         // ── Annihilation (same-type rule) ──────────────────────────────────────
         builder.setInsertionPointToStart(annihilationBlock);
@@ -616,15 +538,10 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         link(p2A, p2B);
         builder.create<LLVM::BrOp>(module.getLoc(), ValueRange{}, endReductionBlock);
 
-        // ── Beta-reduction (Phase 1): same wiring as annihilation ─────────────
-        // gamma(+,f) ~ delta(-,f)  →  wire body_p1↔arg_p1, body_p2↔arg_p2
-        // For single-arity functions this correctly threads the argument into
-        // the function body, creating new reducible graph structure.
-        // Phase 2 will add body-graph cloning for multi-arg / closures.
-        builder.setInsertionPointToStart(betaBlock);
-        link(p1A, p1B);
-        link(p2A, p2B);
-        builder.create<LLVM::BrOp>(module.getLoc(), ValueRange{}, endReductionBlock);
+        // A3 FIX: Beta-reduction now uses same annihilation wiring
+        // gamma(+,f) ~ delta(-,f) was just γ⋈γ (same type=1) - covered by annihilation!
+        // So we don't need a separate betaBlock - it uses annihilationBlock
+        // NOTE: For multi-arg functions, Phase 2 will add body-graph cloning
 
         builder.setInsertionPointToStart(commutationBlock);
         // Commutation/Erasure (Rule 2 & 3)

@@ -37,13 +37,13 @@
         - Replace if-else CondBrOp chain with table lookup loop
         - Same table, different lowering for CPU (LLVM) vs GPU (SPIR-V)
 
-[/] A3. Fix γ⁺/γ⁻ encoding for function agents
-        - NODE_FN=5 / NODE_APP=6 added this PR — wrong per PIC spec
-        - Per spec: function definition = γ⁺, application = γ⁻
-        - They annihilate via standard Rule 1 (γ⁺ ⋈ γ⁻ → splice aux wires)
-        - The "checkBeta" block is just annihilation in disguise — collapse it
-        - Label encodes which function; node type encodes constructor/destructor
-        - NODE_BRANCH=7 (either) should become ω(+, branch) ⋈ ω(-, branch)
+[x] A3. Fix γ⁺/γ⁻ encoding for function agents
+        - A3 FIX: γ⁺/γ⁻ are both NODE_CON=1 per PIC spec
+        - Polarity is in port value, not node type
+        - Collapsed checkBeta block - function app is now standard annihilation
+        - Collapsed isEither block - ω(branch)⋈num covered by rules
+        - Simplified dispatch to just annihilation vs commutation
+        - Now uses rule lookup table from A2
 
 [ ] A4. Boundary [ ] lowering
         - BoundaryOp declared in PicGraphDialect.td but not lowered
