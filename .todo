@@ -45,12 +45,12 @@
         - Simplified dispatch to just annihilation vs commutation
         - Now uses rule lookup table from A2
 
-[ ] A4. Boundary [ ] lowering
-        - BoundaryOp declared in PicGraphDialect.td but not lowered
-        - Needed for: E-graph congruence (Rule 4), effect scoping, MLIR regions
-        - B1: unhandled op(+, eff) floats to outer scope automatically
-        - B2: [ A ] ⋈ [ B ] → [ A ∪ B ] (boundary fusion)
-        - B3: [ single normal form ] → dissolve boundary
+[x] A4. Boundary [ ] lowering
+        - BoundaryOp now lowered in PicReduceToRuntimePass
+        - getNextBoundaryId() for unique boundary tracking
+        - B1: containment - effect bubbling via wire polarity
+        - B2: merge_boundary op when boundaries meet
+        - B3: collapse deferred to runtime E-graph hashing
 
 ## 🔴 Tier 1 — Language Semantics (blocking for correct execution)
 

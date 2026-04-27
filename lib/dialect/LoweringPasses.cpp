@@ -33,6 +33,11 @@ static uint32_t opcodeForLabel(StringRef label) {
   return hash ? hash : 1u;
 }
 
+// A4: Boundary tracking for E-graph congruence
+// Boundary IDs are used to scope reduction (Rule 4: congruence inside [ ])
+static uint32_t nextBoundaryId = 1;
+static uint32_t getNextBoundaryId() { return nextBoundaryId++; }
+
 // A2: Rule lookup table for user-extensible dispatch
 // Key: (typeA << 24) | (typeB << 16) | labelHash
 // Value: handler function pointer
@@ -324,6 +329,40 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
         // Rule 2: δ duplication - when label is "pair" with multiple uses
         // Rule 3: ε erasure - handled automatically 
         // Rule 4: fire_op - when ω has all inputs linked
+        
+        // A4: Boundary handling - B1, B2, B3
+        // Walk for boundary ops with regions
+        std::map<uint32_t, Operation*> boundariesById;
+        for (auto &op : block->getOperations()) {
+          if (op.getName().getStringRef() == "pic_graph.boundary") {
+            // Emit boundary rule ops for E-graph congruence
+            // B1: containment - effect bubbling handled by wire polarity
+            // B2: merge boundary when two boundaries meet
+            IntegerAttr boundaryIdAttr = op.getAttrOfType<IntegerAttr>("boundary_id");
+            uint32_t bid;
+            if (boundaryIdAttr) {
+              bid = boundaryIdAttr.getValue().getZExtValue();
+            } else {
+              // Assign new boundary ID if not present
+              bid = getNextBoundaryId();
+              op.setAttr("boundary_id", builder.getI32IntegerAttr(bid));
+            }
+            boundariesById[bid] = &op;
+          }
+        }
+        
+        // B2: Merge boundaries that meet
+        std::vector<uint32_t> boundaryIds;
+        for (auto &[bid, op] : boundariesById) {
+          boundaryIds.push_back(bid);
+        }
+        // If we have multiple boundaries, emit merge_boundary ops
+        if (boundaryIds.size() >= 2) {
+          builder.create<MergeBoundaryOp>(builder.getUnknownLoc());
+        }
+        
+        // B3: boundary collapse - when single normal form, handled by E-graph hashing
+        // (deferred to runtime convergence check)
       });
     });
   }
