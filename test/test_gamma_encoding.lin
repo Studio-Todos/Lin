@@ -1,0 +1,9 @@
+// RUN: %linc build %s -o %t
+// CHECK: Successfully compiled and linked to
+// Test A3: gamma+/gamma- encoding (both NODE_CON=1)
+
+import "std/types.lin"
+
+double: func [x [i32!] return: [i32!]] [x * 2]
+
+(double 10)

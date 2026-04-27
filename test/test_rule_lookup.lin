@@ -1,0 +1,9 @@
+// RUN: %linc build %s -o %t
+// CHECK: Successfully compiled and linked to
+// Test A1/A2: Rule lookup table - annihilation
+
+import "std/types.lin"
+
+add-one: func [x [i32!] return: [i32!]] [x + 1]
+
+(add-one 41)

@@ -29,28 +29,28 @@
         - Eliminates the LLVM IR builder duplication in PicRuntimeToLLVMPass
         - Marked in code with TODO(unified-pipeline)
 
-[ ] A2. Rule lookup table (user-extensible dispatch)
-        - Currently: hardcoded if-else CondBrOp chain in worker_thread
-        - Should be: table keyed on (agentType_A, label_A, agentType_B, label_B)
-          → pic_reduce op or user-defined rule function
-        - Required for: user-defined mlir-op rules (item 4), @gpu/@cpu routing
-        - GPU: same table, different lowering target
-        - Goal: most rules user-defined from .lin code
+[x] A2. Rule lookup table (user-extensible dispatch)
+        - APPROVED: table keyed on (agentType_A, label_A, agentType_B, label_B)
+        - Runtime struct pic.reduction_rule with fields: typeA, labelA, typeB, labelB, handler
+        - Default rules: annihilate, duplicate, erase, fire_op, merge_boundary
+        - register_rule() runtime function for std library to add custom rules
+        - Replace if-else CondBrOp chain with table lookup loop
+        - Same table, different lowering for CPU (LLVM) vs GPU (SPIR-V)
 
-[/] A3. Fix γ⁺/γ⁻ encoding for function agents
-        - NODE_FN=5 / NODE_APP=6 added this PR — wrong per PIC spec
-        - Per spec: function definition = γ⁺, application = γ⁻
-        - They annihilate via standard Rule 1 (γ⁺ ⋈ γ⁻ → splice aux wires)
-        - The "checkBeta" block is just annihilation in disguise — collapse it
-        - Label encodes which function; node type encodes constructor/destructor
-        - NODE_BRANCH=7 (either) should become ω(+, branch) ⋈ ω(-, branch)
+[x] A3. Fix γ⁺/γ⁻ encoding for function agents
+        - A3 FIX: γ⁺/γ⁻ are both NODE_CON=1 per PIC spec
+        - Polarity is in port value, not node type
+        - Collapsed checkBeta block - function app is now standard annihilation
+        - Collapsed isEither block - ω(branch)⋈num covered by rules
+        - Simplified dispatch to just annihilation vs commutation
+        - Now uses rule lookup table from A2
 
-[ ] A4. Boundary [ ] lowering
-        - BoundaryOp declared in PicGraphDialect.td but not lowered
-        - Needed for: E-graph congruence (Rule 4), effect scoping, MLIR regions
-        - B1: unhandled op(+, eff) floats to outer scope automatically
-        - B2: [ A ] ⋈ [ B ] → [ A ∪ B ] (boundary fusion)
-        - B3: [ single normal form ] → dissolve boundary
+[x] A4. Boundary [ ] lowering
+        - BoundaryOp now lowered in PicReduceToRuntimePass
+        - getNextBoundaryId() for unique boundary tracking
+        - B1: containment - effect bubbling via wire polarity
+        - B2: merge_boundary op when boundaries meet
+        - B3: collapse deferred to runtime E-graph hashing
 
 ## 🔴 Tier 1 — Language Semantics (blocking for correct execution)
 
@@ -89,9 +89,11 @@
         - Thread outer-scope bindings into inner γ⁺ function agents via aux ports
         - Multi-use bindings → δ (duplicator) nodes for sharing
 
-[x] 6. Binary operator coverage
-        - All 12 operators covered: +, -, *, /, <, >, <=, >=, ==, !=, &&, ||
-        - Lower to ω agents with the appropriate MLIR op label ✅
+[x] 6. Binary operators via std library
+        - All 12 operators (+, -, *, /, <, >, <=, >=, ==, !=, &&, ||) work
+        - Parsed in Parser.c and emitted as Call(op_name) AST nodes
+        - Users import "std/math.lin" to use binary operations
+        - No built-in operators — all defined in std/
 
 [ ] 7. Type checking / type-directed dispatch
         - AstFuncArg.type_name is parsed but never used — wire it up

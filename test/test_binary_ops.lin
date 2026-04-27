@@ -1,0 +1,4 @@
+// Test item 6: Binary operators via std library
+import "std/types.lin"
+
+1 + 2
