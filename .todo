@@ -20,14 +20,10 @@
 
 ## 🔴 Tier 0 — Architecture (foundational correctness)
 
-[/] A1. pic.reduce pass: implement reduction rules in target-independent MLIR
-        - PicReduceToRuntimePass::runOnOperation() is currently a no-op {}
-        - Should emit pic_reduce.annihilate / duplicate / erase / fire_op ops
-          for each active pair detected in pic.graph
-        - This is the CPU/GPU parity linchpin: define rules once, lower to
-          both LLVM (CPU) and SPIR-V/gpu (GPU) via standard MLIR lowerings
-        - Eliminates the LLVM IR builder duplication in PicRuntimeToLLVMPass
-        - Marked in code with TODO(unified-pipeline)
+[x] A1. pic.reduce pass: implement reduction rules in target-independent MLIR
+        - PicReduceToRuntimePass walks pic.graph functions
+        - Emits pic_reduce.annihilate/duplicate/erase/fire_op ops
+        - Handles boundary merge (B2)
 
 [x] A2. Rule lookup table (user-extensible dispatch)
         - APPROVED: table keyed on (agentType_A, label_A, agentType_B, label_B)
@@ -67,10 +63,10 @@
         - NODE_BRANCH=7 added to encoding (to be folded into ω via A3)
         - TODO(A1): GPU kernel parity via unified pic.reduce pass
 
-[/] 3. Beta-reduction (function application at runtime)
-        - Phase 1: γ(+,f) ~ γ(-,f) wires aux ports (p1↔p1, p2↔p2) — this PR
-        - TODO(A3): collapse checkBeta into standard annihilation
-        - TODO(A1): GPU kernel parity via unified pic.reduce pass
+[x] 3. Beta-reduction (function application at runtime)
+        - Phase 1: γ(+,f) ~ γ(-,f) wires aux ports (p1↔p1, p2↔p2)
+        - Collapsed checkBeta into standard annihilation per A3
+        - GPU kernel parity via unified pic.reduce pass (A1)
         - Phase 2: body-graph cloning for multi-arg / closures
 
 [x] 4. mlir-op full pipeline connection
