@@ -9,6 +9,7 @@ def PicReduce_Dialect : Dialect {
   let summary = "Polarized Interaction Combinator Reduction Dialect";
   let description = [{
     Represents scheduling-aware reduction operations.
+    These ops are markers for active redexes in the runtime reduction engine.
   }];
   let cppNamespace = "::mlir::pic::reduce";
   let useDefaultTypePrinterParser = 0;
@@ -18,6 +19,7 @@ class PicReduce_Op<string mnemonic, list<Trait> traits = []> :
     Op<PicReduce_Dialect, mnemonic, traits>;
 
 // Annihilate: γ⁺ ~ γ⁻ → splice aux wires (Rule 1)
+// Simple marker op - no attributes needed
 def PicReduce_AnnihilateOp : PicReduce_Op<"annihilate"> {
   let summary = "Annihilation rule for γ⁺ ⋈ γ⁻";
 }

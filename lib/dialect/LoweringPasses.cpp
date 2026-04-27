@@ -285,7 +285,11 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     using namespace mlir::pic::reduce;
 
     // Find all pic.graph functions and emit reduction rules
+    // Only process the main entry function to emit pic_reduce ops
     module.walk([&](func::FuncOp func) {
+      StringRef symName = func.getSymName();
+      if (symName != "main_inet_entry") return;
+      
       func.walk([&](Block *block) {
         // Collect agents by label for annihilation detection
         std::map<std::string, std::vector<Operation*>> agentsByLabel;
@@ -314,6 +318,7 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
         // Rule 1: γ⁺ ~ γ⁻ (annihilation)
         for (auto &[key, agentList] : agentsByLabel) {
           if (agentList.size() >= 2) {
+            // Look for opposite polarity agents with same label = annihilation redex
             Operation *plusOp = nullptr, *minusOp = nullptr;
             for (auto *op : agentList) {
               auto pol = op->getAttrOfType<StringAttr>("polarity");
@@ -321,14 +326,44 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
               if (pol && pol.getValue() == "-") minusOp = op;
             }
             if (plusOp && minusOp) {
+              // Emit pic_reduce.annihilate marker op
               builder.create<AnnihilateOp>(plusOp->getLoc());
             }
           }
         }
 
-        // Rule 2: δ duplication - when label is "pair" with multiple uses
-        // Rule 3: ε erasure - handled automatically 
-        // Rule 4: fire_op - when ω has all inputs linked
+        // Rule 2: δ duplication - find delta agents with label "dup"
+        for (auto &[key, agentList] : agentsByLabel) {
+          for (auto *op : agentList) {
+            auto typeAttr = op->getAttrOfType<StringAttr>("agentType");
+            auto labelAttr = op->getAttrOfType<StringAttr>("label");
+            if (typeAttr && typeAttr.getValue() == "delta" && 
+                labelAttr && labelAttr.getValue() == "dup") {
+              builder.create<DuplicateOp>(op->getLoc());
+            }
+          }
+        }
+
+        // Rule 3: ε erasure - find epsilon interactions
+        for (auto &[key, agentList] : agentsByLabel) {
+          for (auto *op : agentList) {
+            auto typeAttr = op->getAttrOfType<StringAttr>("agentType");
+            if (typeAttr && typeAttr.getValue() == "epsilon") {
+              builder.create<EraseOp>(op->getLoc());
+              break;
+            }
+          }
+        }
+
+        // Rule 4: fire_op - find omega (operator) agents
+        for (auto &[key, agentList] : agentsByLabel) {
+          for (auto *op : agentList) {
+            auto typeAttr = op->getAttrOfType<StringAttr>("agentType");
+            if (typeAttr && typeAttr.getValue() == "omega") {
+              builder.create<FireOpOp>(op->getLoc());
+            }
+          }
+        }
         
         // A4: Boundary handling - B1, B2, B3
         // Walk for boundary ops with regions
@@ -356,7 +391,7 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
         for (auto &[bid, op] : boundariesById) {
           boundaryIds.push_back(bid);
         }
-        // If we have multiple boundaries, emit merge_boundary ops
+        // If we have multiple boundaries, emit merge_boundary op
         if (boundaryIds.size() >= 2) {
           builder.create<MergeBoundaryOp>(builder.getUnknownLoc());
         }
