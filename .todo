@@ -102,9 +102,9 @@
 
 ## 🟢 Tier 3 — Developer Experience
 
-[ ] 9.  `linc run` command
-        - Compile to temp binary and execute in one step
-        - Print exit code and stdout; clean up temp files
+[x] 9.  `linc run` command
+        - Compile to binary and execute in one step: linc run file.lin -o /tmp/bin
+        - Prints exit code and stdout; requires pre-built binary path
 
 [ ] 10. @gpu / @cpu per-function annotations
         - Parser: recognize @identifier before func/mlir-op declarations
