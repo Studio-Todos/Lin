@@ -11,6 +11,12 @@ static char peekNext(Lexer *lexer) {
     if (isAtEnd(lexer)) return '\0';
     return lexer->current[1];
 }
+static bool match(Lexer *lexer, char expected) {
+    if (isAtEnd(lexer)) return false;
+    if (*lexer->current != expected) return false;
+    lexer->current++;
+    return true;
+}
 static void skipWhitespace(Lexer *lexer) {
     for (;;) {
         char c = peek(lexer);
@@ -206,11 +212,18 @@ static void consume(Parser *parser, TokenType type, const char *message) {
 }
 
 static AstNode* parseExpression(Parser *parser);
+
 static AstNode* parseStatement(Parser *parser);
+
 static AstNode* parseWhile(Parser *parser);
+
 static AstNode* parseEither(Parser *parser);
+
 static AstNode* parseFuncDecl(Parser *parser);
+
 static AstNode* parseBlock(Parser *parser);
+
+static AstNode* parseFieldAccess(Parser *parser, AstNode *base);
 
 static AstNode* createNode(Parser *parser, AstNodeType type) {
     AstNode *node = (AstNode*)calloc(1, sizeof(AstNode));
@@ -449,11 +462,28 @@ static AstNode* parseExpression(Parser *parser) {
         TokenType op = parser->current.type;
         parserAdvance(parser);
         AstNode *right = parsePrimary(parser);
-        AstNode *binary = createNode(parser, AST_BINARY);
-        binary->as.binary.left = expr;
-        binary->as.binary.op = op;
-        binary->as.binary.right = right;
-        expr = binary;
+
+        const char* funcName = "add";
+        if (op == TOKEN_MINUS) funcName = "sub";
+        else if (op == TOKEN_STAR) funcName = "mul";
+        else if (op == TOKEN_SLASH) funcName = "div";
+        else if (op == TOKEN_LESS) funcName = "lt";
+        else if (op == TOKEN_GREATER) funcName = "gt";
+        else if (op == TOKEN_LESS_EQUAL) funcName = "le";
+        else if (op == TOKEN_GREATER_EQUAL) funcName = "ge";
+        else if (op == TOKEN_EQUAL_EQUAL) funcName = "eq";
+        else if (op == TOKEN_NOT_EQUAL) funcName = "ne";
+        else if (op == TOKEN_AND) funcName = "and";
+        else if (op == TOKEN_OR) funcName = "std.or";
+
+        AstNode *call = createNode(parser, AST_CALL);
+        call->as.call.callee = strdup(funcName);
+        call->as.call.callee_len = strlen(funcName);
+        call->as.call.arg_count = 2;
+        call->as.call.args = malloc(sizeof(AstNode*) * 2);
+        call->as.call.args[0] = expr;
+        call->as.call.args[1] = right;
+        expr = call;
     }
 
     return expr;

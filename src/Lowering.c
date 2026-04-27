@@ -319,7 +319,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         MlirAttribute nameAttr = mlirStringAttrGet(ctx, mlirStringRefCreate(expr->as.mlir_op.name, expr->as.mlir_op.name_len));
         MlirNamedAttribute nameNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("name")), nameAttr);
 
-        MlirAttribute payloadAttr = mlirStringAttrGet(ctx, mlirStringRefCreate(expr->as.mlir_op.payload, expr->as.mlir_op.payload_len));
+        MlirAttribute payloadAttr = mlirStringAttrGet(ctx, mlirStringRefCreate(expr->as.mlir_op.mlir_payload, expr->as.mlir_op.payload_len));
         MlirNamedAttribute payloadNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("payload")), payloadAttr);
 
         MlirNamedAttribute attrs[] = {nameNamedAttr, payloadNamedAttr};
@@ -347,67 +347,6 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         MlirOperation op = mlirOperationCreate(&state);
         mlirBlockAppendOwnedOperation(block, op);
         return mlirOperationGetResult(op, 0);
-    }
-
-    if (expr->type == AST_BINARY) {
-        MlirValue left = lowerExpression(ctx, block, loc, expr->as.binary.left, env);
-        MlirValue right = lowerExpression(ctx, block, loc, expr->as.binary.right, env);
-
-        MlirOperationState state = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
-
-        MlirAttribute typeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("omega"));
-        MlirNamedAttribute typeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), typeAttr);
-        MlirAttribute polAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("-")); // operations consume, so -
-        MlirNamedAttribute polNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), polAttr);
-
-        const char* labelStr = "add";
-        if (expr->as.binary.op == TOKEN_MINUS) labelStr = "sub";
-        else if (expr->as.binary.op == TOKEN_STAR) labelStr = "mul";
-        else if (expr->as.binary.op == TOKEN_SLASH) labelStr = "div";
-        else if (expr->as.binary.op == TOKEN_LESS) labelStr = "lt";
-        else if (expr->as.binary.op == TOKEN_GREATER) labelStr = "gt";
-        else if (expr->as.binary.op == TOKEN_LESS_EQUAL) labelStr = "le";
-        else if (expr->as.binary.op == TOKEN_GREATER_EQUAL) labelStr = "ge";
-        else if (expr->as.binary.op == TOKEN_EQUAL_EQUAL) labelStr = "eq";
-        else if (expr->as.binary.op == TOKEN_NOT_EQUAL) labelStr = "ne";
-        else if (expr->as.binary.op == TOKEN_AND) labelStr = "and";
-        else if (expr->as.binary.op == TOKEN_OR) labelStr = "or";
-        else if (expr->as.binary.op == TOKEN_LESS) { // Could be << shift
-            // Check if this is actually a shift left by checking the context
-            // For now, treat a single < as lt (comparison)
-            labelStr = "shl";
-        } else if (expr->as.binary.op == TOKEN_GREATER) { // Could be >> shift
-            labelStr = "shr";
-        }
-
-        MlirAttribute labelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(labelStr));
-        MlirNamedAttribute labelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), labelAttr);
-
-        MlirNamedAttribute attrs[] = {typeNamedAttr, polNamedAttr, labelNamedAttr};
-        mlirOperationStateAddAttributes(&state, 3, attrs);
-
-        MlirType portType = getPicPortType(ctx);
-        MlirType types[] = {portType, portType, portType};
-        mlirOperationStateAddResults(&state, 3, types);
-
-        MlirOperation op = mlirOperationCreate(&state);
-        mlirBlockAppendOwnedOperation(block, op);
-
-        MlirValue result = mlirOperationGetResult(op, 0); // result is principle
-        MlirValue p1 = mlirOperationGetResult(op, 1); // lhs
-        MlirValue p2 = mlirOperationGetResult(op, 2); // rhs
-
-        MlirOperationState linkLeftState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-        MlirValue leftOps[] = {p1, left};
-        mlirOperationStateAddOperands(&linkLeftState, 2, leftOps);
-        mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkLeftState));
-
-        MlirOperationState linkRightState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-        MlirValue rightOps[] = {p2, right};
-        mlirOperationStateAddOperands(&linkRightState, 2, rightOps);
-        mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkRightState));
-
-        return result;
     }
 
     if (expr->type == AST_ASSIGNMENT) {
