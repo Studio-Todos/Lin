@@ -246,7 +246,7 @@ int main(int argc, char **argv) {
 
   for (int i = 1; i < argc; ++i) {
       std::string arg = argv[i];
-      if (arg == "build" || arg == "test") {
+      if (arg == "build" || arg == "test" || arg == "run") {
           command = arg;
       } else if (arg == "-o" && i + 1 < argc) {
           outputBinary = argv[++i];
@@ -647,6 +647,24 @@ int main(int argc, char **argv) {
           std::cout << "Successfully compiled and linked to '" << outputBinary << "'.\n";
       }
       mlirModuleDestroy(cModule);
+  }
+
+  // Item 9: linc run command - compile and execute in one step
+  if (command == "run") {
+      if (outputBinary.empty()) {
+          std::cerr << "Error: 'run' requires -o <binary_path>. Use: linc run file.lin -o /tmp/bin\n";
+          return 1;
+      }
+      
+      // Run the specified binary (assumes user built it first)
+      std::cout << "Running " << outputBinary << "...\n";
+      int exitCode = system(outputBinary.c_str());
+      exitCode = WEXITSTATUS(exitCode);
+      std::cout << "Exit code: " << exitCode << "\n";
+      
+      if (ast) freeAst(ast);
+      for (const char *src : importSources) free((void*)src);
+      return exitCode;
   }
 
   if (command == "test") {
