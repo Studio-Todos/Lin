@@ -29,13 +29,13 @@
         - Eliminates the LLVM IR builder duplication in PicRuntimeToLLVMPass
         - Marked in code with TODO(unified-pipeline)
 
-[ ] A2. Rule lookup table (user-extensible dispatch)
-        - Currently: hardcoded if-else CondBrOp chain in worker_thread
-        - Should be: table keyed on (agentType_A, label_A, agentType_B, label_B)
-          → pic_reduce op or user-defined rule function
-        - Required for: user-defined mlir-op rules (item 4), @gpu/@cpu routing
-        - GPU: same table, different lowering target
-        - Goal: most rules user-defined from .lin code
+[x] A2. Rule lookup table (user-extensible dispatch)
+        - APPROVED: table keyed on (agentType_A, label_A, agentType_B, label_B)
+        - Runtime struct pic.reduction_rule with fields: typeA, labelA, typeB, labelB, handler
+        - Default rules: annihilate, duplicate, erase, fire_op, merge_boundary
+        - register_rule() runtime function for std library to add custom rules
+        - Replace if-else CondBrOp chain with table lookup loop
+        - Same table, different lowering for CPU (LLVM) vs GPU (SPIR-V)
 
 [/] A3. Fix γ⁺/γ⁻ encoding for function agents
         - NODE_FN=5 / NODE_APP=6 added this PR — wrong per PIC spec

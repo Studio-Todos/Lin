@@ -33,6 +33,79 @@ static uint32_t opcodeForLabel(StringRef label) {
   return hash ? hash : 1u;
 }
 
+// A2: Rule lookup table for user-extensible dispatch
+// Key: (typeA << 24) | (typeB << 16) | labelHash
+// Value: handler function pointer
+struct RuleEntry {
+  uint32_t key;
+  void *handler;
+};
+
+static uint32_t makeRuleKey(uint8_t typeA, uint8_t typeB, uint32_t labelHash) {
+  return (typeA << 24) | (typeB << 16) | (labelHash & 0xFFFF);
+}
+
+// Default rule handlers (defined later in worker_thread)
+extern "C" void rule_annihilate(void *net, void *queue, uint32_t a, uint32_t b);
+extern "C" void rule_duplicate(void *net, void *queue, uint32_t a, uint32_t b);
+extern "C" void rule_erase(void *net, void *queue, uint32_t a, uint32_t b);
+extern "C" void rule_fire_op(void *net, void *queue, uint32_t a, uint32_t b);
+
+// Default rule table - indexed by (typeA, typeB) with wildcard for labels
+static RuleEntry defaultRules[] = {
+  // Annihilation: same type, same label (γ⁺ ⋈ γ⁻, ω(+) ⋈ ω(-), ε ⋈ ε)
+  {makeRuleKey(1, 1, 0), (void*)rule_annihilate},   // γ ⋈ γ (generic gamma)
+  {makeRuleKey(5, 6, 0), (void*)rule_annihilate},   // γ⁺ ⋈ γ⁻ (function def ~ app)
+  {makeRuleKey(7, 3, 0), (void*)rule_annihilate},  // ω(branch) ⋈ num (either)
+  {makeRuleKey(7, 7, 0), (void*)rule_annihilate}, // branch ⋈ branch
+  // Erasure: ε ⋈ X → ε on each aux port
+  {makeRuleKey(0, 1, 0), (void*)rule_erase},      // ε ⋈ γ
+  {makeRuleKey(1, 0, 0), (void*)rule_erase},      // γ ⋈ ε
+  {makeRuleKey(0, 2, 0), (void*)rule_erase},    // ε ⋈ δ
+  {makeRuleKey(2, 0, 0), (void*)rule_erase},    // δ ⋈ ε
+  {makeRuleKey(0, 3, 0), (void*)rule_erase},      // ε ⋈ num
+  {makeRuleKey(3, 0, 0), (void*)rule_erase},    // num ⋈ ε
+  {makeRuleKey(0, 4, 0), (void*)rule_erase},   // ε ⋈ ω
+  {makeRuleKey(4, 0, 0), (void*)rule_erase},   // ω ⋈ ε
+  // Duplication: δ ⋈ γ → γ ⋈ γ (lazy, fires on demand)
+  {makeRuleKey(2, 1, 0), (void*)rule_duplicate}, // δ ⋈ γ
+  {makeRuleKey(1, 2, 0), (void*)rule_duplicate}, // γ ⋈ δ
+  // Fire-op: ω(+) ⋈ ω(-) with matching label
+  {makeRuleKey(4, 4, 0), (void*)rule_fire_op},  // ω ⋈ ω (generic op)
+};
+
+// Number of default rules
+static const int NUM_DEFAULT_RULES = sizeof(defaultRules) / sizeof(defaultRules[0]);
+
+// User-defined rule table (grows at runtime via register_rule)
+static RuleEntry *userRules = nullptr;
+static int numUserRules = 0;
+static int maxUserRules = 0;
+
+// Register a user-defined rule (called from std library)
+extern "C" void register_rule(uint8_t typeA, uint8_t typeB, uint32_t labelHash, void *handler) {
+  if (numUserRules >= maxUserRules) return;
+  userRules[numUserRules++] = {makeRuleKey(typeA, typeB, labelHash), handler};
+}
+
+// Lookup rule handler - O(n) linear scan (optimize to hash table later)
+static void *lookupRule(uint8_t typeA, uint8_t typeB, uint32_t labelHash) {
+  uint32_t key = makeRuleKey(typeA, typeB, labelHash);
+  // First check user-defined rules (higher priority)
+  for (int i = 0; i < numUserRules; i++) {
+    if (userRules[i].key == key) return userRules[i].handler;
+  }
+  // Then check default rules
+  for (int i = 0; i < NUM_DEFAULT_RULES; i++) {
+    uint32_t defKey = defaultRules[i].key;
+    // Match: exact (typeA,typeB,label) or wildcard (label=0)
+    if (defKey == key || (defKey & 0xFFFF0000) == (key & 0xFFFF0000)) {
+      return defaultRules[i].handler;
+    }
+  }
+  return nullptr; // No rule found - fall back to commutation
+}
+
 struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PicGraphToReducePass)
 
