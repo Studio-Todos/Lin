@@ -512,7 +512,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             return builder.create<LLVM::LoadOp>(module.getLoc(), i32Type, gep);
         };
 
-        Value nodeAPtr = getNodePtr(nodeA_i32);
+Value nodeAPtr = getNodePtr(nodeA_i32);
         Value nodeBPtr = getNodePtr(nodeB_i32);
 
         Value typeA = readPort(nodeAPtr, 0);
@@ -797,7 +797,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         Value wAllocPtr = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i32Type, netPtr, ValueRange{allocOffset});
 
         Value zero64 = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i64Type, builder.getI64IntegerAttr(0));
-        builder.create<LLVM::StoreOp>(funcOp.getLoc(), zero64, wHeadPtr);
+        builder.create<LLVM::StoreOp>(funcOp.getLoc(), zero64, wHeadPtr);  // head=0: read first slot
         // wTailPtr is committed after initial pair detection below
         builder.create<LLVM::StoreOp>(funcOp.getLoc(), allocCount, wAllocPtr);
 
@@ -855,7 +855,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             storeArg(3, wTailPtr);
             storeArg(4, wAllocPtr);
 
-            Value numThreads = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(4));
+            Value numThreads = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1));  // Single thread for debugging
             Value threadSize = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(8));
             Value totalThreadSize = builder.create<LLVM::MulOp>(funcOp.getLoc(), numThreads, threadSize);
             auto threadMalloc = builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{ptrType}, "malloc", ValueRange{totalThreadSize});
@@ -863,10 +863,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
             auto voidType = LLVM::LLVMVoidType::get(builder.getContext());
 
-            // Instead of doing actual loops that break CFG, for MVP let's just emit simple flat calls to demonstrate.
-            // 4x pthread_create
-            // 4x pthread_join
-
+            // Single-threaded reduction for debugging
             auto emitThread = [&](int tid) {
                 Value threadIdx = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(tid));
                 Value threadGep = builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrType, i64Type, threadArray, ValueRange{threadIdx});
@@ -885,14 +882,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             };
 
             emitThread(0);
-            emitThread(1);
-            emitThread(2);
-            emitThread(3);
-
             emitJoin(0);
-            emitJoin(1);
-            emitJoin(2);
-            emitJoin(3);
 
             builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{}, "free", ValueRange{threadArray});
             builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{}, "free", ValueRange{argArray});
