@@ -770,57 +770,56 @@ Value nodeAPtr = getNodePtr(nodeA_i32);
 
         // Generate the graph initialization instructions inline
         // Walk pic.graph.AgentOps inline (PicGraphToReducePass ops are not in funcOp's region)
-        // First walk: count total nodes
-        int totalNodes = 0;
-        funcOp.walk([&](pic::graph::AgentOp) { totalNodes++; });
 
-        // Second walk: generate allocation using known count
-        for (int i = 1; i <= totalNodes; i++) {
-            // Find the i-th AgentOp
-            int currIdx = 0;
-            funcOp.walk([&](pic::graph::AgentOp agentOp) {
-                currIdx++;
-                if (currIdx != i) return;
+        // First walk: collect all AgentOps in order
+        SmallVector<pic::graph::AgentOp> agents;
+        funcOp.walk([&](pic::graph::AgentOp op) {
+            agents.push_back(op);
+        });
 
-                Location loc = agentOp.getLoc();
-                StringRef agentType = agentOp.getAgentType();
-                StringRef label = agentOp.getLabel();
-                uint8_t nodeTypeEnum = 0;
-                if (agentType == "gamma") nodeTypeEnum = 1;
-                else if (agentType == "delta") nodeTypeEnum = 2;
-                else if (agentType == "omega") {
-                    if (label == "num" || label == "f32" || label == "f64") nodeTypeEnum = 3;
-                    else nodeTypeEnum = 4;
-                }
+        // Generate node allocation for each agent
+        for (int i = 0; i < agents.size(); i++) {
+            pic::graph::AgentOp agentOp = agents[i];
+            int nodeIdx = i + 1; // 1-indexed
 
-                uint32_t valOrOpCode = 0;
-                if (nodeTypeEnum == 3 && agentOp.getValue()) {
-                    valOrOpCode = static_cast<uint32_t>(*agentOp.getValue());
-                }
+            Location loc = agentOp.getLoc();
+            StringRef agentType = agentOp.getAgentType();
+            StringRef label = agentOp.getLabel();
 
-                // Worker uses: nodeIdx << 2 for word offset, then i32 indexing
-                // Byte offset = idx * 4 words * 4 bytes = idx * 16
-                Value idxVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(i));
-                Value four = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(4));
-                Value wordOffset = builder.create<LLVM::ShlOp>(loc, idxVal, four); // idx * 4
-                Value nodeOffset = builder.create<LLVM::MulOp>(loc, wordOffset, four); // idx * 16 (byte offset)
+            uint8_t nodeTypeEnum = 0;
+            if (agentType == "gamma") nodeTypeEnum = 1;
+            else if (agentType == "delta") nodeTypeEnum = 2;
+            else if (agentType == "omega") {
+                if (label == "num" || label == "f32" || label == "f64") nodeTypeEnum = 3;
+                else nodeTypeEnum = 4;
+            }
 
-                Value mdGEP = builder.create<LLVM::GEPOp>(loc, ptrType, i32Type, netPtr, ValueRange{nodeOffset});
-                Value typeVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(nodeTypeEnum));
-                builder.create<LLVM::StoreOp>(loc, typeVal, mdGEP);
+            uint32_t valOrOpCode = 0;
+            if (nodeTypeEnum == 3 && agentOp.getValue()) {
+                valOrOpCode = static_cast<uint32_t>(*agentOp.getValue());
+            }
 
-                if (nodeTypeEnum == 3 && valOrOpCode != 0) {
-                    Value fourVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(4));
-                    Value valOffset = builder.create<LLVM::AddOp>(loc, nodeOffset, fourVal);
-                    Value valGEP = builder.create<LLVM::GEPOp>(loc, ptrType, i32Type, netPtr, ValueRange{valOffset});
-                    Value valVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(static_cast<int32_t>(valOrOpCode)));
-                    builder.create<LLVM::StoreOp>(loc, valVal, valGEP);
-                }
-            });
+            // Match worker: word offset = nodeIdx << 2
+            Value idxVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(nodeIdx));
+            Value two = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(2));
+            Value wordOffset = builder.create<LLVM::ShlOp>(loc, idxVal, two);
+
+            Value mdGEP = builder.create<LLVM::GEPOp>(loc, ptrType, i32Type, netPtr, ValueRange{wordOffset});
+            Value typeVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(nodeTypeEnum));
+            builder.create<LLVM::StoreOp>(loc, typeVal, mdGEP);
+
+            if (nodeTypeEnum == 3 && valOrOpCode != 0) {
+                // Value at next word
+                Value oneVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(1));
+                Value valOffset = builder.create<LLVM::AddOp>(loc, wordOffset, oneVal);
+                Value valGEP = builder.create<LLVM::GEPOp>(loc, ptrType, i32Type, netPtr, ValueRange{valOffset});
+                Value valVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(static_cast<int32_t>(valOrOpCode)));
+                builder.create<LLVM::StoreOp>(loc, valVal, valGEP);
+            }
         }
 
         // Use exact count for wAllocPtr
-        Value allocCount = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(totalNodes));
+        Value allocCount = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(agents.size()));
 
         builder.setInsertionPointToEnd(entryBlock);
 
