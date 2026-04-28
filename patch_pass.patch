@@ -1,0 +1,74 @@
+--- lib/dialect/LoweringPasses.cpp
++++ lib/dialect/LoweringPasses.cpp
+@@ -406,8 +406,9 @@
+   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PicRuntimeToLLVMPass)
+
+   bool enableGPU;
+-  PicRuntimeToLLVMPass(bool enableGPU) : enableGPU(enableGPU) {}
++  bool enableWasm;
++  PicRuntimeToLLVMPass(bool enableGPU, bool enableWasm) : enableGPU(enableGPU), enableWasm(enableWasm) {}
+
+   void runOnOperation() override {
+     ModuleOp module = getOperation();
+     OpBuilder builder(module.getContext());
+@@ -442,12 +443,14 @@
+     auto voidPtrType = LLVM::LLVMPointerType::get(builder.getContext());
+     auto ptrArrayType = LLVM::LLVMPointerType::get(builder.getContext());
+
+-    auto pthreadCreateType = LLVM::LLVMFunctionType::get(i32Type, {voidPtrType, voidPtrType, voidPtrType, voidPtrType});
+-    builder.create<LLVM::LLVMFuncOp>(module.getLoc(), "pthread_create", pthreadCreateType);
+-
+-    auto pthreadJoinType = LLVM::LLVMFunctionType::get(i32Type, {i64Type, voidPtrType});
+-    builder.create<LLVM::LLVMFuncOp>(module.getLoc(), "pthread_join", pthreadJoinType);
+-
+-    if (!enableGPU) {
++    if (!enableWasm) {
++        auto pthreadCreateType = LLVM::LLVMFunctionType::get(i32Type, {voidPtrType, voidPtrType, voidPtrType, voidPtrType});
++        builder.create<LLVM::LLVMFuncOp>(module.getLoc(), "pthread_create", pthreadCreateType);
++
++        auto pthreadJoinType = LLVM::LLVMFunctionType::get(i32Type, {i64Type, voidPtrType});
++        builder.create<LLVM::LLVMFuncOp>(module.getLoc(), "pthread_join", pthreadJoinType);
++    }
++
++    if (!enableGPU) {
+         // --- Build worker_thread exactly once for CPU ---
+         auto workerType = LLVM::LLVMFunctionType::get(voidPtrType, {voidPtrType});
+         auto workerFunc = builder.create<LLVM::LLVMFuncOp>(module.getLoc(), "worker_thread", workerType);
+@@ -837,7 +840,7 @@
+             builder.create<LLVM::StoreOp>(funcOp.getLoc(), tailVal, wTailPtr);
+         }
+
+-        bool emitCPU = !enableGPU;
++        bool emitCPU = !enableGPU && !enableWasm;
+         if (emitCPU) {
+             // Allocate worker args array (5 void pointers: netPtr, queuePtr, headPtr, tailPtr, allocPtr)
+             Value argArraySize = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(5 * 8));
+@@ -886,6 +889,19 @@
+
+             builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{}, "free", ValueRange{threadArray});
+             builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{}, "free", ValueRange{argArray});
++        } else if (enableWasm) {
++            Value argArraySize = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(5 * 8));
++            auto argMalloc = builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{ptrType}, "malloc", ValueRange{argArraySize});
++            Value argArray = argMalloc.getResult();
++
++            builder.create<LLVM::StoreOp>(funcOp.getLoc(), netPtr, builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrArrayType, ptrType, argArray, ValueRange{builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0))}));
++            builder.create<LLVM::StoreOp>(funcOp.getLoc(), wQueuePtr, builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrArrayType, ptrType, argArray, ValueRange{builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1))}));
++            builder.create<LLVM::StoreOp>(funcOp.getLoc(), wHeadPtr, builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrArrayType, ptrType, argArray, ValueRange{builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(2))}));
++            builder.create<LLVM::StoreOp>(funcOp.getLoc(), wTailPtr, builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrArrayType, ptrType, argArray, ValueRange{builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(3))}));
++            builder.create<LLVM::StoreOp>(funcOp.getLoc(), wAllocPtr, builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrArrayType, ptrType, argArray, ValueRange{builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(4))}));
++
++            builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{voidPtrType}, "worker_thread", ValueRange{argArray});
++            builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{}, "free", ValueRange{argArray});
+         }
+
+         if (enableGPU) {
+@@ -1360,6 +1376,6 @@
+   return std::make_unique<PicReduceToRuntimePass>();
+ }
+
+-std::unique_ptr<Pass> createPicRuntimeToLLVMPass(bool enableGPU) {
+-  return std::make_unique<PicRuntimeToLLVMPass>(enableGPU);
++std::unique_ptr<Pass> createPicRuntimeToLLVMPass(bool enableGPU, bool enableWasm) {
++  return std::make_unique<PicRuntimeToLLVMPass>(enableGPU, enableWasm);
+ }

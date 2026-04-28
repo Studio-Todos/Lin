@@ -1,0 +1,10 @@
+--- include/lin/LoweringPasses.h
++++ include/lin/LoweringPasses.h
+@@ -5,6 +5,6 @@
+
+ std::unique_ptr<mlir::Pass> createPicGraphToReducePass();
+ std::unique_ptr<mlir::Pass> createPicReduceToRuntimePass();
+-std::unique_ptr<mlir::Pass> createPicRuntimeToLLVMPass(bool enableGPU);
++std::unique_ptr<mlir::Pass> createPicRuntimeToLLVMPass(bool enableGPU, bool enableWasm = false);
+
+ #endif // LINALANG_LOWERING_PASSES_H

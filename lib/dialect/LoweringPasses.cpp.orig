@@ -289,11 +289,11 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     module.walk([&](func::FuncOp func) {
       StringRef symName = func.getSymName();
       if (symName != "main_inet_entry") return;
-      
+
       func.walk([&](Block *block) {
         // Collect agents by label for annihilation detection
         std::map<std::string, std::vector<Operation*>> agentsByLabel;
-        
+
         for (auto &op : block->getOperations()) {
           if (op.getName().getStringRef() == "pic_graph.agent") {
             auto labelAttr = op.getAttrOfType<StringAttr>("label");
@@ -337,7 +337,7 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
           for (auto *op : agentList) {
             auto typeAttr = op->getAttrOfType<StringAttr>("agentType");
             auto labelAttr = op->getAttrOfType<StringAttr>("label");
-            if (typeAttr && typeAttr.getValue() == "delta" && 
+            if (typeAttr && typeAttr.getValue() == "delta" &&
                 labelAttr && labelAttr.getValue() == "dup") {
               builder.create<DuplicateOp>(op->getLoc());
             }
@@ -364,7 +364,7 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
             }
           }
         }
-        
+
         // A4: Boundary handling - B1, B2, B3
         // Walk for boundary ops with regions
         std::map<uint32_t, Operation*> boundariesById;
@@ -385,7 +385,7 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
             boundariesById[bid] = &op;
           }
         }
-        
+
         // B2: Merge boundaries that meet
         std::vector<uint32_t> boundaryIds;
         for (auto &[bid, op] : boundariesById) {
@@ -395,7 +395,7 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
         if (boundaryIds.size() >= 2) {
           builder.create<MergeBoundaryOp>(builder.getUnknownLoc());
         }
-        
+
         // B3: boundary collapse - when single normal form, handled by E-graph hashing
         // (deferred to runtime convergence check)
       });
@@ -533,7 +533,7 @@ Value nodeAPtr = getNodePtr(nodeA_i32);
         Value isEpsilonA = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeA, NODE_ERA);
         Value isEpsilonB = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeB, NODE_ERA);
         Value isEpsilonPair = builder.create<LLVM::AndOp>(module.getLoc(), builder.getI1Type(), isEpsilonA, isEpsilonB);
-        
+
         Value typesMatch = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, typeA, typeB);
         // NOT isEpsilonPair using select: if isEpsilonPair then false else true
         Value trueVal = builder.create<LLVM::ConstantOp>(module.getLoc(), builder.getI1Type(), builder.getBoolAttr(true));
@@ -840,7 +840,7 @@ Value nodeAPtr = getNodePtr(nodeA_i32);
             builder.create<LLVM::StoreOp>(funcOp.getLoc(), tailVal, wTailPtr);
         }
 
-        bool emitCPU = !enableGPU && !enableWasm;
+        bool emitCPU = !enableGPU;
         if (emitCPU) {
             // Allocate worker args array (5 void pointers: netPtr, queuePtr, headPtr, tailPtr, allocPtr)
             Value argArraySize = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(5 * 8));
@@ -888,19 +888,6 @@ Value nodeAPtr = getNodePtr(nodeA_i32);
             emitJoin(0);
 
             builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{}, "free", ValueRange{threadArray});
-            builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{}, "free", ValueRange{argArray});
-        } else if (enableWasm) {
-            Value argArraySize = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(5 * 8));
-            auto argMalloc = builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{ptrType}, "malloc", ValueRange{argArraySize});
-            Value argArray = argMalloc.getResult();
-
-            builder.create<LLVM::StoreOp>(funcOp.getLoc(), netPtr, builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrArrayType, ptrType, argArray, ValueRange{builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0))}));
-            builder.create<LLVM::StoreOp>(funcOp.getLoc(), wQueuePtr, builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrArrayType, ptrType, argArray, ValueRange{builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1))}));
-            builder.create<LLVM::StoreOp>(funcOp.getLoc(), wHeadPtr, builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrArrayType, ptrType, argArray, ValueRange{builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(2))}));
-            builder.create<LLVM::StoreOp>(funcOp.getLoc(), wTailPtr, builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrArrayType, ptrType, argArray, ValueRange{builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(3))}));
-            builder.create<LLVM::StoreOp>(funcOp.getLoc(), wAllocPtr, builder.create<LLVM::GEPOp>(funcOp.getLoc(), ptrArrayType, ptrType, argArray, ValueRange{builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(4))}));
-
-            builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{voidPtrType}, "worker_thread", ValueRange{argArray});
             builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{}, "free", ValueRange{argArray});
         }
 
@@ -960,7 +947,7 @@ Value nodeAPtr = getNodePtr(nodeA_i32);
 
                 // Check if globalId < numPairs
                 Value inBoundsI1 = gpuBuilder.create<arith::CmpIOp>(module.getLoc(), arith::CmpIPredicate::slt, globalId, numPairsArg);
-                
+
                 auto ifOp = gpuBuilder.create<scf::IfOp>(module.getLoc(), inBoundsI1, false);
                 gpuBuilder.setInsertionPoint(ifOp.getThenRegion().front().getTerminator());
 
@@ -1327,7 +1314,7 @@ Value nodeAPtr = getNodePtr(nodeA_i32);
 
             SmallVector<Value> dispatchArgs = {netPtr, wQueuePtr, numPairsI32};
             builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{}, "pic_gpu_dispatch", dispatchArgs);
-            
+
             Value zero = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0));
             builder.create<LLVM::ReturnOp>(funcOp.getLoc(), ValueRange{zero});
         } else {
@@ -1362,6 +1349,6 @@ std::unique_ptr<Pass> createPicReduceToRuntimePass() {
   return std::make_unique<PicReduceToRuntimePass>();
 }
 
-std::unique_ptr<Pass> createPicRuntimeToLLVMPass(bool enableGPU, bool enableWasm) {
-  return std::make_unique<PicRuntimeToLLVMPass>(enableGPU, enableWasm);
+std::unique_ptr<Pass> createPicRuntimeToLLVMPass(bool enableGPU) {
+  return std::make_unique<PicRuntimeToLLVMPass>(enableGPU);
 }
