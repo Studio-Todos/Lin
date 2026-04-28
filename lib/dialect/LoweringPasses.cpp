@@ -855,7 +855,7 @@ Value nodeAPtr = getNodePtr(nodeA_i32);
             storeArg(3, wTailPtr);
             storeArg(4, wAllocPtr);
 
-            Value numThreads = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1));  // Single thread for debugging
+            Value numThreads = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1));  // Single-threaded for stability
             Value threadSize = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(8));
             Value totalThreadSize = builder.create<LLVM::MulOp>(funcOp.getLoc(), numThreads, threadSize);
             auto threadMalloc = builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{ptrType}, "malloc", ValueRange{totalThreadSize});
@@ -1277,14 +1277,12 @@ Value nodeAPtr = getNodePtr(nodeA_i32);
                 caseOperands.push_back(ValueRange{});
             }
 
-            // create a default block since entryBlock cannot be jumped to
+            // Create default block (empty for now, will add return after switch)
             Block *defaultBlock = llvmFunc.addBlock();
-            builder.setInsertionPointToStart(defaultBlock);
-            builder.create<LLVM::ReturnOp>(funcOp.getLoc(), ValueRange{builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0)).getResult()});
 
+            // FIRST: Add switch dispatch to entryBlock
             builder.setInsertionPointToEnd(entryBlock);
 
-            // To actually dispatch based on opcode from the graph array instead of returning dummy 1:
             // Load the opcode directly from net[allocCount+0]. The port represents the active pair's operator ID.
             Value zeroOffset = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0));
             Value opcodeOffset = builder.create<LLVM::AddOp>(funcOp.getLoc(), allocCount, zeroOffset);
@@ -1292,6 +1290,10 @@ Value nodeAPtr = getNodePtr(nodeA_i32);
             Value opcodeVal = builder.create<LLVM::LoadOp>(funcOp.getLoc(), i32Type, opcodeGEP);
 
             builder.create<LLVM::SwitchOp>(funcOp.getLoc(), opcodeVal, defaultBlock, ValueRange{}, caseValues, caseDestinations, caseOperands);
+
+            // THEN: Add return to default block (after switch is set up)
+            builder.setInsertionPointToStart(defaultBlock);
+            builder.create<LLVM::ReturnOp>(funcOp.getLoc(), ValueRange{builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(0)).getResult()});
         } else if (enableGPU) {
             builder.setInsertionPointToEnd(entryBlock);
             auto voidType = LLVM::LLVMVoidType::get(builder.getContext());
