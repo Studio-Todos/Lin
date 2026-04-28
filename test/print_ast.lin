@@ -1,0 +1,42 @@
+// RUN: %print_ast_test | FileCheck %s
+
+// CHECK: --- Simple Types ---
+// CHECK: Block
+// CHECK-NEXT:   Number(42)
+// CHECK-NEXT:   Float(3.140000)
+// CHECK-NEXT:   String(hello)
+// CHECK-NEXT:   Bool(true)
+// CHECK-NEXT:   Ident(my-var)
+
+// CHECK: --- Complex Types ---
+// CHECK: Block
+// CHECK-NEXT:   Assignment(x)
+// CHECK-NEXT:     Number(10)
+// CHECK-NEXT:   Call(print)
+// CHECK-NEXT:     Ident(x)
+// CHECK-NEXT:   While
+// CHECK-NEXT:     Bool(true)
+// CHECK-NEXT:     Block
+// CHECK-NEXT:       Call(nop)
+// CHECK-NEXT:   Call(either)
+// CHECK-NEXT:     Bool(true)
+// CHECK-NEXT:     Pair
+// CHECK-NEXT:       Block
+// CHECK-NEXT:         Number(1)
+// CHECK-NEXT:       Block
+// CHECK-NEXT:         Number(2)
+// CHECK-NEXT:   FuncDecl(f, args: [a])
+// CHECK-NEXT:     Block
+// CHECK-NEXT:       Ident(a)
+// CHECK-NEXT:   Import(std/math.lin)
+// CHECK-NEXT:   MlirOp(my-op)
+
+// CHECK: --- Binary Type (Manual) ---
+// CHECK: Binary(20)
+// CHECK-NEXT:   Number(1)
+// CHECK-NEXT:   Number(2)
+
+// CHECK: --- Field Access ---
+// CHECK: Block
+// CHECK-NEXT:   FieldAccess(.0)
+// CHECK-NEXT:     Ident(obj)
