@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/lin.svg" alt="Lin logo" width="300" />
+</p>
+
 # Lin Programming Language
 
 Welcome to the documentation for **Lin**, which serves as a general-purpose, heterogeneous programming language. Lin is a multi-paradigm, statically typed language built on top of Polarized Interaction Combinators (PIC) to achieve massively parallel, optimal evaluation.
@@ -47,3 +51,7 @@ fib: func [
     ]
 ]
 ```
+
+## Examples
+
+* **[Wellspring](https://github.com/Studio-Todos/Wellspring)**: An example project using Lin.
