@@ -1,0 +1,5 @@
+import "std/types.lin"
+
+identity: func [x [i32!] return: [i32!]] [x]
+
+(print (identity 42))
