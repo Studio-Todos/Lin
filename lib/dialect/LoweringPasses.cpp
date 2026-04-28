@@ -886,10 +886,6 @@ Value nodeAPtr = getNodePtr(nodeA_i32);
 
             builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{}, "free", ValueRange{threadArray});
             builder.create<LLVM::CallOp>(funcOp.getLoc(), TypeRange{}, "free", ValueRange{argArray});
-            
-            // Return 42 for testing (interaction net not fully wired yet)
-            Value result42 = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(42));
-            builder.create<LLVM::ReturnOp>(funcOp.getLoc(), ValueRange{result42});
         }
 
         if (enableGPU) {
