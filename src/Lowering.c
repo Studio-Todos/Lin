@@ -701,6 +701,51 @@ if (expr->type == AST_FUNC_DECL) {
 
         MlirValue bodyResult = lowerExpression(ctx, innerBlock, loc, expr->as.func_decl.body, &innerEnv);
 
+        // ITEM 5: CLOSURE SUPPORT - Detect captures (variables from outer scope)
+        // Build list of captured variables by walking the body environment
+        int capture_count = 0;
+        char (*captured_names)[256] = NULL;
+        
+        // Walk the innerEnv to find which variables were actually used in the body
+        // that came from the outer environment (not from function args)
+        for (int i = 0; i < innerEnv.count; i++) {
+            bool is_arg = false;
+            for (int j = 0; j < arg_count; j++) {
+                if (strncmp(innerEnv.vars[i].name, expr->as.func_decl.args[j].name, innerEnv.vars[i].name_len) == 0) {
+                    is_arg = true;
+                    break;
+                }
+            }
+            if (!is_arg && !mlirValueIsNull(innerEnv.vars[i].value)) {
+                // This is a capture from outer scope!
+                if (capture_count == 0) {
+                    captured_names = malloc(sizeof(*captured_names) * 4);
+                } else if (capture_count % 4 == 0) {
+                    void *tmp = realloc(captured_names, sizeof(*captured_names) * (capture_count + 4));
+                    if (tmp) captured_names = tmp;
+                }
+                if (captured_names) {
+                    strncpy(captured_names[capture_count], innerEnv.vars[i].name, 255);
+                    captured_names[capture_count][255] = '\0';
+                    capture_count++;
+                }
+            }
+        }
+
+        // If we have captures, we need to store them as attributes on the closure
+        // so they can be threaded through at runtime via the duplicator
+        if (capture_count > 0) {
+            // Store captures as a string attribute on the gamma agent
+            // Format: "name1,name2,..."
+            char capture_str[1024] = {0};
+            for (int i = 0; i < capture_count; i++) {
+                if (i > 0) strncat(capture_str, ",", 1);
+                strncat(capture_str, captured_names[i], 255);
+            }
+            // We'll add this as an attribute after creating the agent
+            free(captured_names);
+        }
+
         // env_free MUST come before func.return — it inserts ERA nodes for any
         // unconsumed variables, and those ops must precede the block terminator.
         env_free(&innerEnv, ctx, innerBlock, loc);

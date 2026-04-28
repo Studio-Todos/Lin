@@ -1,0 +1,8 @@
+import "std/types.lin"
+
+outer: func [captured [i32!]] [
+    inner: func [x [i32!]] [x + captured]
+    inner
+]
+
+((outer 5) 10)
