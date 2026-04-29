@@ -225,8 +225,13 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
       DenseMap<Value, int32_t> p0ToNodeIdx;
       int32_t nodeCounter = 1;
 
+      // Map ALL ports (p0, p1, p2) to node indices
+      // Any link between two agents creates an initial redex pair
+      DenseMap<Value, int32_t> portToNodeIdx;
       funcOp.walk([&](pic::graph::AgentOp op) {
-        p0ToNodeIdx[op.getP0()] = nodeCounter;
+        portToNodeIdx[op.getP0()] = nodeCounter;
+        portToNodeIdx[op.getP1()] = nodeCounter;
+        portToNodeIdx[op.getP2()] = nodeCounter;
         nodeCounter++;
       });
 
@@ -234,10 +239,10 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
       SmallVector<int32_t> initialPairFlat; // [nodeA, nodeB, nodeA, nodeB, ...]
 
       funcOp.walk([&](pic::graph::LinkOp op) {
-        // Detect p0↔p0: both raw values must be keys in p0ToNodeIdx
-        auto itA = p0ToNodeIdx.find(op.getA());
-        auto itB = p0ToNodeIdx.find(op.getB());
-        if (itA != p0ToNodeIdx.end() && itB != p0ToNodeIdx.end()) {
+        // Detect any link between two agents: check both ports in portToNodeIdx
+        auto itA = portToNodeIdx.find(op.getA());
+        auto itB = portToNodeIdx.find(op.getB());
+        if (itA != portToNodeIdx.end() && itB != portToNodeIdx.end()) {
             initialPairFlat.push_back(itA->second);
             initialPairFlat.push_back(itB->second);
         }
@@ -428,6 +433,9 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
     auto printfType = LLVM::LLVMFunctionType::get(i32Type, {ptrType}, true);
     builder.create<LLVM::LLVMFuncOp>(module.getLoc(), "printf", printfType);
+
+    auto putsType = LLVM::LLVMFunctionType::get(i32Type, {ptrType});
+    builder.create<LLVM::LLVMFuncOp>(module.getLoc(), "puts", putsType);
 
     auto putcharType = LLVM::LLVMFunctionType::get(i32Type, {i32Type});
     builder.create<LLVM::LLVMFuncOp>(module.getLoc(), "putchar", putcharType);
@@ -764,24 +772,57 @@ Value nodeAPtr = getNodePtr(nodeA_i32);
         Value netPtr = netMalloc.getResult();
 
         // Generate the graph initialization instructions inline
-        Value allocCount = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(1)); // Start at node 1
+        // Walk pic.graph.AgentOps inline (PicGraphToReducePass ops are not in funcOp's region)
 
-        funcOp.walk([&](pic::runtime::AllocNodeOp allocOp) {
-            Location loc = allocOp.getLoc();
+        // First walk: collect all AgentOps in order
+        SmallVector<pic::graph::AgentOp> agents;
+        funcOp.walk([&](pic::graph::AgentOp op) {
+            agents.push_back(op);
+        });
 
-            Value typeVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(allocOp.getType()));
+        // Generate node allocation for each agent
+        for (int i = 0; i < agents.size(); i++) {
+            pic::graph::AgentOp agentOp = agents[i];
+            int nodeIdx = i + 1; // 1-indexed
 
-            // Calculate pointer to node metadata (netPtr + allocCount * 4 * 4)
-            Value four = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(4));
-            Value nodeOffset = builder.create<LLVM::MulOp>(loc, allocCount, four);
-            Value mdGEP = builder.create<LLVM::GEPOp>(loc, ptrType, i32Type, netPtr, ValueRange{nodeOffset});
+            Location loc = agentOp.getLoc();
+            StringRef agentType = agentOp.getAgentType();
+            StringRef label = agentOp.getLabel();
 
+            uint8_t nodeTypeEnum = 0;
+            if (agentType == "gamma") nodeTypeEnum = 1;
+            else if (agentType == "delta") nodeTypeEnum = 2;
+            else if (agentType == "omega") {
+                if (label == "num" || label == "f32" || label == "f64") nodeTypeEnum = 3;
+                else nodeTypeEnum = 4;
+            }
+
+            uint32_t valOrOpCode = 0;
+            if (nodeTypeEnum == 3 && agentOp.getValue()) {
+                valOrOpCode = static_cast<uint32_t>(*agentOp.getValue());
+            }
+
+            // Match worker: word offset = nodeIdx << 2
+            Value idxVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(nodeIdx));
+            Value two = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(2));
+            Value wordOffset = builder.create<LLVM::ShlOp>(loc, idxVal, two);
+
+            Value mdGEP = builder.create<LLVM::GEPOp>(loc, ptrType, i32Type, netPtr, ValueRange{wordOffset});
+            Value typeVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(nodeTypeEnum));
             builder.create<LLVM::StoreOp>(loc, typeVal, mdGEP);
 
-            // Increment node counter
-            Value one = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(1));
-            allocCount = builder.create<LLVM::AddOp>(loc, allocCount, one);
-        });
+            if (nodeTypeEnum == 3 && valOrOpCode != 0) {
+                // Value at next word
+                Value oneVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(1));
+                Value valOffset = builder.create<LLVM::AddOp>(loc, wordOffset, oneVal);
+                Value valGEP = builder.create<LLVM::GEPOp>(loc, ptrType, i32Type, netPtr, ValueRange{valOffset});
+                Value valVal = builder.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(static_cast<int32_t>(valOrOpCode)));
+                builder.create<LLVM::StoreOp>(loc, valVal, valGEP);
+            }
+        }
+
+        // Use exact count for wAllocPtr
+        Value allocCount = builder.create<LLVM::ConstantOp>(funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(agents.size()));
 
         builder.setInsertionPointToEnd(entryBlock);
 
