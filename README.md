@@ -23,6 +23,20 @@ Lin takes heavy inspiration from the Red/Rebol syntax family, [Daslang](https://
 
 ## Getting Started
 
+### Building
+
+Lin uses Nix for building. Run the following commands:
+
+```bash
+# Build the compiler
+nix build
+
+# Build and run tests
+nix build .#lin-tests
+```
+
+### Documentation
+
 Check out the detailed documentation based on your role:
 
 * **[User Guide](docs/Users.md):** Learn how to write Lin code, understand the syntax, and explore planned features like the stochastic accuracy system.
