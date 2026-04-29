@@ -434,6 +434,9 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
     auto printfType = LLVM::LLVMFunctionType::get(i32Type, {ptrType}, true);
     builder.create<LLVM::LLVMFuncOp>(module.getLoc(), "printf", printfType);
 
+    auto putsType = LLVM::LLVMFunctionType::get(i32Type, {ptrType});
+    builder.create<LLVM::LLVMFuncOp>(module.getLoc(), "puts", putsType);
+
     auto putcharType = LLVM::LLVMFunctionType::get(i32Type, {i32Type});
     builder.create<LLVM::LLVMFuncOp>(module.getLoc(), "putchar", putcharType);
 
