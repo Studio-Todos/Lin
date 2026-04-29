@@ -62,16 +62,81 @@
             '';
           };
         };
+      overlayTests = final: prev:
+        let
+          llvm = final.llvmPackages_18;
+          vulkan-loader = final.vulkan-loader;
+          vulkan-validation-layers = final.vulkan-validation-layers;
+        in
+        {
+          lin-tests = final.stdenv.mkDerivation {
+            pname = "lin-tests";
+            version = "0.1.0";
+
+            src = ./.;
+            allowUnpack = true;
+
+            outputs = [ "out" ];
+            doCheck = true;
+
+            nativeBuildInputs = [
+              llvm.llvm
+              llvm.bintools
+              llvm.clang
+              llvm.mlir
+              llvm.mlir.dev
+              final.cmake
+              final.ninja
+              final.python3
+              final.lit
+              final.gtest
+              final.spirv-tools
+              final.vulkan-headers
+              vulkan-loader
+              vulkan-validation-layers
+            ];
+
+            configurePhase = ''
+              export LLVM_DIR=${llvm.llvm.dev}
+              export MLIR_DIR=${llvm.mlir.dev}
+              export LD_LIBRARY_PATH="${vulkan-loader}/lib:${vulkan-validation-layers}/lib:$LD_LIBRARY_PATH"
+              export VK_LAYER_PATH="${vulkan-validation-layers}/share/vulkan/explicit_layer.d"
+
+              cmake -G Ninja -B build \
+                -DLLVM_DIR=$out/lib/cmake/llvm \
+                -DMLIR_DIR=$out/lib/cmake/mlir \
+                -DCMAKE_BUILD_TYPE=Release \
+                .
+            '';
+
+            buildPhase = ''
+              ninja -C build
+            '';
+
+            checkPhase = ''
+              ninja -C build check-linc
+            '';
+
+            installPhase = ''
+              mkdir -p $out
+              touch $out
+            '';
+          };
+        };
     in
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; overlays = [ overlay ]; };
+        pkgs = import nixpkgs { inherit system; overlays = [ overlay overlayTests ]; };
         llvm = pkgs.llvmPackages_18;
         vulkan-loader = pkgs.vulkan-loader;
         vulkan-validation-layers = pkgs.vulkan-validation-layers;
       in
       {
         packages.default = pkgs.lin;
+        packages.lin-tests = pkgs.lin-tests;
+        packages.lin = pkgs.lin;
+
+        checks.lin-tests = pkgs.lin-tests;
 
         devShells.default = pkgs.mkShell {
           buildInputs = [
