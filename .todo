@@ -149,3 +149,20 @@
         - Carry accuracy metadata through ω agent attributes
         - Lower to LLVM approx passes (PUMPKIN-style) for hardware hints
         - Part of std, not a language primitive
+
+[ ] 18. Test suite cleanup
+        - 22 failing tests due to environment issues (not code bugs)
+        - Tests need FileCheck tool (not available in nix develop sandbox)
+        - GPU tests need vulkan headers for linking (missing from dev shell)
+        - 8 tests unresolved (no RUN lines in source)
+        - Action items:
+          * Add FileCheck to nix develop or convert tests to simple run
+          * Add gcc to dev shell (partially done)
+          * Add vulkan headers for GPU linking in dev shell
+          * Or convert GPU tests to compile-only checks
+
+[ ] 19. Dev shell linking issues
+        - result/bin/linc has different libLLVM paths than build/src
+        - Linking works in nix develop but not outside
+        - build/src/linc fails with "execvp failed: No such file"
+        - Need consistent linking environment for lit test suite
