@@ -154,6 +154,7 @@
             pkgs.vulkan-headers
             vulkan-loader
             vulkan-validation-layers
+            pkgs.gcc
           ];
 
           shellHook = ''
@@ -161,6 +162,7 @@
             export MLIR_DIR=${llvm.mlir.dev}
             export LD_LIBRARY_PATH="${vulkan-loader}/lib:${vulkan-validation-layers}/lib:$LD_LIBRARY_PATH"
             export VK_LAYER_PATH="${vulkan-validation-layers}/share/vulkan/explicit_layer.d"
+            export PATH="${llvm.llvm}/bin:$PATH"
             echo "Lin Development Environment"
             echo "LLVM/MLIR Version: ${llvm.llvm.version}"
           '';
