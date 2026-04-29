@@ -1,0 +1,11 @@
+// RUN: %linc build %s -o %t
+// CHECK: Lowering pass successful. Generated LLVM IR:
+// CHECK: Successfully compiled and linked to
+
+// Tests: Functions calling other functions
+import "std/types.lin"
+
+double: func [x [i32!] return: [i32!]] [x + x]
+triple: func [x [i32!] return: [i32!]] [x + x + x]
+
+(triple (double 2))

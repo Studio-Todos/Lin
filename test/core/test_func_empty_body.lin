@@ -1,0 +1,10 @@
+// Tests: Empty function body returns implicit empty
+// RUN: %linc build %s -o %t
+// CHECK: Lowering pass successful. Generated LLVM IR:
+// CHECK: Successfully compiled and linked to
+
+import "std/types.lin"
+
+empty_func: func [return: [i32!]] []
+
+(empty_func)

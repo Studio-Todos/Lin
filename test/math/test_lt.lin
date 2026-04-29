@@ -1,0 +1,10 @@
+// RUN: %linc build %s -o %t
+// CHECK: Lowering pass successful. Generated LLVM IR:
+// CHECK: Successfully compiled and linked to
+
+// Tests: Comparison less than
+import "std/types.lin"
+
+lt: func [a [i32!] b [i32!] return: [i1!]] [a < b]
+
+(lt 3 5)

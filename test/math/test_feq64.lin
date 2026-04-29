@@ -1,0 +1,10 @@
+// RUN: %linc build %s -o %t
+// CHECK: Lowering pass successful. Generated LLVM IR:
+// CHECK: Successfully compiled and linked to
+
+// Tests: f64 equality
+import "std/types.lin"
+
+feq64: func [a [f64!] b [f64!] return: [i1!]] [a == b]
+
+(feq64 3.14 3.14)

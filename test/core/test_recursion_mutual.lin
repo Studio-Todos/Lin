@@ -1,0 +1,24 @@
+// Tests: Mutual recursion
+// RUN: %linc build %s -o %t
+// CHECK: Lowering pass successful. Generated LLVM IR:
+// CHECK: Successfully compiled and linked to
+
+import "std/types.lin"
+
+is_even: func [n [i32!] return: [i1!]] [
+    either n == 0 [
+        1
+    ][
+        (is_odd n - 1)
+    ]
+]
+
+is_odd: func [n [i32!] return: [i1!]] [
+    either n == 0 [
+        0
+    ][
+        (is_even n - 1)
+    ]
+]
+
+(is_even 4)
