@@ -1,0 +1,10 @@
+// Tests: Annihilation redex
+// RUN: %linc build %s -o %t
+// CHECK: Lowering pass successful. Generated LLVM IR:
+// CHECK: Successfully compiled and linked to
+
+import "std/types.lin"
+
+apply_id: func [f [i32!] return: [i32!]] [f]
+
+(apply_id 42)

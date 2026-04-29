@@ -1,0 +1,8 @@
+// RUN: %linc build %s -o %t
+// CHECK: Lowering pass successful. Generated LLVM IR:
+// CHECK: Successfully compiled and linked to
+
+// Tests: either with true condition
+import "std/types.lin"
+
+(either 1 [10] [20])

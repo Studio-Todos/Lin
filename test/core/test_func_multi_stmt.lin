@@ -1,0 +1,14 @@
+// Tests: Multiple statements in function body
+// RUN: %linc build %s -o %t
+// CHECK: Lowering pass successful. Generated LLVM IR:
+// CHECK: Successfully compiled and linked to
+
+import "std/types.lin"
+
+multi_stmt: func [a [i32!] b [i32!] return: [i32!]] [
+    x: a + b
+    y: a - b
+    x * y
+]
+
+(multi_stmt 10 3)

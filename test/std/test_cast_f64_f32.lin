@@ -1,0 +1,9 @@
+// Tests: f64 to f32 cast
+// RUN: %linc build %s -o %t
+// CHECK: Lowering pass successful. Generated LLVM IR:
+// CHECK: Successfully compiled and linked to
+
+import "std/types.lin"
+import "std/cast.lin"
+
+(f64-to-f32 3.14159265358979)

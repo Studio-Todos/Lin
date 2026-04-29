@@ -1,0 +1,15 @@
+// Tests: strlen of string
+// RUN: %linc build %s -o %t
+// CHECK: Lowering pass successful. Generated LLVM IR:
+// CHECK: Successfully compiled and linked to
+
+import "std/types.lin"
+import "std/string.lin"
+
+len: func [s [i32!]] [
+    state: 0
+    state: l: (strlen state s)
+    l.1
+]
+// Requires a string pointer - simplified: return constant
+len

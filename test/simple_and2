@@ -1,0 +1,21 @@
+import "std/math.lin"
+
+test_and: func [
+][
+    t1: (and 5 3)
+    t2: (or 5 3)
+    t3: (xor 5 3)
+    either (neq t1 1) [
+        1
+    ][
+        either (neq t2 7) [
+            2
+        ][
+            either (neq t3 6) [
+                3
+            ][
+                0
+            ]
+        ]
+    ]
+]
