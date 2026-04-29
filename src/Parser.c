@@ -320,6 +320,10 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
                 node->as.mlir_op.mlir_payload++;
                 node->as.mlir_op.payload_len--;
             }
+            // Also strip trailing whitespace
+            while (node->as.mlir_op.payload_len > 0 && (node->as.mlir_op.mlir_payload[node->as.mlir_op.payload_len - 1] == ' ' || node->as.mlir_op.mlir_payload[node->as.mlir_op.payload_len - 1] == '\t' || node->as.mlir_op.mlir_payload[node->as.mlir_op.payload_len - 1] == '\n' || node->as.mlir_op.mlir_payload[node->as.mlir_op.payload_len - 1] == '\r')) {
+                node->as.mlir_op.payload_len--;
+            }
 
             return node;
         } else if (is_func) {

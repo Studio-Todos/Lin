@@ -153,6 +153,10 @@ static int count_var_usage(AstNode *node, const char *name, int name_len) {
                count_var_usage(node->as.while_loop.body, name, name_len);
     }
 
+    if (node->type == AST_IMPORT || node->type == AST_FUNC_DECL || node->type == AST_MLIR_OP || node->type == AST_STRING) {
+        return 0;
+    }
+
     return 0;
 }
 
@@ -435,7 +439,11 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
     if (expr->type == AST_BLOCK) {
         MlirValue lastVal = {NULL};
         for (int i = 0; i < expr->as.block.count; i++) {
-            lastVal = lowerExpression(ctx, block, loc, expr->as.block.statements[i], env);
+            AstNode *stmt = expr->as.block.statements[i];
+            // Skip import and func_decl and mlir_op since they have no runtime code
+            if (!stmt) continue;
+            if (stmt->type == AST_IMPORT || stmt->type == AST_FUNC_DECL || stmt->type == AST_MLIR_OP) continue;
+            lastVal = lowerExpression(ctx, block, loc, stmt, env);
         }
 
         if (mlirValueIsNull(lastVal)) {
