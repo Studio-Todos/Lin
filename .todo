@@ -48,7 +48,7 @@
         - B2: merge_boundary op when boundaries meet
         - B3: collapse deferred to runtime E-graph hashing
 
-## 🔴 Tier 1 — Language Semantics (blocking for correct execution)
+## 🔴 Tier 1 — High-Level Syntax & Semantics (Wellspring Alignment)
 
 [x] 1. AST_PAIR lowering in lowerExpression
         - Emit a pair agent that holds two ports ✅
@@ -79,78 +79,107 @@
         - RUNTIME:  ω(+, f) ⋈ ω(-, f) → fires cloned MLIR payload for label f
         - Connects to A2: user-defined mlir-op rules register to the lookup table
 
+[ ] 5. Word-Call Parsing (Paren-less calls)
+        - Parser: Implement "word calls" where a function identifier is followed by args
+        - Ambiguity Fix: Use arity-based parsing (requires symbol table lookup during parse)
+        - Support mixed style: `(fib n - 1)` and `print "Hello"`
+
+[ ] 6. Path Access Support (`/` notation)
+        - Parser: Recognize `identifier/index` and `identifier/field`
+        - Lowering: Map `/N` (1-indexed) to `proj_N` agents in PIC graph
+        - Support nested paths: `engine/world/bodies/1`
+
+[ ] 7. Data Blocks vs. Code Blocks
+        - Parser: Distinguish between block as statement-list vs. block as data-literal
+        - Lowering: For data blocks, emit a linked structure of Pair agents in the graph
+        - Unblocks: `copy [pos vel force]` pattern in Wellspring
+
+[ ] 8. Module Headers & Metadata
+        - Parser: Recognize `Path/To/Module: module [ metadata ]` syntax
+        - Storage: Capture module name and property block for compiler visibility
+
+[ ] 9. Refined Assignment (Multi-assignment)
+        - Allow `a: 1 b: 2 c: 3` style packing on single lines
+        - Ensure interaction net linearity is preserved during multi-binding
+
+[ ] 10. Full Syntax Migration (Unified Style)
+        - Rewrite all `examples/*.lin` to use word-calls and paths
+        - Update `test/` suite to reflect the new notation (removes paren-bloat)
+        - Refactor `std/*.lin` library files to use the clean syntax
+        - Goal: Deprecate and remove the old "S-Expression" style where redundant
+
 ## 🟡 Tier 2 — Language Completeness
 
-[ ] 5. Closure / captured variable support
+[ ] 11. Closure / captured variable support
         - Thread outer-scope bindings into inner γ⁺ function agents via aux ports
         - Multi-use bindings → δ (duplicator) nodes for sharing
 
-[x] 6. Binary operators via std library
+[x] 12. Binary operators via std library
         - All 12 operators (+, -, *, /, <, >, <=, >=, ==, !=, &&, ||) work
         - Parsed in Parser.c and emitted as Call(op_name) AST nodes
         - Users import "std/math.lin" to use binary operations
         - No built-in operators — all defined in std/
 
-[ ] 7. Type checking / type-directed dispatch
+[ ] 13. Type checking / type-directed dispatch
         - AstFuncArg.type_name is parsed but never used — wire it up
         - Lightweight structural type check with source locations on mismatch
         - Drives ω label selection (e.g., llvm.add vs. llvm.fadd)
 
-[ ] 8. Multiple return values via pairs
+[ ] 14. Multiple return values via pairs
         - Depends on item 1 (AST_PAIR lowering)
         - Function return types as pairs; .0/.1 access compiles correctly
 
 ## 🟢 Tier 3 — Developer Experience
 
-[x] 9.  `linc run` command
+[x] 15. `linc run` command
         - Compile to binary and execute in one step: linc run file.lin -o /tmp/bin
         - Prints exit code and stdout; requires pre-built binary path
 
-[ ] 10. @gpu / @cpu per-function annotations
+[ ] 16. @gpu / @cpu per-function annotations
         - Parser: recognize @identifier before func/mlir-op declarations
         - Lowering: attach dispatch attr to γ⁺ / ω agents
         - pic.reduce → pic.runtime routing via annotation (no user pragma needed)
         - Goal: graph structure encodes parallelism; annotations only override
 
-[ ] 11. Human-readable error messages
+[ ] 17. Human-readable error messages
         - Source location (file:line:col) on all parse and lowering errors
         - Type mismatch messages instead of raw MLIR verifier output
 
-[ ] 12. Node GC / arena reset
+[ ] 18. Node GC / arena reset
         - Erasure propagation IS GC (Rule 3: parallel ε sweep)
         - Arena reset after reduction for long-running programs
         - GPU GC: thousands of ε nodes propagate simultaneously via gpu.launch
 
 ## 🔵 Architecture — Long-Term
 
-[ ] 13. Unified CPU/GPU reduction pipeline via pic.reduce
+[ ] 19. Unified CPU/GPU reduction pipeline via pic.reduce
         - Define link/annihilate/dup/erase/fire_op in scf+arith+memref dialect
         - Lower once to LLVM for CPU; once to gpu+spirv for GPU
         - Target: CPU (std LLVM), general GPU (Vulkan/SPIR-V), shader GPU (perf)
 
-[ ] 14. 128-bit node layout audit
+[ ] 20. 128-bit node layout audit
         - Current: int32_t[4] per node — correct size per spec ✅
         - Verify: polarity encoded in port value (atomic bit-field), not separate field
         - Lock-free redex detection via single atomic CAS on principal port
 
-[ ] 15. E-graph congruence (Rule 4)
+[ ] 21. E-graph congruence (Rule 4)
         - Inside boundaries: hash normal forms, merge identical subgraphs
         - Fires continuously during reduction (not a post-pass)
         - GPU: congruence hashing as a parallel reduce kernel
         - Requires boundary lowering (A4)
 
-[ ] 16. Hot code reloading
+[ ] 22. Hot code reloading
         - Recompile a function's interaction net graph at runtime
         - Swap γ⁺ agent's aux wire to new body graph atomically
         - Requires stable node indexing and generational GC (item 12)
 
-[ ] 17. Approximate / stochastic accuracy system
+[ ] 23. Approximate / stochastic accuracy system
         - add-noise/accuracy 0.95 [img kernel] syntax
         - Carry accuracy metadata through ω agent attributes
         - Lower to LLVM approx passes (PUMPKIN-style) for hardware hints
         - Part of std, not a language primitive
 
-[ ] 18. Test suite cleanup
+[ ] 24. Test suite cleanup
         - 22 failing tests due to environment issues (not code bugs)
         - Tests need FileCheck tool (not available in nix develop sandbox)
         - GPU tests need vulkan headers for linking (missing from dev shell)
@@ -161,7 +190,7 @@
           * Add vulkan headers for GPU linking in dev shell
           * Or convert GPU tests to compile-only checks
 
-[ ] 19. Dev shell linking issues
+[ ] 25. Dev shell linking issues
         - result/bin/linc has different libLLVM paths than build/src
         - Linking works in nix develop but not outside
         - build/src/linc fails with "execvp failed: No such file"
