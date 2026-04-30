@@ -72,7 +72,6 @@ using namespace mlir;
 #include <cctype>
 #include <linux/limits.h>
 #include <fstream>
-#include <fstream>
 
 // Helper to check if a string is idiomatic Red/Rebol style
 static bool isIdiomaticCase(const char* str, int len) {
