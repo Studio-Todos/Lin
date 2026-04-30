@@ -79,34 +79,37 @@
         - RUNTIME:  ω(+, f) ⋈ ω(-, f) → fires cloned MLIR payload for label f
         - Connects to A2: user-defined mlir-op rules register to the lookup table
 
-[x] 5. Word-Call Parsing (Paren-less calls)
-        - Parser: Implement "word calls" where a function identifier is followed by args
-        - Ambiguity Fix: Use arity-based parsing (requires symbol table lookup during parse)
-        - Support mixed style: `(fib n - 1)` and `print "Hello"`
+[x] 5. Full Syntax Migration (word-call REMOVED for pure Rebol style)
+        - REMOVED: word-call parsing (no longer supports paren-less calls)
+        - Now requires parentheses: (print "hello") or (fib n - 1)
+        - Done in commit e342159
 
 [x] 6. Path Access Support (`/` notation)
         - Parser: Recognize `identifier/index` and `identifier/field`
         - Lowering: Map `/N` (1-indexed) to `proj_N` agents in PIC graph
         - Support nested paths: `engine/world/bodies/1`
+        - ✅ Works with arrays and blocks
 
 [x] 7. Data Blocks vs. Code Blocks
         - Parser: Distinguish between block as statement-list vs. block as data-literal
         - Lowering: For data blocks, emit a linked structure of Pair agents in the graph
         - Unblocks: `copy [pos vel force]` pattern in Wellspring
 
-[x] 8. Module Headers & Metadata
+[ ] 8. Module Headers & Metadata
         - Parser: Recognize `Path/To/Module: module [ metadata ]` syntax
         - Storage: Capture module name and property block for compiler visibility
 
-[x] 9. Refined Assignment (Multi-assignment)
+[ ] 9. Refined Assignment (Multi-assignment)
         - Allow `a: 1 b: 2 c: 3` style packing on single lines
         - Ensure interaction net linearity is preserved during multi-binding
 
-[x] 10. Full Syntax Migration (Unified Style)
-        - Rewrite all `examples/*.lin` to use word-calls and paths
-        - Update `test/` suite to reflect the new notation (removes paren-bloat)
-        - Refactor `std/*.lin` library files to use the clean syntax
-        - Goal: Deprecate and remove the old "S-Expression" style where redundant
+[x] 10. Full Syntax Migration (Unified Rebol Style)
+        - REMOVED word-call syntax (requires parentheses)
+        - REMOVED implicit return (requires explicit return: [Type!])
+        - PRESERVED void return via return: []
+        - examples/*.lin use new full syntax
+        - test/ suite updated to use parentheses
+        - std/*.lin library files use clean syntax
 
 ## 🟡 Tier 2 — Language Completeness
 
