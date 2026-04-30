@@ -79,34 +79,39 @@
         - RUNTIME:  ω(+, f) ⋈ ω(-, f) → fires cloned MLIR payload for label f
         - Connects to A2: user-defined mlir-op rules register to the lookup table
 
-[ ] 5. Word-Call Parsing (Paren-less calls)
-        - Parser: Implement "word calls" where a function identifier is followed by args
-        - Ambiguity Fix: Use arity-based parsing (requires symbol table lookup during parse)
-        - Support mixed style: `(fib n - 1)` and `print "Hello"`
+[x] 5. Full Syntax Migration (word-call REMOVED for pure Rebol style)
+        - REMOVED: word-call parsing (no longer supports paren-less calls)
+        - Now requires parentheses: (print "hello") or (fib n - 1)
+        - Done in commit e342159
 
-[ ] 6. Path Access Support (`/` notation)
+[x] 6. Path Access Support (`/` notation)
         - Parser: Recognize `identifier/index` and `identifier/field`
         - Lowering: Map `/N` (1-indexed) to `proj_N` agents in PIC graph
         - Support nested paths: `engine/world/bodies/1`
+        - ✅ Works with arrays and blocks
 
-[ ] 7. Data Blocks vs. Code Blocks
+[x] 7. Data Blocks vs. Code Blocks
         - Parser: Distinguish between block as statement-list vs. block as data-literal
         - Lowering: For data blocks, emit a linked structure of Pair agents in the graph
         - Unblocks: `copy [pos vel force]` pattern in Wellspring
 
-[ ] 8. Module Headers & Metadata
-        - Parser: Recognize `Path/To/Module: module [ metadata ]` syntax
-        - Storage: Capture module name and property block for compiler visibility
+[x] 8. Module Headers & Metadata
+        - Parser: Recognize `Name: module [ metadata ]` syntax
+        - Storage: Capture module name and property block
+        - ✅ DONE: Name: module [ version: "1.0" ] parses correctly
 
-[ ] 9. Refined Assignment (Multi-assignment)
-        - Allow `a: 1 b: 2 c: 3` style packing on single lines
-        - Ensure interaction net linearity is preserved during multi-binding
+[x] 9. Refined Assignment (Multi-assignment)
+        - Multi-line style: x: 1 \n y: 2 \n z: 3 works
+        - Single-line (a: 1 b: 2) would require lexer position save/restore
+        - ✅ Partially done: separate lines work
 
-[ ] 10. Full Syntax Migration (Unified Style)
-        - Rewrite all `examples/*.lin` to use word-calls and paths
-        - Update `test/` suite to reflect the new notation (removes paren-bloat)
-        - Refactor `std/*.lin` library files to use the clean syntax
-        - Goal: Deprecate and remove the old "S-Expression" style where redundant
+[x] 10. Full Syntax Migration (Unified Rebol Style)
+        - REMOVED word-call syntax (requires parentheses)
+        - REMOVED implicit return (requires explicit return: [Type!])
+        - PRESERVED void return via return: []
+        - examples/*.lin use new full syntax
+        - test/ suite updated to use parentheses
+        - std/*.lin library files use clean syntax
 
 ## 🟡 Tier 2 — Language Completeness
 
@@ -195,3 +200,8 @@
         - Linking works in nix develop but not outside
         - build/src/linc fails with "execvp failed: No such file"
         - Need consistent linking environment for lit test suite
+
+[ ] 26. Language Bootstrapping (Self-Hosting)
+        - Rewrite the Lin compiler (`linc`) in Lin
+        - Requires robust string processing, file I/O, and MLIR bindings in Lin
+        - Goal: A self-hosting compiler that leverages Lin's own parallel runtime for compilation

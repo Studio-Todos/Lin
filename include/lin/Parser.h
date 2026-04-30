@@ -45,6 +45,7 @@ typedef enum {
     TOKEN_STR,
     TOKEN_IMPORT,
     TOKEN_MLIR_OP,
+    TOKEN_MODULE,
     TOKEN_LBRACE,
     TOKEN_RBRACE,
     TOKEN_DOT,
@@ -74,15 +75,18 @@ typedef enum {
     AST_BINARY,
     AST_CALL,
     AST_BLOCK,
+    AST_BLOCK_DATA,
     AST_FUNC_DECL,
     AST_STRING,
     AST_ASSIGNMENT,
+    AST_ASSIGNMENT_MULTI,
     AST_MLIR_OP,
     AST_IMPORT,
     AST_BOOL,
     AST_WHILE,
     AST_PAIR,
-    AST_FIELD_ACCESS
+    AST_FIELD_ACCESS,
+    AST_MODULE
 } AstNodeType;
 
 typedef struct AstNode {
@@ -112,11 +116,13 @@ typedef struct AstNode {
         } func_decl;
         struct { const char *value; int length; } string;
         struct { const char *name; int name_len; struct AstNode *value; } assignment;
+        struct { const char *name; int name_len; struct AstNode *value; struct AstNode *next; } assignment_multi;
         struct { const char *name; int name_len; const char *inputs; int inputs_len; const char *outputs; int outputs_len; const char *mlir_payload; int payload_len; } mlir_op;
         struct { const char *path; int length; struct AstNode *module_block; } import_stmt;
+        struct { const char *name; int name_len; struct AstNode *module_block; } module;
         struct { struct AstNode *condition; struct AstNode *body; } while_loop;
         struct { struct AstNode *left; struct AstNode *right; } pair;
-        struct { struct AstNode *base; int field_index; } field_access;
+        struct { struct AstNode *base; int field_index; const char *field_name; int field_name_len; } field_access;
     } as;
 } AstNode;
 

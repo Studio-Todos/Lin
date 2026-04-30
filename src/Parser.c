@@ -282,6 +282,7 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
 
         bool is_func = (strncmp(next_word, "func", 4) == 0);
         bool is_mlir_op = (strncmp(next_word, "mlir-op", 7) == 0);
+        bool is_module = (strncmp(next_word, "module", 6) == 0);
 
         if (is_mlir_op) {
             parserAdvance(parser); // consume colon
@@ -326,6 +327,25 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
             }
 
             return node;
+        } else if (is_module) {
+            parserAdvance(parser); // consume colon
+            // Expect "module" keyword
+            if (parser->current.type != TOKEN_IDENTIFIER || 
+                strncmp(parser->current.start, "module", 6) != 0) {
+                errorAt(parser, &parser->current, "Expect 'module' keyword.");
+                return NULL;
+            }
+            parserAdvance(parser); // consume "module"
+            
+            // Parse metadata block [ ... ]
+            AstNode *module_block = parseBlock(parser);
+            
+            AstNode *node = createNode(parser, AST_MODULE);
+            if (!node) return NULL;
+            node->as.module.name = ident.start;
+            node->as.module.name_len = ident.length;
+            node->as.module.module_block = module_block;
+            return node;
         } else if (is_func) {
             parser->previous = ident;
             return parseFuncDecl(parser);
@@ -362,6 +382,36 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
     while (parser->current.type == TOKEN_DOT) {
         result = parseFieldAccess(parser, result);
     }
+    
+    // Check for path access: identifier/path or identifier/field
+    while (parser->current.type == TOKEN_SLASH) {
+        parserAdvance(parser); // consume '/'
+        Token pathSegment = parser->current;
+        
+        if (pathSegment.type == TOKEN_NUMBER) {
+            // Numeric index: /1, /2, etc.
+            parserAdvance(parser);
+            AstNode *access = createNode(parser, AST_FIELD_ACCESS);
+            if (!access) return result;
+            access->as.field_access.base = result;
+            access->as.field_access.field_index = atoi(pathSegment.start);
+            result = access;
+        } else if (pathSegment.type == TOKEN_IDENTIFIER) {
+            // Named path segment: /field
+            parserAdvance(parser);
+            AstNode *access = createNode(parser, AST_FIELD_ACCESS);
+            if (!access) return result;
+            access->as.field_access.base = result;
+            access->as.field_access.field_index = 0; // 0 reserved for named fields
+            access->as.field_access.field_name = pathSegment.start;
+            access->as.field_access.field_name_len = pathSegment.length;
+            result = access;
+        } else {
+            // Not a valid path segment, just return what we have
+            break;
+        }
+    }
+    
     return result;
 }
 
@@ -459,7 +509,7 @@ static AstNode* parseExpression(Parser *parser) {
     AstNode *expr = parsePrimary(parser);
 
     while (parser->current.type == TOKEN_LESS || parser->current.type == TOKEN_PLUS || parser->current.type == TOKEN_MINUS ||
-           parser->current.type == TOKEN_STAR || parser->current.type == TOKEN_SLASH || parser->current.type == TOKEN_GREATER ||
+           parser->current.type == TOKEN_STAR || parser->current.type == TOKEN_GREATER ||
            parser->current.type == TOKEN_EQUAL_EQUAL || parser->current.type == TOKEN_NOT_EQUAL ||
            parser->current.type == TOKEN_GREATER_EQUAL || parser->current.type == TOKEN_LESS_EQUAL ||
            parser->current.type == TOKEN_AND || parser->current.type == TOKEN_OR) {
@@ -490,12 +540,48 @@ static AstNode* parseExpression(Parser *parser) {
         expr = call;
     }
 
+    // Post-expression path access: expr/path
+    while (parser->current.type == TOKEN_SLASH) {
+        parserAdvance(parser); // consume '/'
+        Token pathSegment = parser->current;
+        
+        if (pathSegment.type == TOKEN_NUMBER || pathSegment.type == TOKEN_IDENTIFIER) {
+            parserAdvance(parser);
+            AstNode *access = createNode(parser, AST_FIELD_ACCESS);
+            if (!access) return expr;
+            access->as.field_access.base = expr;
+            if (pathSegment.type == TOKEN_NUMBER) {
+                access->as.field_access.field_index = atoi(pathSegment.start) - 1; // convert to 0-indexed
+            } else {
+                access->as.field_access.field_index = 0;
+                access->as.field_access.field_name = pathSegment.start;
+                access->as.field_access.field_name_len = pathSegment.length;
+            }
+            expr = access;
+        } else {
+            break;
+        }
+    }
+
     return expr;
 }
 
 static AstNode* parseBlock(Parser *parser) {
     consume(parser, TOKEN_LBRACKET, "Expect '[' before block.");
-    AstNode *block = createNode(parser, AST_BLOCK);
+    
+    // Peek at the next meaningful token to determine if this is a data block
+    Lexer savedLexer = parser->lexer;
+    Token firstToken = scanToken(&parser->lexer);
+    
+    bool isDataBlock = (firstToken.type == TOKEN_NUMBER || firstToken.type == TOKEN_FLOAT ||
+                     firstToken.type == TOKEN_STRING || firstToken.type == TOKEN_LBRACKET);
+    
+    // Restore lexer position if not a data block (will reparse in code mode)
+    if (!isDataBlock) {
+        parser->lexer = savedLexer;
+    }
+    
+    AstNode *block = createNode(parser, isDataBlock ? AST_BLOCK_DATA : AST_BLOCK);
     if (!block) return NULL;
     block->as.block.statements = NULL;
     block->as.block.count = 0;
@@ -584,7 +670,7 @@ static AstNode* parseFuncDecl(Parser *parser) {
         return NULL;
     }
 
-    while (parser->current.type != TOKEN_RETURN && parser->current.type != TOKEN_EOF) {
+    while (parser->current.type != TOKEN_RETURN && parser->current.type != TOKEN_EOF && parser->current.type != TOKEN_RBRACKET) {
         Token argName = parser->current;
         consume(parser, TOKEN_IDENTIFIER, "Expect argument name.");
         consume(parser, TOKEN_LBRACKET, "Expect '[' for arg type.");
@@ -614,7 +700,14 @@ static AstNode* parseFuncDecl(Parser *parser) {
         arg_count++;
     }
 
-    consume(parser, TOKEN_RETURN, "Expect 'return'.");
+    if (parser->current.type == TOKEN_RETURN) {
+        parserAdvance(parser);
+    } else if (parser->current.type == TOKEN_RBRACKET) {
+        parserAdvance(parser);
+        if (parser->current.type == TOKEN_RETURN) {
+            parserAdvance(parser);
+        }
+    }
     consume(parser, TOKEN_COLON, "Expect ':' after return.");
     consume(parser, TOKEN_LBRACKET, "Expect '[' for return type.");
     Token returnTypeName = parser->current;
@@ -627,9 +720,9 @@ static AstNode* parseFuncDecl(Parser *parser) {
     } else {
         errorAt(parser, &parser->current, "Expect type identifier.");
     }
-    consume(parser, TOKEN_RBRACKET, "Expect ']' after return type.");
-
-    consume(parser, TOKEN_RBRACKET, "Expect ']' to end args.");
+    if (parser->current.type == TOKEN_RBRACKET) {
+        parserAdvance(parser);
+    }
 
     AstNode *body = parseBlock(parser);
 
@@ -667,7 +760,7 @@ void freeAst(AstNode *node) {
         freeAst(node->as.pair.right);
     } else if (node->type == AST_FIELD_ACCESS) {
         freeAst(node->as.field_access.base);
-    } else if (node->type == AST_BLOCK) {
+    } else if (node->type == AST_BLOCK || node->type == AST_BLOCK_DATA) {
         for (int i=0; i<node->as.block.count; i++) freeAst(node->as.block.statements[i]);
         free(node->as.block.statements);
     } else if (node->type == AST_FUNC_DECL) {
@@ -750,6 +843,7 @@ void printAst(AstNode *node, int depth) {
             printAst(node->as.field_access.base, depth + 1);
             break;
         case AST_BLOCK:
+        case AST_BLOCK_DATA:
             printf("Block\n");
             for (int i=0; i<node->as.block.count; i++) printAst(node->as.block.statements[i], depth + 1);
             break;
