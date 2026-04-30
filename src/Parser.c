@@ -695,7 +695,7 @@ static AstNode* parseFuncDecl(Parser *parser) {
         return NULL;
     }
 
-    while (parser->current.type != TOKEN_RETURN && parser->current.type != TOKEN_EOF) {
+    while (parser->current.type != TOKEN_RETURN && parser->current.type != TOKEN_EOF && parser->current.type != TOKEN_RBRACKET) {
         Token argName = parser->current;
         consume(parser, TOKEN_IDENTIFIER, "Expect argument name.");
         consume(parser, TOKEN_LBRACKET, "Expect '[' for arg type.");
@@ -725,7 +725,14 @@ static AstNode* parseFuncDecl(Parser *parser) {
         arg_count++;
     }
 
-    consume(parser, TOKEN_RETURN, "Expect 'return'.");
+    if (parser->current.type == TOKEN_RETURN) {
+        parserAdvance(parser);
+    } else if (parser->current.type == TOKEN_RBRACKET) {
+        parserAdvance(parser);
+        if (parser->current.type == TOKEN_RETURN) {
+            parserAdvance(parser);
+        }
+    }
     consume(parser, TOKEN_COLON, "Expect ':' after return.");
     consume(parser, TOKEN_LBRACKET, "Expect '[' for return type.");
     Token returnTypeName = parser->current;
@@ -738,9 +745,7 @@ static AstNode* parseFuncDecl(Parser *parser) {
     } else {
         errorAt(parser, &parser->current, "Expect type identifier.");
     }
-    consume(parser, TOKEN_RBRACKET, "Expect ']' after return type.");
-
-    consume(parser, TOKEN_RBRACKET, "Expect ']' to end args.");
+consume(parser, TOKEN_RBRACKET, "Expect ']' after return type.");
 
     AstNode *body = parseBlock(parser);
 
