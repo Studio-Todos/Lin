@@ -195,3 +195,8 @@
         - Linking works in nix develop but not outside
         - build/src/linc fails with "execvp failed: No such file"
         - Need consistent linking environment for lit test suite
+
+[ ] 26. Language Bootstrapping (Self-Hosting)
+        - Rewrite the Lin compiler (`linc`) in Lin
+        - Requires robust string processing, file I/O, and MLIR bindings in Lin
+        - Goal: A self-hosting compiler that leverages Lin's own parallel runtime for compilation
