@@ -358,51 +358,6 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
     node->as.identifier.name = ident.start;
     node->as.identifier.length = ident.length;
     
-    // Check for word-call: identifier followed by arguments (not assignment, not field access)
-    // Word-call syntax: `print "hello"` or `fib n - 1` (arguments continue until boundary)
-    if (parser->current.type != TOKEN_COLON && parser->current.type != TOKEN_DOT && 
-        parser->current.type != TOKEN_LPAREN && parser->current.type != TOKEN_LBRACKET &&
-        parser->current.type != TOKEN_EOF && parser->current.type != TOKEN_RBRACKET &&
-        parser->current.type != TOKEN_RPAREN && parser->current.type != TOKEN_SLASH) {
-        
-        AstNode *call = createNode(parser, AST_CALL);
-        if (!call) {
-            freeAst(node);
-            return NULL;
-        }
-        call->as.call.callee = node->as.identifier.name;
-        call->as.call.callee_len = node->as.identifier.length;
-        call->as.call.args = NULL;
-        call->as.call.arg_count = 0;
-        call->as.call.capacity = 0;
-        
-        // Greedily parse arguments until we hit a boundary token
-        while (parser->current.type != TOKEN_EOF && 
-               parser->current.type != TOKEN_RBRACKET &&
-               parser->current.type != TOKEN_RPAREN) {
-            AstNode *arg = parseExpression(parser);
-            if (!arg) break;
-            
-            if (call->as.call.arg_count >= call->as.call.capacity) {
-                call->as.call.capacity = call->as.call.capacity < 4 ? 4 : call->as.call.capacity * 2;
-                void *tmp = realloc(call->as.call.args, sizeof(AstNode*) * call->as.call.capacity);
-                if (!tmp) {
-                    error(parser, "Out of memory");
-                    freeAst(call);
-                    return NULL;
-                }
-                call->as.call.args = (AstNode**)tmp;
-            }
-            call->as.call.args[call->as.call.arg_count++] = arg;
-        }
-        
-        // Only return as call if we actually parsed arguments
-        if (call->as.call.arg_count > 0) {
-            return call;
-        }
-        free(call);
-    }
-    
     AstNode *result = node;
     while (parser->current.type == TOKEN_DOT) {
         result = parseFieldAccess(parser, result);
@@ -695,7 +650,7 @@ static AstNode* parseFuncDecl(Parser *parser) {
         return NULL;
     }
 
-    while (parser->current.type != TOKEN_RETURN && parser->current.type != TOKEN_EOF && parser->current.type != TOKEN_RBRACKET) {
+    while (parser->current.type != TOKEN_RETURN && parser->current.type != TOKEN_EOF) {
         Token argName = parser->current;
         consume(parser, TOKEN_IDENTIFIER, "Expect argument name.");
         consume(parser, TOKEN_LBRACKET, "Expect '[' for arg type.");
@@ -727,13 +682,8 @@ static AstNode* parseFuncDecl(Parser *parser) {
 
     if (parser->current.type == TOKEN_RETURN) {
         parserAdvance(parser);
-    } else if (parser->current.type == TOKEN_RBRACKET) {
-        parserAdvance(parser);
-        if (parser->current.type == TOKEN_RETURN) {
-            parserAdvance(parser);
-        }
     }
-    consume(parser, TOKEN_COLON, "Expect ':' after return.");
+consume(parser, TOKEN_COLON, "Expect ':' after return.");
     consume(parser, TOKEN_LBRACKET, "Expect '[' for return type.");
     Token returnTypeName = parser->current;
     if (parser->current.type == TOKEN_IDENTIFIER) {
@@ -745,7 +695,7 @@ static AstNode* parseFuncDecl(Parser *parser) {
     } else {
         errorAt(parser, &parser->current, "Expect type identifier.");
     }
-consume(parser, TOKEN_RBRACKET, "Expect ']' after return type.");
+    consume(parser, TOKEN_RBRACKET, "Expect ']' after return type.");
 
     AstNode *body = parseBlock(parser);
 
