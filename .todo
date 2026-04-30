@@ -96,12 +96,13 @@
         - Unblocks: `copy [pos vel force]` pattern in Wellspring
 
 [ ] 8. Module Headers & Metadata
-        - Parser: Recognize `Path/To/Module: module [ metadata ]` syntax
-        - Storage: Capture module name and property block for compiler visibility
+        - Parser: Recognize `Name: module [ metadata ]` syntax
+        - Storage: Capture module name and property block
+        - PARTIALLY DONE: AST_MODULE exists, keyword detection added
 
 [ ] 9. Refined Assignment (Multi-assignment)
         - Allow `a: 1 b: 2 c: 3` style packing on single lines
-        - Ensure interaction net linearity is preserved during multi-binding
+        - Need to re-add lexer position tracking for implementation
 
 [x] 10. Full Syntax Migration (Unified Rebol Style)
         - REMOVED word-call syntax (requires parentheses)

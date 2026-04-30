@@ -282,6 +282,7 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
 
         bool is_func = (strncmp(next_word, "func", 4) == 0);
         bool is_mlir_op = (strncmp(next_word, "mlir-op", 7) == 0);
+        bool is_module = (strncmp(next_word, "module", 6) == 0);
 
         if (is_mlir_op) {
             parserAdvance(parser); // consume colon
