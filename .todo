@@ -79,30 +79,30 @@
         - RUNTIME:  ω(+, f) ⋈ ω(-, f) → fires cloned MLIR payload for label f
         - Connects to A2: user-defined mlir-op rules register to the lookup table
 
-[ ] 5. Word-Call Parsing (Paren-less calls)
+[x] 5. Word-Call Parsing (Paren-less calls)
         - Parser: Implement "word calls" where a function identifier is followed by args
         - Ambiguity Fix: Use arity-based parsing (requires symbol table lookup during parse)
         - Support mixed style: `(fib n - 1)` and `print "Hello"`
 
-[ ] 6. Path Access Support (`/` notation)
+[x] 6. Path Access Support (`/` notation)
         - Parser: Recognize `identifier/index` and `identifier/field`
         - Lowering: Map `/N` (1-indexed) to `proj_N` agents in PIC graph
         - Support nested paths: `engine/world/bodies/1`
 
-[ ] 7. Data Blocks vs. Code Blocks
+[x] 7. Data Blocks vs. Code Blocks
         - Parser: Distinguish between block as statement-list vs. block as data-literal
         - Lowering: For data blocks, emit a linked structure of Pair agents in the graph
         - Unblocks: `copy [pos vel force]` pattern in Wellspring
 
-[ ] 8. Module Headers & Metadata
+[x] 8. Module Headers & Metadata
         - Parser: Recognize `Path/To/Module: module [ metadata ]` syntax
         - Storage: Capture module name and property block for compiler visibility
 
-[ ] 9. Refined Assignment (Multi-assignment)
+[x] 9. Refined Assignment (Multi-assignment)
         - Allow `a: 1 b: 2 c: 3` style packing on single lines
         - Ensure interaction net linearity is preserved during multi-binding
 
-[ ] 10. Full Syntax Migration (Unified Style)
+[x] 10. Full Syntax Migration (Unified Style)
         - Rewrite all `examples/*.lin` to use word-calls and paths
         - Update `test/` suite to reflect the new notation (removes paren-bloat)
         - Refactor `std/*.lin` library files to use the clean syntax

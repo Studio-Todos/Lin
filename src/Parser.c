@@ -358,10 +358,85 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
     node->as.identifier.name = ident.start;
     node->as.identifier.length = ident.length;
     
+    // Check for word-call: identifier followed by arguments (not assignment, not field access)
+    // Word-call syntax: `print "hello"` or `fib n - 1` (arguments continue until boundary)
+    if (parser->current.type != TOKEN_COLON && parser->current.type != TOKEN_DOT && 
+        parser->current.type != TOKEN_LPAREN && parser->current.type != TOKEN_LBRACKET &&
+        parser->current.type != TOKEN_EOF && parser->current.type != TOKEN_RBRACKET &&
+        parser->current.type != TOKEN_RPAREN && parser->current.type != TOKEN_SLASH) {
+        
+        AstNode *call = createNode(parser, AST_CALL);
+        if (!call) {
+            freeAst(node);
+            return NULL;
+        }
+        call->as.call.callee = node->as.identifier.name;
+        call->as.call.callee_len = node->as.identifier.length;
+        call->as.call.args = NULL;
+        call->as.call.arg_count = 0;
+        call->as.call.capacity = 0;
+        
+        // Greedily parse arguments until we hit a boundary token
+        while (parser->current.type != TOKEN_EOF && 
+               parser->current.type != TOKEN_RBRACKET &&
+               parser->current.type != TOKEN_RPAREN) {
+            AstNode *arg = parseExpression(parser);
+            if (!arg) break;
+            
+            if (call->as.call.arg_count >= call->as.call.capacity) {
+                call->as.call.capacity = call->as.call.capacity < 4 ? 4 : call->as.call.capacity * 2;
+                void *tmp = realloc(call->as.call.args, sizeof(AstNode*) * call->as.call.capacity);
+                if (!tmp) {
+                    error(parser, "Out of memory");
+                    freeAst(call);
+                    return NULL;
+                }
+                call->as.call.args = (AstNode**)tmp;
+            }
+            call->as.call.args[call->as.call.arg_count++] = arg;
+        }
+        
+        // Only return as call if we actually parsed arguments
+        if (call->as.call.arg_count > 0) {
+            return call;
+        }
+        free(call);
+    }
+    
     AstNode *result = node;
     while (parser->current.type == TOKEN_DOT) {
         result = parseFieldAccess(parser, result);
     }
+    
+    // Check for path access: identifier/path or identifier/field
+    while (parser->current.type == TOKEN_SLASH) {
+        parserAdvance(parser); // consume '/'
+        Token pathSegment = parser->current;
+        
+        if (pathSegment.type == TOKEN_NUMBER) {
+            // Numeric index: /1, /2, etc.
+            parserAdvance(parser);
+            AstNode *access = createNode(parser, AST_FIELD_ACCESS);
+            if (!access) return result;
+            access->as.field_access.base = result;
+            access->as.field_access.field_index = atoi(pathSegment.start);
+            result = access;
+        } else if (pathSegment.type == TOKEN_IDENTIFIER) {
+            // Named path segment: /field
+            parserAdvance(parser);
+            AstNode *access = createNode(parser, AST_FIELD_ACCESS);
+            if (!access) return result;
+            access->as.field_access.base = result;
+            access->as.field_access.field_index = 0; // 0 reserved for named fields
+            access->as.field_access.field_name = pathSegment.start;
+            access->as.field_access.field_name_len = pathSegment.length;
+            result = access;
+        } else {
+            // Not a valid path segment, just return what we have
+            break;
+        }
+    }
+    
     return result;
 }
 
@@ -459,7 +534,7 @@ static AstNode* parseExpression(Parser *parser) {
     AstNode *expr = parsePrimary(parser);
 
     while (parser->current.type == TOKEN_LESS || parser->current.type == TOKEN_PLUS || parser->current.type == TOKEN_MINUS ||
-           parser->current.type == TOKEN_STAR || parser->current.type == TOKEN_SLASH || parser->current.type == TOKEN_GREATER ||
+           parser->current.type == TOKEN_STAR || parser->current.type == TOKEN_GREATER ||
            parser->current.type == TOKEN_EQUAL_EQUAL || parser->current.type == TOKEN_NOT_EQUAL ||
            parser->current.type == TOKEN_GREATER_EQUAL || parser->current.type == TOKEN_LESS_EQUAL ||
            parser->current.type == TOKEN_AND || parser->current.type == TOKEN_OR) {
@@ -490,12 +565,48 @@ static AstNode* parseExpression(Parser *parser) {
         expr = call;
     }
 
+    // Post-expression path access: expr/path
+    while (parser->current.type == TOKEN_SLASH) {
+        parserAdvance(parser); // consume '/'
+        Token pathSegment = parser->current;
+        
+        if (pathSegment.type == TOKEN_NUMBER || pathSegment.type == TOKEN_IDENTIFIER) {
+            parserAdvance(parser);
+            AstNode *access = createNode(parser, AST_FIELD_ACCESS);
+            if (!access) return expr;
+            access->as.field_access.base = expr;
+            if (pathSegment.type == TOKEN_NUMBER) {
+                access->as.field_access.field_index = atoi(pathSegment.start) - 1; // convert to 0-indexed
+            } else {
+                access->as.field_access.field_index = 0;
+                access->as.field_access.field_name = pathSegment.start;
+                access->as.field_access.field_name_len = pathSegment.length;
+            }
+            expr = access;
+        } else {
+            break;
+        }
+    }
+
     return expr;
 }
 
 static AstNode* parseBlock(Parser *parser) {
     consume(parser, TOKEN_LBRACKET, "Expect '[' before block.");
-    AstNode *block = createNode(parser, AST_BLOCK);
+    
+    // Peek at the next meaningful token to determine if this is a data block
+    Lexer savedLexer = parser->lexer;
+    Token firstToken = scanToken(&parser->lexer);
+    
+    bool isDataBlock = (firstToken.type == TOKEN_NUMBER || firstToken.type == TOKEN_FLOAT ||
+                     firstToken.type == TOKEN_STRING || firstToken.type == TOKEN_LBRACKET);
+    
+    // Restore lexer position if not a data block (will reparse in code mode)
+    if (!isDataBlock) {
+        parser->lexer = savedLexer;
+    }
+    
+    AstNode *block = createNode(parser, isDataBlock ? AST_BLOCK_DATA : AST_BLOCK);
     if (!block) return NULL;
     block->as.block.statements = NULL;
     block->as.block.count = 0;
@@ -667,7 +778,7 @@ void freeAst(AstNode *node) {
         freeAst(node->as.pair.right);
     } else if (node->type == AST_FIELD_ACCESS) {
         freeAst(node->as.field_access.base);
-    } else if (node->type == AST_BLOCK) {
+    } else if (node->type == AST_BLOCK || node->type == AST_BLOCK_DATA) {
         for (int i=0; i<node->as.block.count; i++) freeAst(node->as.block.statements[i]);
         free(node->as.block.statements);
     } else if (node->type == AST_FUNC_DECL) {
@@ -750,6 +861,7 @@ void printAst(AstNode *node, int depth) {
             printAst(node->as.field_access.base, depth + 1);
             break;
         case AST_BLOCK:
+        case AST_BLOCK_DATA:
             printf("Block\n");
             for (int i=0; i<node->as.block.count; i++) printAst(node->as.block.statements[i], depth + 1);
             break;
