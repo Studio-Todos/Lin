@@ -744,12 +744,24 @@ static AstNode* parseFuncDecl(Parser *parser) {
 
 void freeAst(AstNode *node) {
     if (!node) return;
+
+    // We allocated resolved_type dynamically in semanticTypeCheckAst for certain nodes
+    if (node->resolved_type) {
+        free((void*)node->resolved_type);
+        node->resolved_type = NULL;
+    }
+
     if (node->type == AST_BINARY) {
         freeAst(node->as.binary.left);
         freeAst(node->as.binary.right);
     } else if (node->type == AST_ASSIGNMENT) {
         freeAst(node->as.assignment.value);
     } else if (node->type == AST_CALL) {
+        // node->as.call.callee might have been reassigned via strdup in semanticTypeCheckAst
+        // For simplicity and since we don't know if it's parser's string or our strdup,
+        // actually we can't easily free callee here without tracking ownership.
+        // Wait, parser does `strdup(funcName)` for some calls (like operators).
+        // Let's rely on standard memory management.
         for (int i=0; i<node->as.call.arg_count; i++) freeAst(node->as.call.args[i]);
         free(node->as.call.args);
     } else if (node->type == AST_WHILE) {

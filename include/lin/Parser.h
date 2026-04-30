@@ -91,6 +91,8 @@ typedef enum {
 
 typedef struct AstNode {
     AstNodeType type;
+    const char *resolved_type;
+    int resolved_type_len;
     union {
         struct { int32_t value; } number;
         struct { bool value; } boolean;

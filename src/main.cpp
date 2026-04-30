@@ -85,8 +85,10 @@ static bool isIdiomaticCase(const char* str, int len) {
 #include <unordered_set>
 #include <string>
 
+#include <unordered_map>
+
 // Semantic type checking to ensure argument and return types resolve to declared types or mlir-ops.
-static int semanticTypeCheckAst(AstNode *node, std::unordered_set<std::string>& declaredTypes) {
+static int semanticTypeCheckAst(AstNode *node, std::unordered_set<std::string>& declaredTypes, std::unordered_map<std::string, std::string>& envTypes) {
     if (!node) return 0;
     int errors = 0;
 
@@ -106,17 +108,20 @@ static int semanticTypeCheckAst(AstNode *node, std::unordered_set<std::string>& 
 
             // Second pass: validate types within the block
             for (int i = 0; i < node->as.block.count; ++i) {
-                errors += semanticTypeCheckAst(node->as.block.statements[i], declaredTypes);
+                errors += semanticTypeCheckAst(node->as.block.statements[i], declaredTypes, envTypes);
             }
             break;
         }
         case AST_FUNC_DECL: {
+            std::unordered_map<std::string, std::string> innerEnv = envTypes; // copy environment for scope
             for (int i = 0; i < node->as.func_decl.arg_count; ++i) {
                 std::string argTypeName(node->as.func_decl.args[i].type_name, node->as.func_decl.args[i].type_name_len);
+                std::string argName(node->as.func_decl.args[i].name, node->as.func_decl.args[i].name_len);
                 if (declaredTypes.find(argTypeName) == declaredTypes.end()) {
-                    std::cerr << "Semantic Error: Type '" << argTypeName << "' used in argument '" << std::string(node->as.func_decl.args[i].name, node->as.func_decl.args[i].name_len) << "' is undeclared.\n";
+                    std::cerr << "Semantic Error: Type '" << argTypeName << "' used in argument '" << argName << "' is undeclared.\n";
                     errors++;
                 }
+                innerEnv[argName] = argTypeName;
             }
             if (node->as.func_decl.return_type_len > 0) {
                 std::string returnTypeName(node->as.func_decl.return_type_name, node->as.func_decl.return_type_len);
@@ -125,39 +130,158 @@ static int semanticTypeCheckAst(AstNode *node, std::unordered_set<std::string>& 
                     errors++;
                 }
             }
-            errors += semanticTypeCheckAst(node->as.func_decl.body, declaredTypes);
+            errors += semanticTypeCheckAst(node->as.func_decl.body, declaredTypes, innerEnv);
             break;
         }
         case AST_ASSIGNMENT: {
-            errors += semanticTypeCheckAst(node->as.assignment.value, declaredTypes);
+            errors += semanticTypeCheckAst(node->as.assignment.value, declaredTypes, envTypes);
+            if (node->as.assignment.value && node->as.assignment.value->resolved_type) {
+                std::string varName(node->as.assignment.name, node->as.assignment.name_len);
+                envTypes[varName] = std::string(node->as.assignment.value->resolved_type, node->as.assignment.value->resolved_type_len);
+            }
             break;
         }
         case AST_CALL: {
             for (int i = 0; i < node->as.call.arg_count; ++i) {
-                errors += semanticTypeCheckAst(node->as.call.args[i], declaredTypes);
+                errors += semanticTypeCheckAst(node->as.call.args[i], declaredTypes, envTypes);
+            }
+            std::string callee(node->as.call.callee, node->as.call.callee_len);
+            if (node->as.call.arg_count > 0 && node->as.call.args[0] && node->as.call.args[0]->resolved_type) {
+                std::string argType(node->as.call.args[0]->resolved_type, node->as.call.args[0]->resolved_type_len);
+
+                // Structural type checking on call arguments
+                for (int i = 1; i < node->as.call.arg_count; ++i) {
+                    if (node->as.call.args[i] && node->as.call.args[i]->resolved_type) {
+                        std::string currentArgType(node->as.call.args[i]->resolved_type, node->as.call.args[i]->resolved_type_len);
+                        // Lightweight structural type check: Ensure standard math operations get same types.
+                        // (We only check this for std operators that expect uniform types, not all functions generally, but this covers binary ops mapped to calls).
+                        if (currentArgType != argType && (callee == "add" || callee == "sub" || callee == "mul" || callee == "div" || callee == "lt" || callee == "gt" || callee == "le" || callee == "ge" || callee == "eq" || callee == "ne")) {
+                            std::cerr << "Semantic Error: Type mismatch in call to '" << callee << "'. Expected type '" << argType << "' but got '" << currentArgType << "'.\n";
+                            errors++;
+                        }
+                    }
+                }
+
+                // Type-directed dispatch
+                if (argType == "f32" || argType == "f64" || argType == "i64") {
+                    std::string newCallee = callee;
+                    if (argType == "f32") {
+                        if (callee == "add") newCallee = "fadd";
+                        else if (callee == "sub") newCallee = "fsub";
+                        else if (callee == "mul") newCallee = "fmul";
+                        else if (callee == "div") newCallee = "fdiv";
+                        else if (callee == "rem") newCallee = "frem";
+                        else if (callee == "lt") newCallee = "flt";
+                        else if (callee == "gt") newCallee = "fgt";
+                        else if (callee == "le") newCallee = "fle";
+                        else if (callee == "ge") newCallee = "fge";
+                        else if (callee == "eq") newCallee = "feq";
+                        else if (callee == "ne") newCallee = "fneq";
+                        else if (callee == "min") newCallee = "fmin";
+                        else if (callee == "max") newCallee = "fmax";
+                        else if (callee == "pow") newCallee = "fpow";
+                    } else if (argType == "f64") {
+                        if (callee == "add") newCallee = "fadd64";
+                        else if (callee == "sub") newCallee = "fsub64";
+                        else if (callee == "mul") newCallee = "fmul64";
+                        else if (callee == "div") newCallee = "fdiv64";
+                        else if (callee == "rem") newCallee = "frem64";
+                        else if (callee == "lt") newCallee = "flt64";
+                        else if (callee == "gt") newCallee = "fgt64";
+                        else if (callee == "le") newCallee = "fle64";
+                        else if (callee == "ge") newCallee = "fge64";
+                        else if (callee == "eq") newCallee = "feq64";
+                        else if (callee == "ne") newCallee = "fneq64";
+                        else if (callee == "min") newCallee = "fmin64";
+                        else if (callee == "max") newCallee = "fmax64";
+                        else if (callee == "pow") newCallee = "fpow64";
+                    } else if (argType == "i64") {
+                        if (callee == "add") newCallee = "add64";
+                        else if (callee == "sub") newCallee = "sub64";
+                        else if (callee == "mul") newCallee = "mul64";
+                        else if (callee == "div") newCallee = "div64";
+                        else if (callee == "rem") newCallee = "rem64";
+                        else if (callee == "lt") newCallee = "lt64";
+                        else if (callee == "gt") newCallee = "gt64";
+                        else if (callee == "le") newCallee = "le64";
+                        else if (callee == "ge") newCallee = "ge64";
+                        else if (callee == "eq") newCallee = "eq64";
+                        else if (callee == "ne") newCallee = "neq64";
+                        else if (callee == "min") newCallee = "min64";
+                        else if (callee == "max") newCallee = "max64";
+                        else if (callee == "and") newCallee = "and64";
+                        else if (callee == "or") newCallee = "or64";
+                        else if (callee == "xor") newCallee = "xor64";
+                        else if (callee == "shl") newCallee = "shl64";
+                        else if (callee == "shr") newCallee = "shr64";
+                    }
+
+                    if (newCallee != callee) {
+                        node->as.call.callee = strdup(newCallee.c_str());
+                        node->as.call.callee_len = newCallee.length();
+                    }
+                }
+
+                // Result type inference for mathematical operations
+                if (callee == "lt" || callee == "gt" || callee == "le" || callee == "ge" || callee == "eq" || callee == "ne") {
+                    node->resolved_type = strdup("bool");
+                    node->resolved_type_len = 4;
+                } else {
+                    node->resolved_type = strdup(node->as.call.args[0]->resolved_type);
+                    node->resolved_type_len = node->as.call.args[0]->resolved_type_len;
+                }
             }
             break;
         }
         case AST_BINARY: {
-            errors += semanticTypeCheckAst(node->as.binary.left, declaredTypes);
-            errors += semanticTypeCheckAst(node->as.binary.right, declaredTypes);
+            errors += semanticTypeCheckAst(node->as.binary.left, declaredTypes, envTypes);
+            errors += semanticTypeCheckAst(node->as.binary.right, declaredTypes, envTypes);
+            // In Lin, binary nodes are lowered to AST_CALL during parsing for standard operators,
+            // but if they exist, propagate type:
+            if (node->as.binary.left && node->as.binary.left->resolved_type) {
+                node->resolved_type = strdup(node->as.binary.left->resolved_type);
+                node->resolved_type_len = node->as.binary.left->resolved_type_len;
+            }
             break;
         }
         case AST_WHILE: {
-            errors += semanticTypeCheckAst(node->as.while_loop.condition, declaredTypes);
-            errors += semanticTypeCheckAst(node->as.while_loop.body, declaredTypes);
+            errors += semanticTypeCheckAst(node->as.while_loop.condition, declaredTypes, envTypes);
+            errors += semanticTypeCheckAst(node->as.while_loop.body, declaredTypes, envTypes);
             break;
         }
         case AST_PAIR: {
-            errors += semanticTypeCheckAst(node->as.pair.left, declaredTypes);
-            errors += semanticTypeCheckAst(node->as.pair.right, declaredTypes);
+            errors += semanticTypeCheckAst(node->as.pair.left, declaredTypes, envTypes);
+            errors += semanticTypeCheckAst(node->as.pair.right, declaredTypes, envTypes);
             break;
         }
-        case AST_IDENTIFIER:
-        case AST_NUMBER:
-        case AST_FLOAT:
-        case AST_BOOL:
-        case AST_STRING:
+        case AST_IDENTIFIER: {
+            std::string ident(node->as.identifier.name, node->as.identifier.length);
+            if (envTypes.find(ident) != envTypes.end()) {
+                node->resolved_type = strdup(envTypes[ident].c_str());
+                node->resolved_type_len = envTypes[ident].length();
+            }
+            break;
+        }
+        case AST_NUMBER: {
+            node->resolved_type = strdup("i32");
+            node->resolved_type_len = 3;
+            break;
+        }
+        case AST_FLOAT: {
+            node->resolved_type = strdup("f32");
+            node->resolved_type_len = 3;
+            break;
+        }
+        case AST_BOOL: {
+            node->resolved_type = strdup("bool");
+            node->resolved_type_len = 4;
+            break;
+        }
+        case AST_STRING: {
+            node->resolved_type = strdup("str");
+            node->resolved_type_len = 3;
+            break;
+        }
         case AST_MLIR_OP:
         case AST_IMPORT:
             break;
@@ -432,8 +556,9 @@ int main(int argc, char **argv) {
   if (ast) {
       // Perform semantic type checking
       std::unordered_set<std::string> declaredTypes;
+      std::unordered_map<std::string, std::string> envTypes;
 
-      int semanticErrors = semanticTypeCheckAst(ast, declaredTypes);
+      int semanticErrors = semanticTypeCheckAst(ast, declaredTypes, envTypes);
       if (semanticErrors > 0) {
           std::cerr << "Semantic analysis failed with " << semanticErrors << " error(s).\n";
           if (ast) freeAst(ast);
