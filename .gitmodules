@@ -1,0 +1,3 @@
+[submodule "examples/Wellspring"]
+	path = examples/Wellspring
+	url = https://github.com/Studio-Todos/Wellspring
