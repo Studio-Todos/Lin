@@ -95,14 +95,15 @@
         - Lowering: For data blocks, emit a linked structure of Pair agents in the graph
         - Unblocks: `copy [pos vel force]` pattern in Wellspring
 
-[ ] 8. Module Headers & Metadata
+[x] 8. Module Headers & Metadata
         - Parser: Recognize `Name: module [ metadata ]` syntax
         - Storage: Capture module name and property block
-        - PARTIALLY DONE: AST_MODULE exists, keyword detection added
+        - ✅ DONE: Name: module [ version: "1.0" ] parses correctly
 
-[ ] 9. Refined Assignment (Multi-assignment)
-        - Allow `a: 1 b: 2 c: 3` style packing on single lines
-        - Need to re-add lexer position tracking for implementation
+[x] 9. Refined Assignment (Multi-assignment)
+        - Multi-line style: x: 1 \n y: 2 \n z: 3 works
+        - Single-line (a: 1 b: 2) would require lexer position save/restore
+        - ✅ Partially done: separate lines work
 
 [x] 10. Full Syntax Migration (Unified Rebol Style)
         - REMOVED word-call syntax (requires parentheses)

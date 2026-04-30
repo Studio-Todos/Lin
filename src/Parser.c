@@ -327,6 +327,25 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
             }
 
             return node;
+        } else if (is_module) {
+            parserAdvance(parser); // consume colon
+            // Expect "module" keyword
+            if (parser->current.type != TOKEN_IDENTIFIER || 
+                strncmp(parser->current.start, "module", 6) != 0) {
+                errorAt(parser, &parser->current, "Expect 'module' keyword.");
+                return NULL;
+            }
+            parserAdvance(parser); // consume "module"
+            
+            // Parse metadata block [ ... ]
+            AstNode *module_block = parseBlock(parser);
+            
+            AstNode *node = createNode(parser, AST_MODULE);
+            if (!node) return NULL;
+            node->as.module.name = ident.start;
+            node->as.module.name_len = ident.length;
+            node->as.module.module_block = module_block;
+            return node;
         } else if (is_func) {
             parser->previous = ident;
             return parseFuncDecl(parser);
@@ -651,7 +670,7 @@ static AstNode* parseFuncDecl(Parser *parser) {
         return NULL;
     }
 
-    while (parser->current.type != TOKEN_RETURN && parser->current.type != TOKEN_EOF) {
+    while (parser->current.type != TOKEN_RETURN && parser->current.type != TOKEN_EOF && parser->current.type != TOKEN_RBRACKET) {
         Token argName = parser->current;
         consume(parser, TOKEN_IDENTIFIER, "Expect argument name.");
         consume(parser, TOKEN_LBRACKET, "Expect '[' for arg type.");
@@ -683,8 +702,13 @@ static AstNode* parseFuncDecl(Parser *parser) {
 
     if (parser->current.type == TOKEN_RETURN) {
         parserAdvance(parser);
+    } else if (parser->current.type == TOKEN_RBRACKET) {
+        parserAdvance(parser);
+        if (parser->current.type == TOKEN_RETURN) {
+            parserAdvance(parser);
+        }
     }
-consume(parser, TOKEN_COLON, "Expect ':' after return.");
+    consume(parser, TOKEN_COLON, "Expect ':' after return.");
     consume(parser, TOKEN_LBRACKET, "Expect '[' for return type.");
     Token returnTypeName = parser->current;
     if (parser->current.type == TOKEN_IDENTIFIER) {
@@ -696,7 +720,9 @@ consume(parser, TOKEN_COLON, "Expect ':' after return.");
     } else {
         errorAt(parser, &parser->current, "Expect type identifier.");
     }
-    consume(parser, TOKEN_RBRACKET, "Expect ']' after return type.");
+    if (parser->current.type == TOKEN_RBRACKET) {
+        parserAdvance(parser);
+    }
 
     AstNode *body = parseBlock(parser);
 
