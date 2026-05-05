@@ -440,9 +440,9 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         MlirValue lastVal = {NULL};
         for (int i = 0; i < expr->as.block.count; i++) {
             AstNode *stmt = expr->as.block.statements[i];
-            // Skip import and func_decl and mlir_op since they have no runtime code
+            // Skip import and mlir_op since they have no runtime code
             if (!stmt) continue;
-            if (stmt->type == AST_IMPORT || stmt->type == AST_FUNC_DECL || stmt->type == AST_MLIR_OP) continue;
+            if (stmt->type == AST_IMPORT || stmt->type == AST_MLIR_OP) continue;
             lastVal = lowerExpression(ctx, block, loc, stmt, env);
         }
 

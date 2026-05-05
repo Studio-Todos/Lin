@@ -130,7 +130,7 @@
         - Lightweight structural type check with source locations on mismatch
         - Drives ω label selection (e.g., llvm.add vs. llvm.fadd)
 
-[ ] 14. Multiple return values via pairs
+[x] 14. Multiple return values via pairs
         - Depends on item 1 (AST_PAIR lowering)
         - Function return types as pairs; .0/.1 access compiles correctly
 
