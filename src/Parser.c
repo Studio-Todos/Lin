@@ -443,13 +443,22 @@ static AstNode* parseGroupingExpr(Parser *parser) {
         }
         consume(parser, TOKEN_RPAREN, "Expect ')' after arguments.");
 
-        if (call->as.call.arg_count == 3) {
+        if (call->as.call.arg_count == 1) {
             AstNode *pair = createNode(parser, AST_PAIR);
             if (pair) {
-                pair->as.pair.left = call->as.call.args[1];
-                pair->as.pair.right = call->as.call.args[2];
-                call->as.call.args[1] = pair;
-                call->as.call.arg_count = 2;
+                pair->as.pair.left = createNode(parser, AST_IDENTIFIER);
+                if (pair->as.pair.left) {
+                    pair->as.pair.left->as.identifier.name = malloc(call->as.call.callee_len + 1);
+                    if (pair->as.pair.left->as.identifier.name) {
+                        memcpy((void*)pair->as.pair.left->as.identifier.name, call->as.call.callee, call->as.call.callee_len);
+                        ((char*)pair->as.pair.left->as.identifier.name)[call->as.call.callee_len] = '\0';
+                        pair->as.pair.left->as.identifier.length = call->as.call.callee_len;
+                    }
+                }
+                pair->as.pair.right = call->as.call.args[0];
+                free(call->as.call.args);
+                free(call);
+                return pair;
             }
         }
 
@@ -711,7 +720,39 @@ static AstNode* parseFuncDecl(Parser *parser) {
     consume(parser, TOKEN_COLON, "Expect ':' after return.");
     consume(parser, TOKEN_LBRACKET, "Expect '[' for return type.");
     Token returnTypeName = parser->current;
-    if (parser->current.type == TOKEN_IDENTIFIER) {
+    if (parser->current.type == TOKEN_LPAREN) {
+        returnTypeName = parser->previous;
+        parserAdvance(parser);
+        while (parser->current.type != TOKEN_RPAREN && parser->current.type != TOKEN_EOF && parser->current.type != TOKEN_RBRACKET) {
+            parserAdvance(parser);
+        }
+        if (parser->current.type == TOKEN_RPAREN) {
+            returnTypeName.length = (int)(parser->current.start - returnTypeName.start + 1);
+            parserAdvance(parser);
+        }
+    } else if (parser->current.type == TOKEN_LBRACKET) {
+        returnTypeName = parser->previous;
+        int bracketDepth = 1;
+        parserAdvance(parser);
+        while (bracketDepth > 0 && parser->current.type != TOKEN_EOF) {
+            if (parser->current.type == TOKEN_LBRACKET) {
+                bracketDepth++;
+            } else if (parser->current.type == TOKEN_RBRACKET) {
+                bracketDepth--;
+            } else if (parser->current.type == TOKEN_LPAREN) {
+                bracketDepth++;
+            } else if (parser->current.type == TOKEN_RPAREN) {
+                bracketDepth--;
+            }
+            if (bracketDepth > 0) {
+                parserAdvance(parser);
+            }
+        }
+        if (parser->current.type == TOKEN_RBRACKET) {
+            returnTypeName.length = (int)(parser->current.start - returnTypeName.start + 1);
+            parserAdvance(parser);
+        }
+    } else if (parser->current.type == TOKEN_IDENTIFIER) {
         parserAdvance(parser);
         consume(parser, TOKEN_BANG, "Expect '!'.");
     } else if (parser->current.type == TOKEN_RBRACKET) {
@@ -723,6 +764,9 @@ static AstNode* parseFuncDecl(Parser *parser) {
     if (parser->current.type == TOKEN_RBRACKET) {
         parserAdvance(parser);
     }
+    
+    // Consume the final ']' that closes the entire arguments list `func [ ... ]`
+    consume(parser, TOKEN_RBRACKET, "Expect ']' to close argument list.");
 
     AstNode *body = parseBlock(parser);
 

@@ -63,6 +63,11 @@ static RuleEntry defaultRules[] = {
   {makeRuleKey(1, 1, 0), (void*)rule_annihilate},   // γ ⋈ γ (gamma annihilation)
   // ω with label "branch" is NODE_OP=4, so ω(branch) ⋈ num is covered by erase rules below
   {makeRuleKey(4, 4, 0), (void*)rule_annihilate}, // ω ⋈ ω (operator annihilation via fire_op)
+  // Delta-delta annihilation: pair ⋈ proj_0 or pair ⋈ proj_1 (field access on tuples)
+  {makeRuleKey(2, 2, 0), (void*)rule_annihilate}, // δ ⋈ δ (pair/proj field access)
+  // Gamma-delta annihilation: function application (call delta meets function gamma with same label)
+  {makeRuleKey(1, 2, 0), (void*)rule_annihilate}, // γ ⋈ δ (function application)
+  {makeRuleKey(2, 1, 0), (void*)rule_annihilate}, // δ ⋈ γ (function application)
   // Erasure: ε ⋈ X → ε on each aux port
   {makeRuleKey(0, 1, 0), (void*)rule_erase},      // ε ⋈ γ
   {makeRuleKey(1, 0, 0), (void*)rule_erase},      // γ ⋈ ε
@@ -72,9 +77,6 @@ static RuleEntry defaultRules[] = {
   {makeRuleKey(3, 0, 0), (void*)rule_erase},      // num ⋈ ε
   {makeRuleKey(0, 4, 0), (void*)rule_erase},      // ε ⋈ ω
   {makeRuleKey(4, 0, 0), (void*)rule_erase},      // ω ⋈ ε
-  // Duplication: δ ⋈ γ → γ ⋈ γ (lazy, fires on demand)
-  {makeRuleKey(2, 1, 0), (void*)rule_duplicate}, // δ ⋈ γ
-  {makeRuleKey(1, 2, 0), (void*)rule_duplicate}, // γ ⋈ δ
   // Fire-op: ω(+) ⋈ ω(-) with matching label
   {makeRuleKey(4, 4, 0), (void*)rule_fire_op},   // ω ⋈ ω (already have annihilation - OK to have duplicate entry!)
 };

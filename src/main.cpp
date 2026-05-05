@@ -120,7 +120,7 @@ static int semanticTypeCheckAst(AstNode *node, std::unordered_set<std::string>& 
             }
             if (node->as.func_decl.return_type_len > 0) {
                 std::string returnTypeName(node->as.func_decl.return_type_name, node->as.func_decl.return_type_len);
-                if (declaredTypes.find(returnTypeName) == declaredTypes.end()) {
+                if (returnTypeName[0] != '[' && declaredTypes.find(returnTypeName) == declaredTypes.end()) {
                     std::cerr << "Semantic Error: Return type '" << returnTypeName << "' used in function '" << std::string(node->as.func_decl.name, node->as.func_decl.name_len) << "' is undeclared.\n";
                     errors++;
                 }
