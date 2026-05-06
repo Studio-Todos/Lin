@@ -68,4 +68,4 @@ fib: func [
 
 ## Examples
 
-* **[Wellspring](https://github.com/Studio-Todos/Wellspring)**: An example project using Lin.
+* **[Linden](https://github.com/Studio-Todos/Linden)**: An example project using Lin.

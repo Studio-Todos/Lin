@@ -1,6 +1,6 @@
-[submodule "examples/Wellspring"]
-	path = examples/Wellspring
-	url = https://github.com/Studio-Todos/Wellspring
+[submodule "examples/Linden"]
+	path = examples/Linden
+	url = https://github.com/Studio-Todos/Linden
 [submodule "examples/MOSS"]
 	path = examples/MOSS
 	url = https://github.com/Studio-Todos/MOSS

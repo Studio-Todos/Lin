@@ -48,7 +48,7 @@
         - B2: merge_boundary op when boundaries meet
         - B3: collapse deferred to runtime E-graph hashing
 
-## 🔴 Tier 1 — High-Level Syntax & Semantics (Wellspring Alignment)
+## 🔴 Tier 1 — High-Level Syntax & Semantics (Linden Alignment)
 
 [x] 1. AST_PAIR lowering in lowerExpression
         - Emit a pair agent that holds two ports ✅
@@ -93,7 +93,7 @@
 [x] 7. Data Blocks vs. Code Blocks
         - Parser: Distinguish between block as statement-list vs. block as data-literal
         - Lowering: For data blocks, emit a linked structure of Pair agents in the graph
-        - Unblocks: `copy [pos vel force]` pattern in Wellspring
+        - Unblocks: `copy [pos vel force]` pattern in Linden
 
 [x] 8. Module Headers & Metadata
         - Parser: Recognize `Name: module [ metadata ]` syntax
