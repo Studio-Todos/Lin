@@ -808,11 +808,11 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         MlirType portType = getPicPortType(ctx);
 
         // Phase 2: Create the underlying function
-        // All user-defined functions take exactly TWO arguments: [captures_bundle, argument]
+        // All user-defined functions take THREE arguments: [captures_bundle, argument, runtime_state]
         MlirType i32Type = mlirIntegerTypeGet(ctx, 32);
-        MlirType funcArgTypes[] = {i32Type, i32Type};
-        MlirLocation funcArgLocs[] = {loc, loc};
-        MlirType funcType = mlirFunctionTypeGet(ctx, 2, funcArgTypes, 0, NULL);
+        MlirType funcArgTypes[] = {i32Type, i32Type, i32Type};
+        MlirLocation funcArgLocs[] = {loc, loc, loc};
+        MlirType funcType = mlirFunctionTypeGet(ctx, 3, funcArgTypes, 0, NULL);
 
         MlirOperationState funcState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.func"), loc);
         char prefixedName[512];
@@ -825,7 +825,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         mlirOperationStateAddAttributes(&funcState, 2, funcAttrs);
 
         MlirRegion innerRegion = mlirRegionCreate();
-        MlirBlock innerBlock = mlirBlockCreate(2, funcArgTypes, funcArgLocs);
+        MlirBlock innerBlock = mlirBlockCreate(3, funcArgTypes, funcArgLocs);
         mlirRegionAppendOwnedBlock(innerRegion, innerBlock);
         mlirOperationStateAddOwnedRegions(&funcState, 1, &innerRegion);
 

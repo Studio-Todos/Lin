@@ -451,18 +451,18 @@ int main(int argc, char **argv) {
       ModuleOp module = unwrap(cModule);
 
       std::cout << "Generated MLIR (before lowering):\n";
-      module->print(llvm::outs());
+      
       llvm::outs() << "\n";
 
-      optimizeInteractionNetWithEGraphs(cModule);
+      // optimizeInteractionNetWithEGraphs(cModule);
 
       PassManager pm(&context);
       pm.addPass(createPicGraphToReducePass());
-      pm.addPass(createPicReduceToRuntimePass());
       pm.addPass(createPicRuntimeToLLVMPass(enableGPU));
 
       // Lower remaining high-level dialects to LLVM
-      pm.addPass(mlir::createConvertSCFToCFPass());
+      
+pm.addPass(mlir::createConvertSCFToCFPass());
       pm.addPass(mlir::createConvertControlFlowToLLVMPass());
       pm.addPass(mlir::createArithToLLVMConversionPass());
       pm.addPass(mlir::createConvertFuncToLLVMPass());
@@ -497,7 +497,7 @@ int main(int argc, char **argv) {
       }
 
       std::cout << "\nLowering pass successful. Generated LLVM IR:\n";
-      module->print(llvm::outs());
+      
       llvm::outs() << "\n";
 
 #if __has_include("mlir/Target/SPIRV/Serialization.h")
