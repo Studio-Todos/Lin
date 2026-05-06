@@ -1051,8 +1051,20 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
     }
 
     if (expr->type == AST_CALL) {
+        // Use resolved_callee (type-directed rewrite) if set, else fall back to callee.
+        // resolved_callee is set by the type checker for binary ops (e.g. add→fadd for f32).
+        const char *effectiveCallee = expr->as.call.resolved_callee
+                                      ? expr->as.call.resolved_callee
+                                      : expr->as.call.callee;
+        int effectiveCalleeLen = expr->as.call.resolved_callee
+                                 ? (int)strlen(expr->as.call.resolved_callee)
+                                 : expr->as.call.callee_len;
+
         // Check if callee is a user-defined function in the environment
-        MlirValue currentVal = env_fetch(ctx, block, loc, env, expr->as.call.callee, expr->as.call.callee_len);
+        MlirValue currentVal = env_fetch(ctx, block, loc, env, effectiveCallee, effectiveCalleeLen);
+        // If not found with effective callee, also try original callee (for closures stored by original name)
+        if (mlirValueIsNull(currentVal) && expr->as.call.resolved_callee)
+            currentVal = env_fetch(ctx, block, loc, env, expr->as.call.callee, expr->as.call.callee_len);
 
         if (!mlirValueIsNull(currentVal)) {
             MlirType portType = getPicPortType(ctx);
@@ -1171,7 +1183,10 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
             MlirAttribute polAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("-"));
             MlirNamedAttribute polNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), polAttr);
 
-            MlirAttribute labelAttr = mlirStringAttrGet(ctx, mlirStringRefCreate(expr->as.call.callee, expr->as.call.callee_len));
+            // Use resolved_callee (type-directed) as the omega label when set.
+            // This is the key mechanism: omega(-, label) annihilates with omega(+, label)
+            // at runtime, so the label must match the registered mlir-op payload name.
+            MlirAttribute labelAttr = mlirStringAttrGet(ctx, mlirStringRefCreate(effectiveCallee, effectiveCalleeLen));
             MlirNamedAttribute labelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), labelAttr);
 
             MlirNamedAttribute attrs[] = {typeNamedAttr, polNamedAttr, labelNamedAttr};
@@ -1209,8 +1224,8 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
             MlirAttribute polAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("-")); // operations consume, so -
             MlirNamedAttribute polNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), polAttr);
 
-            // Use the callee name directly as the label
-            MlirAttribute labelAttr = mlirStringAttrGet(ctx, mlirStringRefCreate(expr->as.call.callee, expr->as.call.callee_len));
+            // Use the effective callee (type-directed) as the omega label
+            MlirAttribute labelAttr = mlirStringAttrGet(ctx, mlirStringRefCreate(effectiveCallee, effectiveCalleeLen));
             MlirNamedAttribute labelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), labelAttr);
 
             MlirNamedAttribute attrs[] = {typeNamedAttr, polNamedAttr, labelNamedAttr};

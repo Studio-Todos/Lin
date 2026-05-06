@@ -56,12 +56,14 @@ typedef struct {
     const char *start;
     int length;
     int line;
+    int col;
 } Token;
 
 typedef struct {
     const char *start;
     const char *current;
     int line;
+    int col;   // current column (1-indexed, resets each newline)
 } Lexer;
 
 void initLexer(Lexer *lexer, const char *source);
@@ -91,13 +93,17 @@ typedef enum {
 
 typedef struct AstNode {
     AstNodeType type;
+    int line;   // source line (1-indexed)
+    int col;    // source column (1-indexed)
     union {
         struct { int32_t value; } number;
         struct { bool value; } boolean;
         struct { float value; } f_number;
         struct { const char *name; int length; } identifier;
         struct { struct AstNode *left; TokenType op; struct AstNode *right; } binary;
-        struct { const char *callee; int callee_len; struct AstNode **args; int arg_count; int capacity; } call;
+        struct { const char *callee; int callee_len;
+                 const char *resolved_callee; /* type-directed override (heap-alloc) or NULL */
+                 struct AstNode **args; int arg_count; int capacity; } call;
         struct { struct AstNode **statements; int count; int capacity; } block;
         struct {
             const char *name;

@@ -4,8 +4,14 @@
 #include <string.h>
 #include <ctype.h>
 
+// ──────────────── Lexer ────────────────
+
 static bool isAtEnd(Lexer *lexer) { return *lexer->current == '\0'; }
-static char advance(Lexer *lexer) { return *lexer->current++; }
+static char advance(Lexer *lexer) {
+    char c = *lexer->current++;
+    lexer->col++;
+    return c;
+}
 static char peek(Lexer *lexer) { return *lexer->current; }
 static char peekNext(Lexer *lexer) {
     if (isAtEnd(lexer)) return '\0';
@@ -15,6 +21,7 @@ static bool match(Lexer *lexer, char expected) {
     if (isAtEnd(lexer)) return false;
     if (*lexer->current != expected) return false;
     lexer->current++;
+    lexer->col++;
     return true;
 }
 static void skipWhitespace(Lexer *lexer) {
@@ -22,7 +29,7 @@ static void skipWhitespace(Lexer *lexer) {
         char c = peek(lexer);
         switch (c) {
             case ' ': case '\r': case '\t': advance(lexer); break;
-            case '\n': lexer->line++; advance(lexer); break;
+            case '\n': lexer->line++; lexer->col = 0; advance(lexer); break;
             case ';':
                 while (peek(lexer) != '\n' && !isAtEnd(lexer)) advance(lexer);
                 break;
@@ -34,7 +41,7 @@ static void skipWhitespace(Lexer *lexer) {
                     advance(lexer); // consume '/'
                     advance(lexer); // consume '*'
                     while (!isAtEnd(lexer)) {
-                        if (peek(lexer) == '\n') lexer->line++;
+                        if (peek(lexer) == '\n') { lexer->line++; lexer->col = 0; }
                         if (peek(lexer) == '*' && peekNext(lexer) == '/') {
                             advance(lexer); // consume '*'
                             advance(lexer); // consume '/'
@@ -56,6 +63,8 @@ static Token makeToken(const Lexer *lexer, TokenType type) {
     token.start = lexer->start;
     token.length = (int)(lexer->current - lexer->start);
     token.line = lexer->line;
+    token.col  = lexer->col - token.length; // start column of token
+    if (token.col < 1) token.col = 1;
     return token;
 }
 
@@ -125,6 +134,7 @@ void initLexer(Lexer *lexer, const char *source) {
     lexer->start = source;
     lexer->current = source;
     lexer->line = 1;
+    lexer->col  = 1;
 }
 
 Token scanToken(Lexer *lexer) {
@@ -180,7 +190,7 @@ typedef struct {
 
 static void errorAt(Parser *parser, const Token *token, const char *message) {
     if (parser->hadError) return;
-    fprintf(stderr, "[line %d] Error", token->line);
+    fprintf(stderr, "[line %d:%d] Error", token->line, token->col);
     if (token->type == TOKEN_EOF) {
         fprintf(stderr, " at end");
     } else {
@@ -232,6 +242,8 @@ static AstNode* createNode(Parser *parser, AstNodeType type) {
         return NULL;
     }
     node->type = type;
+    node->line = parser->current.line;
+    node->col  = parser->current.col;
     return node;
 }
 
@@ -426,6 +438,7 @@ static AstNode* parseGroupingExpr(Parser *parser) {
         call->as.call.args = NULL;
         call->as.call.arg_count = 0;
         call->as.call.capacity = 0;
+        call->as.call.resolved_callee = NULL;
         while (parser->current.type != TOKEN_RPAREN && parser->current.type != TOKEN_EOF) {
             AstNode *arg = parseExpression(parser);
             if (call->as.call.arg_count >= call->as.call.capacity) {
@@ -543,6 +556,7 @@ static AstNode* parseExpression(Parser *parser) {
         call->as.call.callee = strdup(funcName);
         call->as.call.callee_len = strlen(funcName);
         call->as.call.arg_count = 2;
+        call->as.call.resolved_callee = NULL;
         call->as.call.args = malloc(sizeof(AstNode*) * 2);
         call->as.call.args[0] = expr;
         call->as.call.args[1] = right;
@@ -636,6 +650,7 @@ static AstNode* parseEither(Parser *parser) {
     call->as.call.callee_len = 6;
     call->as.call.arg_count = 2;
     call->as.call.capacity = 2;
+    call->as.call.resolved_callee = NULL;
     call->as.call.args = malloc(sizeof(AstNode*) * 2);
     if (!call->as.call.args) {
         error(parser, "Out of memory");
@@ -800,6 +815,7 @@ void freeAst(AstNode *node) {
     } else if (node->type == AST_ASSIGNMENT) {
         freeAst(node->as.assignment.value);
     } else if (node->type == AST_CALL) {
+        if (node->as.call.resolved_callee) free((void*)node->as.call.resolved_callee);
         for (int i=0; i<node->as.call.arg_count; i++) freeAst(node->as.call.args[i]);
         free(node->as.call.args);
     } else if (node->type == AST_WHILE) {
