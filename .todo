@@ -115,12 +115,13 @@
 
 ## 🟡 Tier 2 — Language Completeness
 
-[/] 11. Closure / captured variable support
+[x] 11. Closure / captured variable support
         - Thread outer-scope bindings into inner γ⁺ function agents via aux ports ✅
         - Multi-use bindings → δ (duplicator) nodes for sharing ✅
         - ✅ Enabling Step: Stabilized runtime lowering for 64-bit pointers
         - ✅ Enabling Step: Fixed double-dereference and malloc size bugs
-        - [ ] Task: Resolve worker thread segfault during closure application
+        - ✅ Resolved worker thread segfault during closure application
+        - ✅ test/test_closure.lin compiles and runs cleanly (exit 0)
 
 [x] 12. Binary operators via std library
         - All 12 operators (+, -, *, /, <, >, <=, >=, ==, !=, &&, ||) work
