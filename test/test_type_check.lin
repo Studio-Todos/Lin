@@ -1,0 +1,40 @@
+// test_type_check.lin
+// Task 13: type checking / type-directed dispatch
+//
+// Exercises:
+//   1. i32 binary ops resolve to the correct omega label (add, sub, etc.)
+//   2. f32 binary ops resolve to fadd/fsub/fmul/fdiv via resolved_callee
+//   3. Typed function arguments propagate into call sites
+
+import "std/math.lin"
+import "std/io.lin"
+
+// i32 arithmetic — type checker keeps "add" / "sub" labels
+add-ints: func [
+    a [i32!]
+    b [i32!]
+    return: [i32!]
+][
+    a + b
+]
+
+// f32 arithmetic — type checker rewrites "add"→"fadd", "mul"→"fmul"
+scale-float: func [
+    x [f32!]
+    factor [f32!]
+    return: [f32!]
+][
+    x * factor
+]
+
+main: func [return: [i32!]][
+    // i32 path
+    result-i32: (add-ints 3 4)   // expect 7
+    (print-i32 result-i32)
+
+    // f32 path — resolved_callee rewrites * to fmul
+    result-f32: (scale-float 2.5 3.0)  // expect 7.5
+    (print-f32 result-f32)
+
+    0
+]
