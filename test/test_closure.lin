@@ -1,8 +1,9 @@
 import "std/types.lin"
 
-outer: func [captured [i32!]] [
-    inner: func [x [i32!]] [x + captured]
+outer: func [captured [i32!] return: [i32!]] [
+    inner: func [x [i32!] return: [i32!]] [x + captured]
     inner
 ]
 
-((outer 5) 10)
+f: (outer 5)
+(f 10)

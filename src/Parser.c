@@ -219,7 +219,7 @@ static AstNode* parseWhile(Parser *parser);
 
 static AstNode* parseEither(Parser *parser);
 
-static AstNode* parseFuncDecl(Parser *parser);
+static AstNode* parseFuncDecl(Parser *parser, bool anonymous);
 
 static AstNode* parseBlock(Parser *parser);
 
@@ -347,8 +347,7 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
             node->as.module.module_block = module_block;
             return node;
         } else if (is_func) {
-            parser->previous = ident;
-            return parseFuncDecl(parser);
+            return parseFuncDecl(parser, false);
         } else {
             parserAdvance(parser); // consume colon
             AstNode *node = createNode(parser, AST_ASSIGNMENT);
@@ -506,6 +505,7 @@ static AstNode* parsePrimary(Parser *parser) {
         case TOKEN_LPAREN:     return parseGroupingExpr(parser);
         case TOKEN_WHILE:      return parseWhile(parser);
         case TOKEN_EITHER:     return parseEither(parser);
+        case TOKEN_FUNC:       return parseFuncDecl(parser, true);
         case TOKEN_LBRACKET:   return parseBlock(parser);
         default:
             error(parser, "Expect expression.");
@@ -665,9 +665,15 @@ static AstNode* parseStatement(Parser *parser) {
     return parseExpression(parser);
 }
 
-static AstNode* parseFuncDecl(Parser *parser) {
-    Token name = parser->previous;
-    consume(parser, TOKEN_COLON, "Expect ':' after function name.");
+static AstNode* parseFuncDecl(Parser *parser, bool anonymous) {
+    Token name;
+    if (!anonymous) {
+        name = parser->previous;
+        consume(parser, TOKEN_COLON, "Expect ':' after function name.");
+    } else {
+        name.start = "";
+        name.length = 0;
+    }
     consume(parser, TOKEN_FUNC, "Expect 'func'.");
     consume(parser, TOKEN_LBRACKET, "Expect '[' for args.");
 
