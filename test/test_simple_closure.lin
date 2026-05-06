@@ -1,0 +1,16 @@
+import "std/types.lin"
+import "std/io.lin"
+
+make_counter: func [start [i32!]] return: [i32!] [
+    next_func: func [arg [i32!]] return: [i32!] [
+        start + 1
+    ]
+    next_func
+]
+
+main: func [] return: [i32!] [
+    c: (make_counter 10)
+    val: (c 0)
+    s: (print_i32 0 val)
+    0
+]

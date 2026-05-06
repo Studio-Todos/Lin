@@ -1,0 +1,15 @@
+// Verification test for closures
+import "std/types.lin"
+import "std/io.lin"
+
+make_adder: func [n [i32!] return: [i32!]] [
+    adder: func [x [i32!] return: [i32!]] [x + n]
+    adder
+]
+
+main: func [return: [i32!]] [
+    f: (make_adder 5)
+    res: (f 10)
+    state: (print_i32 0 res)
+    0
+]

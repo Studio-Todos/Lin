@@ -47,6 +47,8 @@
 #if __has_include("mlir/Target/SPIRV/Serialization.h")
 #include "mlir/Target/SPIRV/Serialization.h"
 #endif
+#include "mlir/Conversion/Passes.h"
+#include "mlir/Transforms/Passes.h"
 
 #include "mlir-c/IR.h"
 #include "mlir/CAPI/IR.h"
@@ -118,14 +120,15 @@ static int semanticTypeCheckAst(AstNode *node, std::unordered_set<std::string>& 
                     errors++;
                 }
             }
-            if (node->as.func_decl.return_type_len > 0) {
+            if (node->as.func_decl.return_type_len > 0 && node->as.func_decl.return_type_name) {
                 std::string returnTypeName(node->as.func_decl.return_type_name, node->as.func_decl.return_type_len);
-                if (returnTypeName[0] != '[' && declaredTypes.find(returnTypeName) == declaredTypes.end()) {
-                    std::cerr << "Semantic Error: Return type '" << returnTypeName << "' used in function '" << std::string(node->as.func_decl.name, node->as.func_decl.name_len) << "' is undeclared.\n";
+                if (!returnTypeName.empty() && returnTypeName[0] != '[' && declaredTypes.find(returnTypeName) == declaredTypes.end()) {
+                    std::cerr << "Semantic Error: Return type '" << returnTypeName << "' used in function '" << (node->as.func_decl.name ? std::string(node->as.func_decl.name, node->as.func_decl.name_len) : "anonymous") << "' is undeclared.\n";
                     errors++;
                 }
             }
-            errors += semanticTypeCheckAst(node->as.func_decl.body, declaredTypes);
+            if (node->as.func_decl.body)
+                errors += semanticTypeCheckAst(node->as.func_decl.body, declaredTypes);
             break;
         }
         case AST_ASSIGNMENT: {
@@ -458,6 +461,13 @@ int main(int argc, char **argv) {
       pm.addPass(createPicReduceToRuntimePass());
       pm.addPass(createPicRuntimeToLLVMPass(enableGPU));
 
+      // Lower remaining high-level dialects to LLVM
+      pm.addPass(mlir::createConvertSCFToCFPass());
+      pm.addPass(mlir::createConvertControlFlowToLLVMPass());
+      pm.addPass(mlir::createArithToLLVMConversionPass());
+      pm.addPass(mlir::createConvertFuncToLLVMPass());
+      pm.addPass(mlir::createReconcileUnrealizedCastsPass());
+
       if (enableGPU) {
           pm.addPass(mlir::createGpuKernelOutliningPass());
 #if __has_include("mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h")
@@ -562,7 +572,7 @@ int main(int argc, char **argv) {
       }
 
       llvm::TargetOptions opt;
-      auto rm = std::optional<llvm::Reloc::Model>();
+      auto rm = std::optional<llvm::Reloc::Model>(llvm::Reloc::PIC_);
       auto targetMachine = target->createTargetMachine(targetTriple, "generic", "", opt, rm);
 
       llvmModule->setDataLayout(targetMachine->createDataLayout());
