@@ -616,7 +616,7 @@ int main(int argc, char **argv) {
       ModuleOp module = unwrap(cModule);
 
       std::cout << "Generated MLIR (before lowering):\n";
-      
+      module.print(llvm::outs());
       llvm::outs() << "\n";
 
       // optimizeInteractionNetWithEGraphs(cModule);
@@ -661,9 +661,7 @@ pm.addPass(mlir::createConvertSCFToCFPass());
           return 1;
       }
 
-      std::cout << "\nLowering pass successful. Generated LLVM IR:\n";
-      
-      llvm::outs() << "\n";
+      std::cout << "\nLowering pass successful.\n";
 
 #if __has_include("mlir/Target/SPIRV/Serialization.h")
       if (enableGPU) {
@@ -721,6 +719,9 @@ pm.addPass(mlir::createConvertSCFToCFPass());
           std::cerr << "Failed to translate MLIR to LLVM IR.\n";
           return 1;
       }
+      std::cout << "Generated LLVM IR:\n";
+      llvmModule->print(llvm::outs(), nullptr);
+      llvm::outs() << "\n";
 
       std::string error;
       std::string targetTriple = enableWasm ? "wasm32-unknown-unknown" : llvm::sys::getDefaultTargetTriple();
@@ -791,7 +792,26 @@ pm.addPass(mlir::createConvertSCFToCFPass());
                   args.push_back(const_cast<char*>(outputBinary.c_str()));
                   args.push_back(const_cast<char*>("-lpthread"));
                   if (enableGPU) {
-                      args.push_back(const_cast<char*>("/home/falconnor4/github/Lin/src/gpu_runtime.c"));
+                      // Attempt to find gpu_runtime.c relative to the project root or source directory
+                      std::string gpuRuntimePath = "src/gpu_runtime.c";
+                      char exePath[PATH_MAX];
+                      ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath)-1);
+                      if (len != -1) {
+                          exePath[len] = '\0';
+                          std::filesystem::path ePath(exePath);
+                          std::filesystem::path binDir = ePath.parent_path();
+                          // Try parent of build/src or build/
+                          std::filesystem::path pDir = binDir.parent_path();
+                          if (pDir.has_parent_path()) {
+                              std::filesystem::path candidate = pDir.parent_path() / "src" / "gpu_runtime.c";
+                              if (std::filesystem::exists(candidate)) gpuRuntimePath = candidate.string();
+                              else {
+                                  candidate = pDir / "src" / "gpu_runtime.c";
+                                  if (std::filesystem::exists(candidate)) gpuRuntimePath = candidate.string();
+                              }
+                          }
+                      }
+                      args.push_back(const_cast<char*>(gpuRuntimePath.c_str()));
                       args.push_back(const_cast<char*>("-lvulkan"));
                   }
                   args.push_back(nullptr);

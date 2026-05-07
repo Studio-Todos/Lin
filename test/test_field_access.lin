@@ -1,3 +1,4 @@
+// RUN: %linc build %s -o %t
 // Test item 8: Field access for pair projection
 import "std/types.lin"
 

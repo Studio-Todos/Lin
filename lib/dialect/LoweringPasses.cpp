@@ -56,9 +56,14 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
       auto i32Type = builder.getI32Type();
       DenseMap<Value, Value> valueToPort;
 
-      // Update signature to i32 if needed
+      // Update signature to i32 if needed and track arguments
       for (auto arg : funcOp.getArguments()) {
-          if (!arg.getType().isInteger(32)) arg.setType(i32Type);
+          if (arg.getType().isInteger(32)) {
+              valueToPort[arg] = arg;
+          } else if (!arg.getType().isInteger(64)) {
+              arg.setType(i32Type);
+              valueToPort[arg] = arg;
+          }
       }
       if (funcOp.getNumResults() > 0 && !funcOp.getResultTypes()[0].isInteger(32)) {
           SmallVector<Type> resTypes(funcOp.getNumResults(), i32Type);
@@ -82,7 +87,16 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
         if (typeEnum == 3 && op.getValue()) val = op.getValue().value();
         else if (typeEnum == 4) {
             if (label == "str" && op.getStrVal()) {
-                std::string strKey = "STR_" + op.getStrVal().value().str();
+                std::string rawStr = op.getStrVal().value().str();
+                std::string strKey = "STR_";
+                for (char c : rawStr) {
+                    if (std::isalnum(c)) strKey += c;
+                    else {
+                        char buf[8];
+                        sprintf(buf, "_%02x", (unsigned char)c);
+                        strKey += buf;
+                    }
+                }
                 val = opcodeForLabel(strKey);
                 builder.create<pic::graph::RegistryOp>(loc, builder.getStringAttr(strKey), op.getStrVal().value());
             } else val = opcodeForLabel(label);
@@ -162,9 +176,13 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             if (n && p) {
                 registry[n.getValue().str()] = p.getValue().str();
                 if (n.getValue().starts_with("STR_")) {
-                    OpBuilder b(module.getBodyRegion());
-                    auto sType = LLVM::LLVMArrayType::get(builder.getI8Type(), p.getValue().size() + 1);
-                    b.create<LLVM::GlobalOp>(module.getLoc(), sType, true, LLVM::Linkage::Internal, n.getValue(), builder.getStringAttr(StringRef(p.getValue().data(), p.getValue().size() + 1)));
+                    if (!module.lookupSymbol(n.getValue())) {
+                        OpBuilder b(module.getBodyRegion());
+                        std::string valWithNull = p.getValue().str();
+                        valWithNull.push_back('\0');
+                        auto sType = LLVM::LLVMArrayType::get(builder.getI8Type(), valWithNull.size());
+                        b.create<LLVM::GlobalOp>(module.getLoc(), sType, true, LLVM::Linkage::Internal, n.getValue(), builder.getStringAttr(valWithNull));
+                    }
                 }
             }
             regOps.push_back(op);
@@ -311,12 +329,12 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         builder.setInsertionPoint(entry);
         auto m = builder.create<LLVM::LLVMFuncOp>(entry.getLoc(), "main", LLVM::LLVMFunctionType::get(i32Type, {}));
         Block *mE = m.addEntryBlock(); builder.setInsertionPointToStart(mE);
-        Value nS = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(16000000));
+        Value nS = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(128000000));
         Value net = builder.create<LLVM::CallOp>(entry.getLoc(), ptrType, "malloc", ValueRange{nS}).getResult();
         Value q = builder.create<LLVM::CallOp>(entry.getLoc(), ptrType, "malloc", ValueRange{nS}).getResult();
         Value hd = builder.create<LLVM::CallOp>(entry.getLoc(), ptrType, "malloc", ValueRange{builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(8))}).getResult();
         Value tl = builder.create<LLVM::CallOp>(entry.getLoc(), ptrType, "malloc", ValueRange{builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(8))}).getResult();
-        Value al = builder.create<LLVM::CallOp>(entry.getLoc(), ptrType, "malloc", ValueRange{builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(4))}).getResult();
+        Value al = builder.create<LLVM::CallOp>(entry.getLoc(), ptrType, "malloc", ValueRange{builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(8))}).getResult();
         Value zero64 = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(0));
         builder.create<LLVM::StoreOp>(entry.getLoc(), zero64, hd); builder.create<LLVM::StoreOp>(entry.getLoc(), zero64, tl);
         builder.create<LLVM::StoreOp>(entry.getLoc(), builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(0)), al);
