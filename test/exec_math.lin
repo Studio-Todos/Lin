@@ -30,3 +30,5 @@ test_math: func [
         ]
     ]
 ]
+
+test_math 0

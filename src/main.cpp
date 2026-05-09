@@ -615,9 +615,9 @@ int main(int argc, char **argv) {
 
       ModuleOp module = unwrap(cModule);
 
-      std::cout << "Generated MLIR (before lowering):\n";
-      module.print(llvm::outs());
-      llvm::outs() << "\n";
+      // std::cout << "Generated MLIR (before lowering):\n";
+      // module.print(llvm::outs());
+      // llvm::outs() << "\n";
 
       // optimizeInteractionNetWithEGraphs(cModule);
 
