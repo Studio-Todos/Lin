@@ -1,3 +1,4 @@
+// RUN: %linc build %s -o %t
 ; func_test.lin - Tests user-defined function lowering via interaction nets
 ; Expected: add-one called with 10 produces 11
 

@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 static MlirType getPicPortType(MlirContext ctx) {
     return mlirTypeParseGet(ctx, mlirStringRefCreateFromCString("!pic_graph.port"));
@@ -445,8 +446,47 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         MlirAttribute payloadAttr = mlirStringAttrGet(ctx, mlirStringRefCreate(expr->as.mlir_op.mlir_payload, expr->as.mlir_op.payload_len));
         MlirNamedAttribute payloadNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("payload")), payloadAttr);
 
-        // Pass the raw inputs string to the lowering pass for mapping
-        MlirAttribute namesAttr = mlirStringAttrGet(ctx, mlirStringRefCreate(expr->as.mlir_op.inputs, expr->as.mlir_op.inputs_len));
+        // Pass the cleaned-up inputs as [%name1][%name2]...
+        char cleanNames[2048] = "";
+        const char *p = expr->as.mlir_op.inputs;
+        int len = expr->as.mlir_op.inputs_len;
+        bool inInputs = false;
+        for (int i = 0; i < len; i++) {
+            if (p[i] == '[') {
+                i++;
+                while (i < len && isspace((unsigned char)p[i])) i++;
+                const char *wordStart = p + i;
+                while (i < len && !isspace((unsigned char)p[i]) && p[i] != '[' && p[i] != ']') i++;
+                int wordLen = (int)(p + i - wordStart);
+                if (wordLen > 0) {
+                    if (strncmp(wordStart, "inputs:", 7) == 0) {
+                        inInputs = true;
+                    } else if (strncmp(wordStart, "outputs:", 8) == 0) {
+                        inInputs = false;
+                    } else if (inInputs) {
+                        // Found an argument name!
+                        if (strlen(cleanNames) + wordLen + 4 < sizeof(cleanNames)) {
+                            strcat(cleanNames, "[%");
+                            strncat(cleanNames, wordStart, wordLen);
+                            strcat(cleanNames, "]");
+                        }
+                    }
+                }
+                // Skip the type block if it follows
+                while (i < len && isspace((unsigned char)p[i])) i++;
+                if (i < len && p[i] == '[') {
+                    int depth = 1;
+                    i++;
+                    while (i < len && depth > 0) {
+                        if (p[i] == '[') depth++;
+                        else if (p[i] == ']') depth--;
+                        i++;
+                    }
+                }
+                i--; // backtrack to process the next character correctly
+            }
+        }
+        MlirAttribute namesAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(cleanNames));
         MlirNamedAttribute namesNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("arg_names")), namesAttr);
 
         MlirNamedAttribute attrs[] = {nameNamedAttr, payloadNamedAttr, namesNamedAttr};
@@ -473,7 +513,12 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
 
         MlirOperation op = mlirOperationCreate(&state);
         mlirBlockAppendOwnedOperation(block, op);
-        return mlirOperationGetResult(op, 0);
+        
+        MlirValue result = mlirOperationGetResult(op, 0);
+        if (expr->as.mlir_op.name_len > 0) {
+            env_add(env, expr->as.mlir_op.name, expr->as.mlir_op.name_len, result);
+        }
+        return result;
     }
 
     if (expr->type == AST_ASSIGNMENT) {
@@ -565,7 +610,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
             AstNode *stmt = expr->as.block.statements[i];
             // Skip import and mlir_op since they have no runtime code
             if (!stmt) continue;
-            if (stmt->type == AST_IMPORT || stmt->type == AST_MLIR_OP) continue;
+            if (stmt->type == AST_IMPORT) continue;
             lastVal = lowerExpression(ctx, block, loc, stmt, env);
         }
 
@@ -952,15 +997,17 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
 
         // Phase 2.5: Register payload for the dispatcher
         // This allows omega agents with this label to fire rule_fire_op
-        char payloadBuf[1024];
-        sprintf(payloadBuf, "  func.call @lin_%s(%%a, %%b) : (i32, i32) -> ()\n", funcNameStr);
+        char payloadBuf[2048];
+        snprintf(payloadBuf, sizeof(payloadBuf), "%%res = llvm.mlir.constant(0 : i32) : i32 \n  func.call @lin_%s(%%res, %%arg0, %%res) : (i32, i32, i32) -> ()\n", funcNameStr);
         MlirOperationState regState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.registry"), loc);
         MlirAttribute opNameAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(funcNameStr));
         MlirNamedAttribute opNameNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("op_name")), opNameAttr);
         MlirAttribute payloadAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(payloadBuf));
         MlirNamedAttribute payloadNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("payload")), payloadAttr);
-        MlirNamedAttribute regAttrs[] = {opNameNamed, payloadNamed};
-        mlirOperationStateAddAttributes(&regState, 2, regAttrs);
+        MlirAttribute argNamesAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("[%arg0][%arg1]"));
+        MlirNamedAttribute argNamesNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("arg_names")), argNamesAttr);
+        MlirNamedAttribute regAttrs[] = {opNameNamed, payloadNamed, argNamesNamed};
+        mlirOperationStateAddAttributes(&regState, 3, regAttrs);
         if (!mlirBlockIsNull(moduleBody)) {
             mlirBlockAppendOwnedOperation(moduleBody, mlirOperationCreate(&regState));
         }

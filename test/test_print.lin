@@ -1,7 +1,5 @@
+// RUN: %linc build %s -o %t
 import "std/types.lin"
 import "std/io.lin"
 
-main: func [] return: [i32!] [
-    s: (print_i32 0 123)
-    0
-]
+(print_i32 0 123)

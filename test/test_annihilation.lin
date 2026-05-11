@@ -1,3 +1,4 @@
+// RUN: %linc build %s -o %t
 test_op: mlir-op [
     inputs: [a [i32!]]
     outputs: [res [i32!]]

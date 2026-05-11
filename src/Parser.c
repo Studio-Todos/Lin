@@ -312,13 +312,24 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
 
             Token payload_start = parser->current;
             consume(parser, TOKEN_LBRACE, "Expect '{' for mlir-op payload.");
-            int brace_count = 1;
-            while (brace_count > 0 && parser->current.type != TOKEN_EOF) {
-                if (parser->current.type == TOKEN_LBRACE) brace_count++;
-                else if (parser->current.type == TOKEN_RBRACE) brace_count--;
-                parserAdvance(parser);
+
+            const char *payload_begin = payload_start.start + 1;
+            const char *p = payload_begin;
+            int braces = 1;
+            while (braces > 0 && *p != '\0') {
+                if (*p == '{') braces++;
+                else if (*p == '}') braces--;
+                p++;
             }
-            Token payload_end = parser->previous;
+            if (braces > 0) {
+                errorAt(parser, &payload_start, "Unterminated mlir-op payload.");
+                return NULL;
+            }
+            const char *payload_end_ptr = p - 1; // point to '}'
+
+            // Sync the parser's lexer state to after the '}'
+            parser->lexer.current = p;
+            parserAdvance(parser); // load the token after '}'
 
             AstNode *node = createNode(parser, AST_MLIR_OP);
             if (!node) return NULL;
@@ -326,8 +337,8 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
             node->as.mlir_op.name_len = ident.length;
             node->as.mlir_op.inputs = inputs_outputs_start.start;
             node->as.mlir_op.inputs_len = (int)(inputs_outputs_end.start + inputs_outputs_end.length - inputs_outputs_start.start);
-            node->as.mlir_op.mlir_payload = payload_start.start + 1; // Skip `{`
-            node->as.mlir_op.payload_len = (int)(payload_end.start - payload_start.start - 1); // Skip `{` and `}`
+            node->as.mlir_op.mlir_payload = payload_begin;
+            node->as.mlir_op.payload_len = (int)(payload_end_ptr - payload_begin);
 
             while (node->as.mlir_op.payload_len > 0 && (*node->as.mlir_op.mlir_payload == '\n' || *node->as.mlir_op.mlir_payload == '\r')) {
                 node->as.mlir_op.mlir_payload++;
@@ -730,65 +741,31 @@ static AstNode* parseFuncDecl(Parser *parser, bool anonymous) {
         arg_count++;
     }
 
+    bool hasReturn = false;
     if (parser->current.type == TOKEN_RETURN) {
-        parserAdvance(parser);
-    } else if (parser->current.type == TOKEN_RBRACKET) {
-        parserAdvance(parser);
-        if (parser->current.type == TOKEN_RETURN) {
-            parserAdvance(parser);
-        }
+        hasReturn = true;
+        parserAdvance(parser); // consume 'return'
+        consume(parser, TOKEN_COLON, "Expect ':' after return.");
     }
-    consume(parser, TOKEN_COLON, "Expect ':' after return.");
-    consume(parser, TOKEN_LBRACKET, "Expect '[' for return type.");
-    Token returnTypeName = parser->current;
-    if (parser->current.type == TOKEN_LPAREN) {
-        returnTypeName = parser->previous;
-        parserAdvance(parser);
-        while (parser->current.type != TOKEN_RPAREN && parser->current.type != TOKEN_EOF && parser->current.type != TOKEN_RBRACKET) {
+
+    Token returnTypeName;
+    returnTypeName.start = "i32"; // Default
+    returnTypeName.length = 3;
+
+    if (hasReturn) {
+        consume(parser, TOKEN_LBRACKET, "Expect '[' for return type.");
+        returnTypeName = parser->current;
+        if (parser->current.type == TOKEN_IDENTIFIER) {
             parserAdvance(parser);
+            consume(parser, TOKEN_BANG, "Expect '!'.");
+        } else {
+            errorAt(parser, &parser->current, "Expect return type identifier.");
         }
-        if (parser->current.type == TOKEN_RPAREN) {
-            returnTypeName.length = (int)(parser->current.start - returnTypeName.start + 1);
-            parserAdvance(parser);
-        }
-    } else if (parser->current.type == TOKEN_LBRACKET) {
-        returnTypeName = parser->previous;
-        int bracketDepth = 1;
-        parserAdvance(parser);
-        while (bracketDepth > 0 && parser->current.type != TOKEN_EOF) {
-            if (parser->current.type == TOKEN_LBRACKET) {
-                bracketDepth++;
-            } else if (parser->current.type == TOKEN_RBRACKET) {
-                bracketDepth--;
-            } else if (parser->current.type == TOKEN_LPAREN) {
-                bracketDepth++;
-            } else if (parser->current.type == TOKEN_RPAREN) {
-                bracketDepth--;
-            }
-            if (bracketDepth > 0) {
-                parserAdvance(parser);
-            }
-        }
-        if (parser->current.type == TOKEN_RBRACKET) {
-            returnTypeName.length = (int)(parser->current.start - returnTypeName.start + 1);
-            parserAdvance(parser);
-        }
-    } else if (parser->current.type == TOKEN_IDENTIFIER) {
-        parserAdvance(parser);
-        consume(parser, TOKEN_BANG, "Expect '!'.");
-    } else if (parser->current.type == TOKEN_RBRACKET) {
-        returnTypeName.start = "";
-        returnTypeName.length = 0;
-    } else {
-        errorAt(parser, &parser->current, "Expect type identifier.");
-    }
-    if (parser->current.type == TOKEN_RBRACKET) {
-        parserAdvance(parser);
+        consume(parser, TOKEN_RBRACKET, "Expect ']' after return type.");
     }
     
-    // Consume the final ']' that closes the entire arguments list `func [ ... ]`
     consume(parser, TOKEN_RBRACKET, "Expect ']' to close argument list.");
-
+    
     AstNode *body = parseBlock(parser);
 
     AstNode *func = createNode(parser, AST_FUNC_DECL);

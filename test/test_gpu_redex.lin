@@ -1,3 +1,4 @@
+// RUN: %linc build %s -o %t
 // GPU test: direct annihilation redex between two gamma nodes.
 // When run with --gpu, this should dispatch at least 1 active pair.
 
