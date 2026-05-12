@@ -285,7 +285,6 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                             if (cleanName.empty()) continue;
                             if (cleanName[0] != '%') cleanName = "%" + cleanName;
                             argNamesList.push_back(cleanName);
-                        llvm::errs() << "DEBUG: argsAttr=" << argsAttr.getValue() << "\n";
                         }
 
                         std::string payload = p.getValue().str();
@@ -332,7 +331,6 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                         fullSnippet += ") {\n";
                         fullSnippet += p.getValue().str();
                         fullSnippet += "\n  func.return\n";
-                        llvm::errs() << "DEBUG SNIPPET for " << funcName << ":\n" << fullSnippet << "\n";
                         fullSnippet += "}\n";
                         fullSnippet += "}";
  

@@ -200,13 +200,28 @@
           - Fixed `i32` vs `!pic_graph.port` type mismatches in `PicGraphToReducePass` ✅
           - Replaced monolithic static dispatcher with clean linear lowering ✅
 
-[ ] 26. Dev shell linking issues
+[x] 26. Snippet Lowering & Type Stability
+          - Isolated snippet parsing via temporary modules and filtered declarations ✅
+          - Implemented type-suffix inference (`_f32`, `_i64`) in `Lowering.c` and `LoweringPasses.cpp` ✅
+          - Added bitcasting layer to bridge generic `i32` ports with snippet types (`f32`, `i1`, `i64`) ✅
+          - Deduplicated RegistryOps to prevent switch-case collisions in dispatcher ✅
+
+[ ] 27. Runtime 64-bit Support 🔴
+          - The `dispatch_user_op` currently truncates `f64`/`i64` to 32 bits.
+          - Need to implement 64-bit "words" or a boxing mechanism for the interaction net nodes.
+          - Unblocks: `test_math64.lin`, `test_fmath64.lin`.
+
+[ ] 28. Dispatcher Scaling & Variadic Args 🟡
+          - Support `mlir-op` definitions with more than 2 inputs.
+          - Extend `dispatch_user_op` signature or use a variadic calling convention.
+
+[ ] 29. Dev shell linking issues 🟢
           - result/bin/linc has different libLLVM paths than build/src
           - Linking works in nix develop but not outside
           - build/src/linc fails with "execvp failed: No such file"
           - Need consistent linking environment for lit test suite
 
-[ ] 27. Language Bootstrapping (Self-Hosting)
+[ ] 30. Language Bootstrapping (Self-Hosting) 🟢
           - Rewrite the Lin compiler (`linc`) in Lin
           - Requires robust string processing, file I/O, and MLIR bindings in Lin
           - Goal: A self-hosting compiler that leverages Lin's own parallel runtime for compilation
