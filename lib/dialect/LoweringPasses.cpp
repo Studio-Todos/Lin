@@ -257,11 +257,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         // Trim trailing whitespace
         s.erase(s.find_last_not_of(" \n\r\t") + 1);
         
-        llvm::errs() << "Captured Decl: [" << s << "]\n";
-        if (s.find("private") == std::string::npos && s.find("public") == std::string::npos) {
-            auto namePos = s.find("@");
-            if (namePos != std::string::npos) s.insert(namePos, "private ");
-        }
+        llvm::errs() << "Captured Decl (func): [" << s << "]\n";
         existingDecls.push_back(s);
     }
     for (auto func : module.getOps<LLVM::LLVMFuncOp>()) {
@@ -271,10 +267,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         std::string s = os.str();
         auto pos = s.find("{");
         if (pos != std::string::npos) s = s.substr(0, pos);
-        if (s.find("linkage") == std::string::npos) {
-            auto namePos = s.find("@");
-            if (namePos != std::string::npos) s.insert(namePos, "linkage(external) ");
-        }
+        llvm::errs() << "Captured Decl (llvm): [" << s << "]\n";
         existingDecls.push_back(s);
     }
 
@@ -419,6 +412,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                         tempModuleStr += "  func.return %res : i64\n}\n}\n";
                         
                         
+                        llvm::errs() << "Final Snippet Module:\n" << tempModuleStr << "\n";
                         auto parsedSnippet = parseSourceString<ModuleOp>(tempModuleStr, module.getContext());
                         if (parsedSnippet) {
                             if (auto parsedTemp = parsedSnippet->lookupSymbol<func::FuncOp>("temp")) {
