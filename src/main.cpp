@@ -223,8 +223,8 @@ static std::string inferType(AstNode *node, const TypeEnv &env,
                               const std::unordered_map<std::string,OpSig> &sigs) {
     if (!node) return "";
     switch (node->type) {
-        case AST_NUMBER: return "i32";
-        case AST_FLOAT:  return "f32";
+        case AST_NUMBER: return "i64";
+        case AST_FLOAT:  return "f64";
         case AST_BOOL:   return "bool";
         case AST_STRING: return "str";
         case AST_IDENTIFIER: {

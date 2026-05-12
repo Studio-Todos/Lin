@@ -96,9 +96,9 @@ typedef struct AstNode {
     int line;   // source line (1-indexed)
     int col;    // source column (1-indexed)
     union {
-        struct { int32_t value; } number;
+        struct { int64_t value; } number;
         struct { bool value; } boolean;
-        struct { float value; } f_number;
+        struct { double value; } f_number;
         struct { const char *name; int length; } identifier;
         struct { struct AstNode *left; TokenType op; struct AstNode *right; } binary;
         struct { const char *callee; int callee_len;

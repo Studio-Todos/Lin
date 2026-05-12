@@ -29,3 +29,5 @@ test_math64: func [
         ]
     ]
 ]
+
+test_math64 0

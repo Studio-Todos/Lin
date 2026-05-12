@@ -250,7 +250,7 @@ static AstNode* createNode(Parser *parser, AstNodeType type) {
 static AstNode* parseNumberExpr(Parser *parser) {
     AstNode *node = createNode(parser, AST_NUMBER);
     if (!node) return NULL;
-    node->as.number.value = atoi(parser->current.start);
+    node->as.number.value = atoll(parser->current.start);
     parserAdvance(parser);
     return node;
 }
@@ -258,7 +258,7 @@ static AstNode* parseNumberExpr(Parser *parser) {
 static AstNode* parseFloatExpr(Parser *parser) {
     AstNode *node = createNode(parser, AST_FLOAT);
     if (!node) return NULL;
-    node->as.f_number.value = strtof(parser->current.start, NULL);
+    node->as.f_number.value = strtod(parser->current.start, NULL);
     parserAdvance(parser);
     return node;
 }
@@ -857,7 +857,7 @@ void printAst(AstNode *node, int depth) {
     for (int i=0; i<depth; i++) printf("  ");
 
     switch (node->type) {
-        case AST_NUMBER: printf("Number(%d)\n", node->as.number.value); break;
+        case AST_NUMBER: printf("Number(%ld)\n", (long)node->as.number.value); break;
         case AST_FLOAT: printf("Float(%f)\n", node->as.f_number.value); break;
         case AST_STRING: printf("String(%.*s)\n", node->as.string.length, node->as.string.value); break;
         case AST_BOOL: printf("Bool(%s)\n", node->as.boolean.value ? "true" : "false"); break;
