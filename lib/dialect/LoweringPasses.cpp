@@ -212,13 +212,27 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         std::string decl;
         llvm::raw_string_ostream os(decl);
         func.print(os);
-        existingDecls.push_back(decl);
+        std::string s = os.str();
+        auto pos = s.find("{");
+        if (pos != std::string::npos) s = s.substr(0, pos);
+        if (s.find("private") == std::string::npos && s.find("public") == std::string::npos) {
+            auto namePos = s.find("@");
+            if (namePos != std::string::npos) s.insert(namePos, "private ");
+        }
+        existingDecls.push_back(s);
     }
     for (auto func : module.getOps<LLVM::LLVMFuncOp>()) {
         std::string decl;
         llvm::raw_string_ostream os(decl);
         func.print(os);
-        existingDecls.push_back(decl);
+        std::string s = os.str();
+        auto pos = s.find("{");
+        if (pos != std::string::npos) s = s.substr(0, pos);
+        if (s.find("linkage") == std::string::npos) {
+            auto namePos = s.find("@");
+            if (namePos != std::string::npos) s.insert(namePos, "linkage(external) ");
+        }
+        existingDecls.push_back(s);
     }
 
     for (auto op : regOps) {
@@ -271,28 +285,54 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                             if (cleanName.empty()) continue;
                             if (cleanName[0] != '%') cleanName = "%" + cleanName;
                             argNamesList.push_back(cleanName);
+                        llvm::errs() << "DEBUG: argsAttr=" << argsAttr.getValue() << "\n";
                         }
 
-                        // Parse the snippet and insert it
+                        std::string payload = p.getValue().str();
+                        std::string filteredDecls = "";
+                        for (auto &d : existingDecls) {
+                            auto atPos = d.find("@");
+                            if (atPos != std::string::npos) {
+                                auto parenPos = d.find("(", atPos);
+                                if (parenPos != std::string::npos) {
+                                    std::string sym = d.substr(atPos, parenPos - atPos);
+                                    if (payload.find(sym) != std::string::npos) filteredDecls += d + "\n";
+                                }
+                            }
+                        }
                         std::string fullSnippet = "module {\n";
-                        for (auto &decl : existingDecls) fullSnippet += decl + "\n";
+                        fullSnippet += filteredDecls;
                         fullSnippet += "func.func @temp(";
+                        SmallVector<std::string> argTypes;
                         for (unsigned i = 0; i < argNamesList.size(); ++i) {
                             // Heuristic: check if name indicates type
                             std::string type = "i32";
-                            if (argNamesList[i].find("f") != std::string::npos) {
-                                if (argNamesList[i].find("64") != std::string::npos) type = "f64";
-                                else type = "f32";
-                            } else if (argNamesList[i].find("64") != std::string::npos) {
+                            if (argNamesList[i].find("_f32") != std::string::npos) {
+                                type = "f32";
+                                argNamesList[i].erase(argNamesList[i].find("_f32"), 4);
+                            } else if (argNamesList[i].find("_f64") != std::string::npos) {
+                                type = "f64";
+                                argNamesList[i].erase(argNamesList[i].find("_f64"), 4);
+                            } else if (argNamesList[i].find("_i64") != std::string::npos) {
                                 type = "i64";
+                                argNamesList[i].erase(argNamesList[i].find("_i64"), 4);
+                            } else if (argNamesList[i].find("_i1") != std::string::npos) {
+                                type = "i1";
+                                argNamesList[i].erase(argNamesList[i].find("_i1"), 3);
                             }
+                            argTypes.push_back(type);
                             
-                            fullSnippet += argNamesList[i] + " : " + type;
+                            std::string mlirType = type;
+                            if (type == "f32") mlirType = "f32";
+                            else if (type == "f64") mlirType = "f64";
+                            
+                            fullSnippet += argNamesList[i] + " : " + mlirType;
                             if (i < argNamesList.size() - 1) fullSnippet += ", ";
                         }
                         fullSnippet += ") {\n";
                         fullSnippet += p.getValue().str();
                         fullSnippet += "\n  func.return\n";
+                        llvm::errs() << "DEBUG SNIPPET for " << funcName << ":\n" << fullSnippet << "\n";
                         fullSnippet += "}\n";
                         fullSnippet += "}";
  
@@ -301,16 +341,42 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                             func::FuncOp tempFunc = tempModule->lookupSymbol<func::FuncOp>("temp");
                             if (tempFunc && !tempFunc.getBody().empty()) {
                                 IRMapping mapper;
+                                OpBuilder bBody = OpBuilder::atBlockBegin(fEntry);
                                 for (unsigned i = 0; i < argNamesList.size(); ++i) {
                                     if (i < f.getNumArguments() && i < tempFunc.getNumArguments()) {
-                                        mapper.map(tempFunc.getArgument(i), f.getArgument(i));
+                                        Value arg = fEntry->getArgument(i);
+                                        if (argTypes[i] == "f32") {
+                                            arg = bBody.create<LLVM::BitcastOp>(module.getLoc(), builder.getF32Type(), arg);
+                                        } else if (argTypes[i] == "i1") {
+                                            arg = bBody.create<LLVM::TruncOp>(module.getLoc(), builder.getI1Type(), arg);
+                                        } else if (argTypes[i] == "i64" || argTypes[i] == "f64") {
+                                            if (argTypes[i] == "i64") arg = bBody.create<LLVM::ZExtOp>(module.getLoc(), builder.getI64Type(), arg);
+                                        }
+                                        mapper.map(tempFunc.getArgument(i), arg);
                                     }
                                 }
-                                OpBuilder bBody = OpBuilder::atBlockBegin(fEntry);
+                                
+                                Value finalRetVal = nullptr;
                                 for (auto &op : tempFunc.getBody().front().getOperations()) {
-                                    if (!isa<func::ReturnOp>(op)) {
+                                    if (auto retOp = dyn_cast<func::ReturnOp>(op)) {
+                                        if (retOp.getNumOperands() > 0) {
+                                            finalRetVal = mapper.lookupOrDefault(retOp.getOperand(0));
+                                        }
+                                    } else {
                                         bBody.clone(op, mapper);
                                     }
+                                }
+                                
+                                if (finalRetVal) {
+                                    if (finalRetVal.getType() != i32Type) {
+                                        if (finalRetVal.getType().isF32())
+                                            finalRetVal = bBody.create<LLVM::BitcastOp>(module.getLoc(), i32Type, finalRetVal);
+                                        else if (finalRetVal.getType().isInteger(1))
+                                            finalRetVal = bBody.create<LLVM::ZExtOp>(module.getLoc(), i32Type, finalRetVal);
+                                        else if (finalRetVal.getType().isInteger(64))
+                                            finalRetVal = bBody.create<LLVM::TruncOp>(module.getLoc(), i32Type, finalRetVal);
+                                    }
+                                    bBody.create<LLVM::ReturnOp>(module.getLoc(), finalRetVal);
                                 }
                             }
                         }
@@ -319,8 +385,8 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                             OpBuilder bTerm = OpBuilder::atBlockEnd(fEntry);
                             bTerm.create<LLVM::ReturnOp>(module.getLoc(), bTerm.create<LLVM::ConstantOp>(module.getLoc(), i32Type, bTerm.getI32IntegerAttr(0)));
                         }
+                        userOps.push_back({opcodeForLabel(label), label, funcName, (int)numArgs});
                     }
-                    userOps.push_back({opcodeForLabel(label), label, funcName, (int)numArgs});
                 }
             }
         }

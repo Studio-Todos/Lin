@@ -450,40 +450,49 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         char cleanNames[2048] = "";
         const char *p = expr->as.mlir_op.inputs;
         int len = expr->as.mlir_op.inputs_len;
-        bool inInputs = false;
+        bool foundInputs = false;
         for (int i = 0; i < len; i++) {
             if (p[i] == '[') {
                 i++;
                 while (i < len && isspace((unsigned char)p[i])) i++;
-                const char *wordStart = p + i;
-                while (i < len && !isspace((unsigned char)p[i]) && p[i] != '[' && p[i] != ']') i++;
-                int wordLen = (int)(p + i - wordStart);
-                if (wordLen > 0) {
-                    if (strncmp(wordStart, "inputs:", 7) == 0) {
-                        inInputs = true;
-                    } else if (strncmp(wordStart, "outputs:", 8) == 0) {
-                        inInputs = false;
-                    } else if (inInputs) {
-                        // Found an argument name!
-                        if (strlen(cleanNames) + wordLen + 4 < sizeof(cleanNames)) {
-                            strcat(cleanNames, "[%");
-                            strncat(cleanNames, wordStart, wordLen);
-                            strcat(cleanNames, "]");
+                if (i + 7 <= len && strncmp(p + i, "inputs:", 7) == 0) {
+                    i += 7;
+                    while (i < len && p[i] != '[') i++;
+                    if (i < len && p[i] == '[') {
+                        i++; // Enter [arg [type] ...]
+                        while (i < len && p[i] != ']') {
+                            while (i < len && isspace((unsigned char)p[i])) i++;
+                            if (i >= len || p[i] == ']') break;
+
+                            const char *nameStart = p + i;
+                            while (i < len && !isspace((unsigned char)p[i]) && p[i] != '[' && p[i] != ']') i++;
+                            int nameLen = (int)(p + i - nameStart);
+
+                            if (nameLen > 0) {
+                                strcat(cleanNames, "[%");
+                                strncat(cleanNames, nameStart, nameLen);
+                                
+                                while (i < len && isspace((unsigned char)p[i])) i++;
+                                if (i < len && p[i] == '[') {
+                                    i++;
+                                    if (i + 3 <= len && strncmp(p + i, "f32", 3) == 0) strcat(cleanNames, "_f32");
+                                    else if (i + 3 <= len && strncmp(p + i, "f64", 3) == 0) strcat(cleanNames, "_f64");
+                                    else if (i + 3 <= len && strncmp(p + i, "i64", 3) == 0) strcat(cleanNames, "_i64");
+                                    else if (i + 2 <= len && strncmp(p + i, "i1", 2) == 0) strcat(cleanNames, "_i1");
+                                    
+                                    int depth = 1;
+                                    while (i < len && depth > 0) {
+                                        if (p[i] == '[') depth++;
+                                        else if (p[i] == ']') depth--;
+                                        i++;
+                                    }
+                                }
+                                strcat(cleanNames, "]");
+                            }
                         }
                     }
+                    break;
                 }
-                // Skip the type block if it follows
-                while (i < len && isspace((unsigned char)p[i])) i++;
-                if (i < len && p[i] == '[') {
-                    int depth = 1;
-                    i++;
-                    while (i < len && depth > 0) {
-                        if (p[i] == '[') depth++;
-                        else if (p[i] == ']') depth--;
-                        i++;
-                    }
-                }
-                i--; // backtrack to process the next character correctly
             }
         }
         MlirAttribute namesAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(cleanNames));
@@ -998,7 +1007,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         // Phase 2.5: Register payload for the dispatcher
         // This allows omega agents with this label to fire rule_fire_op
         char payloadBuf[2048];
-        snprintf(payloadBuf, sizeof(payloadBuf), "%%res = llvm.mlir.constant(0 : i32) : i32 \n  func.call @lin_%s(%%res, %%arg0, %%res) : (i32, i32, i32) -> ()\n", funcNameStr);
+        snprintf(payloadBuf, sizeof(payloadBuf), "%%res_state = llvm.mlir.constant(0 : i32) : i32 \n  func.call @lin_%s(%%arg0, %%arg1, %%res_state) : (i32, i32, i32) -> ()\n", funcNameStr);
         MlirOperationState regState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.registry"), loc);
         MlirAttribute opNameAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(funcNameStr));
         MlirNamedAttribute opNameNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("op_name")), opNameAttr);
