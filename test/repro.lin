@@ -1,0 +1,5 @@
+import "std/math.lin"
+main: func [ argc [i32!] return: [i32!] ][
+    fadd 1.5 2.5
+    0
+]

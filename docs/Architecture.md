@@ -249,3 +249,38 @@ The key pass is `pic.graph` $\rightarrow$ `pic.reduce`, which is your interactio
 The goal is simplicity, extensibility, and expressibility.
 
 
+
+---
+
+# **Philosophy: Explicit is Better Than Implicit**
+
+Lin follows a philosophy similar to C: **minimal magic, maximum transparency.** 
+
+### **1. No Implicit Imports**
+The compiler does not automatically inject any standard library files (including `std/types.lin`). Every dependency must be explicitly imported by the developer. This ensures that:
+- The build process is transparent.
+- There are no "hidden" symbols that could conflict with user-defined names.
+- The compiler remains minimal and predictable.
+
+### **2. Manual Type Definition**
+Basic types like `i32`, `f32`, etc., are not built into the compiler's frontend as keywords. Instead, they are defined in the standard library (`std/types.lin`) and must be made available to the compiler through an explicit `import` if semantic type checking is desired.
+
+### **3. Abstraction is Opt-in**
+The primary form of abstraction in Lin is the **Interaction Net scheduling**. Any further abstraction layer (higher-level types, memory management patterns, object models) is left entirely to the developer or library authors. The core language focuses exclusively on optimal, parallel evaluation of polarized interaction nets.
+
+---
+
+# **Lin: The Compiler as a High-Performance Scheduler**
+
+Unlike traditional compilers that define a set of primitive operations (like `add`, `sub`, `load`), the `linc` compiler is fundamentally a **graph scheduler**.
+
+### **Zero Built-in Operations**
+There are no operations "hardcoded" into the compiler's backend logic. When you write `a + b`, the compiler does not emit an `LLVM::AddOp`. Instead:
+1. It emits an `omega` agent with a label (e.g., `add`).
+2. It relies on a `registry` entry (provided by the user in the standard library or local code) that defines what happens when two `omega` agents with that label meet.
+3. The `registry` entry contains a raw MLIR payload that is injected into the reduction engine.
+
+### **The "Scheduler" Perspective**
+In this sense, Lin is closer to a hardware scheduler than a traditional language. It manages the topology of the interaction net, detects active pairs (redexes), and dispatches them to the appropriate compute resources (CPU threads or GPU cores). What happens *during* that dispatch is entirely defined by the user via `mlir-op` blocks.
+
+This architecture ensures that the core language remains extremely small, stable, and transparent, while allowing the developer to leverage the full power of MLIR dialects without the compiler standing in the way.

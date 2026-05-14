@@ -15,7 +15,7 @@
 #include <string.h>
 
 // Declared in gpu_runtime.c
-void pic_gpu_dispatch(int32_t* netPtr, int32_t* activePairsPtr, int32_t numPairs);
+void pic_gpu_dispatch(int64_t* netPtr, int32_t* activePairsPtr, int32_t numPairs);
 
 // Port encoding: nodeIdx << 2 | portNum
 static int32_t makePort(int32_t nodeIdx, int portNum) {
@@ -26,7 +26,7 @@ int main(void) {
     // Allocate the interaction net buffer
     // (matches gpu_runtime.c: (1000000*4 + 1000000*2 + 10) * 4 bytes)
     int32_t netSize = (1000000 * 4 + 1000000 * 2 + 10);
-    int32_t* net = (int32_t*)calloc(netSize, sizeof(int32_t));
+    int64_t* net = (int64_t*)calloc(netSize, sizeof(int64_t));
     if (!net) { fprintf(stderr, "OOM\n"); return 1; }
 
     // Node 1: CON type=1, p1→node3.p1(dummy), p2→node3.p2(dummy)

@@ -23,7 +23,7 @@ def PicRuntime_PortType : DialectType<PicRuntime_Dialect, CPred<"$_self.isa<::ml
 // Operations for array-based graph manipulation
 def PicRuntime_AllocNodeOp : PicRuntime_Op<"alloc_node"> {
   let summary = "Allocates a node in the 128-bit atomic array";
-  let arguments = (ins I8Attr:$type, I32Attr:$label_or_val);
+  let arguments = (ins I8Attr:$type, I64Attr:$label_or_val);
   let results = (outs I32:$index);
 }
 
