@@ -1,0 +1,4 @@
+// test/test_math_expansion.lin
+import "std/math.lin"
+
+// CHECK: Parsing Source:
