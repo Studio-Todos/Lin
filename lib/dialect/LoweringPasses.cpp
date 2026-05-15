@@ -350,13 +350,21 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                             std::string type = "i64";
                             if (argNamesList[i].find("_f32") != std::string::npos) { type = "f32"; argNamesList[i].erase(argNamesList[i].find("_f32"), 4); }
                             else if (argNamesList[i].find("_f64") != std::string::npos) { type = "f64"; argNamesList[i].erase(argNamesList[i].find("_f64"), 4); }
+                            else if (argNamesList[i].find("_i32") != std::string::npos) { type = "i32"; argNamesList[i].erase(argNamesList[i].find("_i32"), 4); }
+                            else if (argNamesList[i].find("_i64") != std::string::npos) { type = "i64"; argNamesList[i].erase(argNamesList[i].find("_i64"), 4); }
+                            else if (argNamesList[i].find("_i1") != std::string::npos) { type = "i1"; argNamesList[i].erase(argNamesList[i].find("_i1"), 4); }
                             argTypes.push_back(type);
                             argS += argNamesList[i] + " : " + type;
                             if (i < argNamesList.size() - 1) argS += ", ";
                         }
-
+                        
                         std::string pStr = p.getValue().str();
-                        std::string snippetDecls = "";
+                        std::string snippetDecls = "llvm.func @printf(!llvm.ptr, ...) -> i32\n"
+                                                   "llvm.func @putchar(i32) -> i32\n"
+                                                   "llvm.func @getchar() -> i32\n"
+                                                   "llvm.func @scanf(!llvm.ptr, ...) -> i32\n"
+                                                   "llvm.func @malloc(i64) -> !llvm.ptr\n"
+                                                   "llvm.func @free(!llvm.ptr)\n";
                         std::map<std::string, std::string> symMap;
                         int nextCallee = 0;
                         for (auto &d : existingDecls) {
@@ -378,7 +386,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                                             if (rpOpen != std::string::npos && rpClose != std::string::npos) {
                                                 typePart = typePart.substr(0, rpOpen) + typePart.substr(rpOpen + 1, rpClose - rpOpen - 1) + typePart.substr(rpClose + 1);
                                             }
-                                            snippetDecls += d.substr(0, atPos) + newSym + "(i64, i64, i64)" + typePart + "\n";
+                                            snippetDecls += d.substr(0, atPos) + " private " + newSym + "(i64, i64, i64)" + typePart + "\n";
                                         }
                                     }
                                 }
@@ -397,9 +405,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
                         std::string argS2 = "";
                         for (unsigned i = 0; i < argNamesList.size(); ++i) {
-                            std::string name = "%arg" + std::to_string(i);
-                            if (i == 2 && argNamesList.size() == 3) name = "%state";
-                            argS2 += name + " : i64";
+                            argS2 += argNamesList[i] + " : " + argTypes[i];
                             if (i < argNamesList.size() - 1) argS2 += ", ";
                         }
 
@@ -432,6 +438,8 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                                             arg = bBody.create<LLVM::BitcastOp>(module.getLoc(), builder.getF32Type(), arg);
                                         } else if (argTypes[i] == "i1") {
                                             arg = bBody.create<LLVM::TruncOp>(module.getLoc(), builder.getI1Type(), arg);
+                                        } else if (argTypes[i] == "i32") {
+                                            arg = bBody.create<LLVM::TruncOp>(module.getLoc(), builder.getI32Type(), arg);
                                         } else if (argTypes[i] == "i64" || argTypes[i] == "f64") {
                                             if (argTypes[i] == "i64") arg = safeZExt(bBody, module.getLoc(), i64Type, arg);
                                         }

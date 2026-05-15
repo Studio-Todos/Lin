@@ -1,6 +1,0 @@
-// test_math.lin
-test_sin: mlir-op [ inputs: [a [i64!]] outputs: [res [i64!]] ] {
-    %af = arith.bitcast %a : i64 to f64
-    %rf = math.sin %af : f64
-    %res = arith.bitcast %rf : f64 to i64
-}

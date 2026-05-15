@@ -1,3 +1,4 @@
+// RUN: %linc build %s -o %t && %t
 import "std/math.lin"
 main: func [ argc [i32!] return: [i32!] ][
     fadd 1.5 2.5

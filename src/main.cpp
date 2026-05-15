@@ -3,6 +3,7 @@
 #include <cstring>
 #include <cstdlib>
 
+#include <sstream>
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
@@ -11,8 +12,9 @@
 #include "mlir/ExecutionEngine/ExecutionEngine.h"
 #include "mlir/ExecutionEngine/OptUtils.h"
 #include "mlir/Target/LLVMIR/Export.h"
-#include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
-#include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
+#include "mlir/Conversion/MathToLLVM/MathToLLVM.h"
+#include "mlir/Conversion/MathToLibm/MathToLibm.h"
+#include "mlir/Target/LLVMIR/Dialect/All.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Support/FileSystem.h"
@@ -25,6 +27,7 @@
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
 #if __has_include("mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h")
 #include "mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h"
@@ -570,11 +573,9 @@ int main(int argc, char **argv) {
   registry.insert<mlir::LLVM::LLVMDialect>();
   registry.insert<mlir::gpu::GPUDialect>();
   registry.insert<mlir::scf::SCFDialect>();
-#if __has_include("mlir/Dialect/SPIRV/IR/SPIRVDialect.h")
-  registry.insert<mlir::spirv::SPIRVDialect>();
-#endif
-  mlir::registerBuiltinDialectTranslation(registry);
-  mlir::registerLLVMDialectTranslation(registry);
+  registry.insert<mlir::math::MathDialect>();
+  mlir::registerAllToLLVMIRTranslations(registry);
+  mlir::registerConvertMathToLLVMInterface(registry);
 
   // Initialize LLVM targets
   llvm::InitializeAllTargetInfos();
@@ -629,6 +630,8 @@ int main(int argc, char **argv) {
       
 pm.addPass(mlir::createConvertSCFToCFPass());
       pm.addPass(mlir::createConvertControlFlowToLLVMPass());
+      pm.addPass(mlir::createConvertMathToLibmPass());
+      pm.addPass(mlir::createConvertMathToLLVMPass());
       pm.addPass(mlir::createArithToLLVMConversionPass());
       pm.addPass(mlir::createConvertFuncToLLVMPass());
       pm.addPass(mlir::createReconcileUnrealizedCastsPass());
@@ -791,9 +794,28 @@ pm.addPass(mlir::createConvertSCFToCFPass());
                   args.push_back(const_cast<char*>("-o"));
                   args.push_back(const_cast<char*>(outputBinary.c_str()));
                   args.push_back(const_cast<char*>("-lpthread"));
+                  const char* ldPath = getenv("LD_LIBRARY_PATH");
+                  if (ldPath) {
+                      std::string s(ldPath);
+                      size_t pos = 0;
+                      while ((pos = s.find(":")) != std::string::npos) {
+                          std::string path = s.substr(0, pos);
+                          if (!path.empty()) {
+                              char* arg = new char[path.length() + 3];
+                              sprintf(arg, "-L%s", path.c_str());
+                              args.push_back(arg);
+                          }
+                          s.erase(0, pos + 1);
+                      }
+                      if (!s.empty()) {
+                          char* arg = new char[s.length() + 3];
+                          sprintf(arg, "-L%s", s.c_str());
+                          args.push_back(arg);
+                      }
+                  }
+                  std::string gpuRuntimePath = "src/gpu_runtime.c";
                   if (enableGPU) {
                       // Attempt to find gpu_runtime.c relative to the project root or source directory
-                      std::string gpuRuntimePath = "src/gpu_runtime.c";
                       char exePath[PATH_MAX];
                       ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath)-1);
                       if (len != -1) {
@@ -814,6 +836,7 @@ pm.addPass(mlir::createConvertSCFToCFPass());
                       args.push_back(const_cast<char*>(gpuRuntimePath.c_str()));
                       args.push_back(const_cast<char*>("-lvulkan"));
                   }
+                  args.push_back(const_cast<char*>("-lm"));
                   args.push_back(nullptr);
                   execvp("gcc", args.data());
               }
