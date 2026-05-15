@@ -478,6 +478,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
                                     if (i + 3 <= len && strncmp(p + i, "f32", 3) == 0) strcat(cleanNames, "_f32");
                                     else if (i + 3 <= len && strncmp(p + i, "f64", 3) == 0) strcat(cleanNames, "_f64");
                                     else if (i + 3 <= len && strncmp(p + i, "i64", 3) == 0) strcat(cleanNames, "_i64");
+                                    else if (i + 3 <= len && strncmp(p + i, "i32", 3) == 0) strcat(cleanNames, "_i32");
                                     else if (i + 2 <= len && strncmp(p + i, "i1", 2) == 0) strcat(cleanNames, "_i1");
                                     
                                     int depth = 1;

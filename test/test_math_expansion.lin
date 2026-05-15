@@ -1,3 +1,4 @@
+// RUN: %linc build %s -o %t | FileCheck %s
 // test/test_math_expansion.lin
 import "std/math.lin"
 
