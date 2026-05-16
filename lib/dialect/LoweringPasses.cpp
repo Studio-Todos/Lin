@@ -15,6 +15,7 @@
 #include "mlir/Dialect/SPIRV/IR/SPIRVAttributes.h"
 #endif
 #include "mlir/Pass/Pass.h"
+#include <set>
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Parser/Parser.h"
@@ -339,8 +340,10 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                         {
                             OpBuilder b(tempModule->getBodyRegion());
                             IRMapping m;
-                            for (auto f : module.getOps<func::FuncOp>()) {
-                                b.clone(*f, m);
+                            for (auto &op : module.getBody()->getOperations()) {
+                                if (isa<func::FuncOp>(op) || isa<LLVM::LLVMFuncOp>(op) || isa<LLVM::GlobalOp>(op)) {
+                                    b.clone(op, m);
+                                }
                             }
                         }
                         
@@ -359,49 +362,61 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                         }
                         
                         std::string pStr = p.getValue().str();
-                        std::string snippetDecls = "llvm.func @printf(!llvm.ptr, ...) -> i32\n"
-                                                   "llvm.func @putchar(i32) -> i32\n"
-                                                   "llvm.func @getchar() -> i32\n"
-                                                   "llvm.func @scanf(!llvm.ptr, ...) -> i32\n"
-                                                   "llvm.func @malloc(i64) -> !llvm.ptr\n"
-                                                   "llvm.func @free(!llvm.ptr)\n";
-                        std::map<std::string, std::string> symMap;
-                        int nextCallee = 0;
+                        std::string snippetDecls = "";
+                        auto addDecl = [&](std::string name, std::string fullDecl) {
+                            bool found = false;
+                            for (auto &d : existingDecls) {
+                                if (d.find("@" + name + "(") != std::string::npos || d.find("@\"" + name + "\"(") != std::string::npos) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (!found) snippetDecls += fullDecl + "\n";
+                        };
+                        addDecl("printf", "llvm.func @printf(!llvm.ptr, ...) -> i32");
+                        addDecl("putchar", "llvm.func @putchar(i32) -> i32");
+                        addDecl("getchar", "llvm.func @getchar() -> i32");
+                        addDecl("scanf", "llvm.func @scanf(!llvm.ptr, ...) -> i32");
+                        addDecl("malloc", "llvm.func @malloc(i64) -> !llvm.ptr");
+                        addDecl("free", "llvm.func @free(!llvm.ptr)");
+                        addDecl("strlen", "llvm.func @strlen(!llvm.ptr) -> i64");
+                        addDecl("strcmp", "llvm.func @strcmp(!llvm.ptr, !llvm.ptr) -> i32");
+                        addDecl("sin", "llvm.func @sin(f64) -> f64");
+                        addDecl("cos", "llvm.func @cos(f64) -> f64");
+                        addDecl("tan", "llvm.func @tan(f64) -> f64");
+                        addDecl("asin", "llvm.func @asin(f64) -> f64");
+                        addDecl("acos", "llvm.func @acos(f64) -> f64");
+                        addDecl("atan", "llvm.func @atan(f64) -> f64");
+                        addDecl("exp", "llvm.func @exp(f64) -> f64");
+                        addDecl("log", "llvm.func @log(f64) -> f64");
+                        addDecl("sqrt", "llvm.func @sqrt(f64) -> f64");
+                        addDecl("pow", "llvm.func @pow(f64, f64) -> f64");
                         for (auto &d : existingDecls) {
                             auto atPos = d.find("@");
                             if (atPos != std::string::npos) {
                                 auto parenPos = d.find("(", atPos);
                                 if (parenPos != std::string::npos) {
                                     std::string sym = d.substr(atPos, parenPos - atPos);
-                                    if (pStr.find(sym) != std::string::npos) {
-                                        std::string newSym = "@callee_" + std::to_string(nextCallee++);
-                                        symMap[sym] = newSym;
-                                        
-                                        auto endParen = d.find(")", parenPos);
-                                        if (endParen != std::string::npos) {
-                                            std::string typePart = d.substr(endParen + 1);
-                                            // Strip result parentheses
-                                            size_t rpOpen = typePart.find("(");
-                                            size_t rpClose = typePart.find(")");
-                                            if (rpOpen != std::string::npos && rpClose != std::string::npos) {
-                                                typePart = typePart.substr(0, rpOpen) + typePart.substr(rpOpen + 1, rpClose - rpOpen - 1) + typePart.substr(rpClose + 1);
+                                    std::string unquoted = sym;
+                                    if (unquoted.size() > 2 && unquoted[1] == '\"' && unquoted.back() == '\"') {
+                                        unquoted.erase(unquoted.size() - 1);
+                                        unquoted.erase(1, 1);
+                                    }
+                                    if (pStr.find(sym) != std::string::npos || pStr.find(unquoted) != std::string::npos) {
+                                        std::string decl = d;
+                                        if (decl.find("func.func") != std::string::npos && decl.find("private") == std::string::npos) {
+                                            auto atPos2 = decl.find("@");
+                                            if (atPos2 != std::string::npos) {
+                                                decl.insert(atPos2, "private ");
                                             }
-                                            snippetDecls += d.substr(0, atPos) + " private " + newSym + "(i64, i64, i64)" + typePart + "\n";
                                         }
+                                        snippetDecls += decl + "\n";
                                     }
                                 }
                             }
                         }
-
+                        
                         std::string pStrRenamed = pStr;
-                        for (auto const& [oldSym, newSym] : symMap) {
-                            size_t pos = 0;
-                            while ((pos = pStrRenamed.find(oldSym, pos)) != std::string::npos) {
-                                pStrRenamed.replace(pos, oldSym.length(), newSym);
-                                pos += newSym.length();
-                            }
-                        }
-
 
                         std::string argS2 = "";
                         for (unsigned i = 0; i < argNamesList.size(); ++i) {
@@ -410,24 +425,43 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                         }
 
                         std::string tempModuleStr = "module {\n" + snippetDecls + "func.func @temp(" + argS2 + ") -> i64 {\n";
-                        if (pStrRenamed.find("%res") == std::string::npos) {
-                            tempModuleStr += "  %res = " + pStrRenamed + "\n";
-                        } else {
-                            tempModuleStr += pStrRenamed + "\n";
+                        tempModuleStr += pStrRenamed + "\n";
+                        
+                        // Determine the result variable name
+                        std::string resVar = "%res";
+                        if (pStrRenamed.find("%res ") == std::string::npos && 
+                            pStrRenamed.find("%res\n") == std::string::npos &&
+                            pStrRenamed.find("%res=") == std::string::npos &&
+                            pStrRenamed.find("%res_state") != std::string::npos) {
+                            resVar = "%res_state";
                         }
-                        tempModuleStr += "  func.return %res : i64\n}\n}\n";
+                        
+                        // If no result variable found in payload, assume the payload expression ITSELF is the result
+                        if (pStrRenamed.find(resVar) == std::string::npos) {
+                            tempModuleStr += "  %res_auto = " + pStrRenamed + "\n";
+                            tempModuleStr += "  %res_coerced = \"lin.coerce\"(%res_auto) : (any) -> i64\n";
+                            tempModuleStr += "  func.return %res_coerced : i64\n";
+                        } else {
+                            // We'll use a custom op to do the coercion after parsing
+                            tempModuleStr += "  %res_coerced = \"lin.coerce\"(" + resVar + ") : (any) -> i64\n";
+                            tempModuleStr += "  func.return %res_coerced : i64\n";
+                        }
+                        tempModuleStr += "}\n}\n";
                         
                         
                         llvm::errs() << "Final Snippet Module:\n" << tempModuleStr << "\n";
                         auto parsedSnippet = parseSourceString<ModuleOp>(tempModuleStr, module.getContext());
-                        if (parsedSnippet) {
-                            if (auto parsedTemp = parsedSnippet->lookupSymbol<func::FuncOp>("temp")) {
-                                tempModule->push_back(parsedTemp.clone());
-                            }
-                        }
+                         if (parsedSnippet) {
+                             for (auto &op : parsedSnippet->getBody()->getOperations()) {
+                                 if (auto sym = dyn_cast<SymbolOpInterface>(op)) {
+                                     if (!module.lookupSymbol(sym.getName())) {
+                                         module.push_back(op.clone());
+                                     }
+                                 }
+                             }
+                         }
 
-                        if (tempModule) {
-                            func::FuncOp tempFunc = tempModule->lookupSymbol<func::FuncOp>("temp");
+                         func::FuncOp tempFunc = parsedSnippet ? parsedSnippet->lookupSymbol<func::FuncOp>("temp") : nullptr;
                             if (tempFunc && !tempFunc.getBody().empty()) {
                                 IRMapping mapper;
                                 OpBuilder bBody = OpBuilder::atBlockBegin(fEntry);
@@ -455,29 +489,39 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                                         }
                                         continue;
                                     }
-                                    Operation *cloned = bBody.clone(op, mapper);
-                                    // Fix symbols if we used unique names in the snippet
-                                    for (auto const& [oldSym, newSym] : symMap) {
-                                        StringRef newSymRef = newSym;
-                                        if (newSymRef.startswith("@")) newSymRef = newSymRef.drop_front(1);
-                                        cloned->walk([&](Operation *nested) {
-                                            for (auto attr : nested->getAttrs()) {
-                                                if (auto symAttr = attr.getValue().dyn_cast<SymbolRefAttr>()) {
-                                                    if (symAttr.getRootReference().getValue() == newSymRef) {
-                                                        StringRef oldSymRef = oldSym;
-                                                        if (oldSymRef.startswith("@")) oldSymRef = oldSymRef.drop_front(1);
-                                                        nested->setAttr(attr.getName(), SymbolRefAttr::get(module.getContext(), oldSymRef));
-                                                    }
-                                                }
-                                            }
-                                        });
-                                    }
-                                    if (op.getNumResults() > 0) {
-                                        finalRetVal = mapper.lookupOrDefault(op.getResult(0));
-                                    }
-                                }
-                                
-                                if (finalRetVal) {
+                                     if (op.getName().getStringRef() == "lin.coerce") {
+                                         Value src = mapper.lookupOrDefault(op.getOperand(0));
+                                         Value coerced = src;
+                                         if (src.getType() != i64Type) {
+                                             if (src.getType().isa<IntegerType>()) {
+                                                 if (src.getType().getIntOrFloatBitWidth() < 64) {
+                                                     coerced = safeZExt(bBody, module.getLoc(), i64Type, src);
+                                                 } else if (src.getType().getIntOrFloatBitWidth() > 64) {
+                                                     coerced = bBody.create<LLVM::TruncOp>(module.getLoc(), i64Type, src);
+                                                 }
+                                             } else if (src.getType().isa<FloatType>()) {
+                                                 if (src.getType().isF64()) {
+                                                     coerced = bBody.create<LLVM::BitcastOp>(module.getLoc(), i64Type, src);
+                                                 } else {
+                                                     Value ext = bBody.create<LLVM::FPExtOp>(module.getLoc(), builder.getF64Type(), src);
+                                                     coerced = bBody.create<LLVM::BitcastOp>(module.getLoc(), i64Type, ext);
+                                                 }
+                                             } else if (src.getType().isa<LLVM::LLVMPointerType>()) {
+                                                 coerced = bBody.create<LLVM::PtrToIntOp>(module.getLoc(), i64Type, src);
+                                             }
+                                         }
+                                         mapper.map(op.getResult(0), coerced);
+                                         finalRetVal = coerced;
+                                         continue;
+                                     }
+                                     Operation *cloned = bBody.clone(op, mapper);
+                                     if (op.getNumResults() > 0) {
+                                         finalRetVal = mapper.lookupOrDefault(op.getResult(0));
+                                     }
+                                 }
+                                 
+                                 // No need for separate finalRetVal processing anymore as it's handled by lin.coerce or the loop
+                                 if (false && finalRetVal) {
                                     if (finalRetVal.getType() != i64Type) {
                                         if (finalRetVal.getType().isa<IntegerType>()) {
                                             finalRetVal = safeZExt(bBody, module.getLoc(), i64Type, finalRetVal);
@@ -493,7 +537,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                                     bBody.create<LLVM::ReturnOp>(module.getLoc(), builder.create<LLVM::ConstantOp>(module.getLoc(), i64Type, builder.getI64IntegerAttr(0)));
                                 }
                             }
-                        }
+                        
                         // Always ensure a terminator
                         if (fEntry->empty() || !fEntry->back().hasTrait<OpTrait::IsTerminator>()) {
                             OpBuilder bTerm = OpBuilder::atBlockEnd(fEntry);
