@@ -450,7 +450,9 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                         
                         
                         llvm::errs() << "Final Snippet Module:\n" << tempModuleStr << "\n";
-                        auto parsedSnippet = parseSourceString<ModuleOp>(tempModuleStr, module.getContext());
+                        MLIRContext *ctx = module.getContext();
+                        ctx->allowUnregisteredDialects();
+                        auto parsedSnippet = parseSourceString<ModuleOp>(tempModuleStr, ctx);
                          if (parsedSnippet) {
                              for (auto &op : parsedSnippet->getBody()->getOperations()) {
                                  if (auto sym = dyn_cast<SymbolOpInterface>(op)) {
@@ -502,12 +504,18 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                                              } else if (src.getType().isa<FloatType>()) {
                                                  if (src.getType().isF64()) {
                                                      coerced = bBody.create<LLVM::BitcastOp>(module.getLoc(), i64Type, src);
+                                                 } else if (src.getType().isF32()) {
+                                                     Value ext = bBody.create<LLVM::FPExtOp>(module.getLoc(), builder.getF64Type(), src);
+                                                     coerced = bBody.create<LLVM::BitcastOp>(module.getLoc(), i64Type, ext);
                                                  } else {
+                                                     // Default fallback for other float types
                                                      Value ext = bBody.create<LLVM::FPExtOp>(module.getLoc(), builder.getF64Type(), src);
                                                      coerced = bBody.create<LLVM::BitcastOp>(module.getLoc(), i64Type, ext);
                                                  }
                                              } else if (src.getType().isa<LLVM::LLVMPointerType>()) {
                                                  coerced = bBody.create<LLVM::PtrToIntOp>(module.getLoc(), i64Type, src);
+                                             } else if (src.getType().isa<IndexType>()) {
+                                                 coerced = bBody.create<arith::IndexCastOp>(module.getLoc(), i64Type, src);
                                              }
                                          }
                                          mapper.map(op.getResult(0), coerced);

@@ -7,5 +7,7 @@ import "std/types.lin"
 import "std/array.lin"
 
 state: 0
-state: arr: (array_new state 10)
-(arr.1)
+res: (array_new state 10)
+state: res.0
+arr: res.1
+arr.1

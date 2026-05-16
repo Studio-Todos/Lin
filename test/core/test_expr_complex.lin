@@ -6,7 +6,7 @@
 import "std/types.lin"
 
 complex: func [a [i32!] b [i32!] c [i32!] return: [i32!]] [
-    a * b + c - (a / 2)
+    (a * b) + c - (a / 2)
 ]
 
 (complex 10 3 5)

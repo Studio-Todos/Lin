@@ -4,7 +4,9 @@
 // A4: A simple test that exercises the boundary infrastructure
 // Boundaries are used for effect scoping
 
-entry: func [] [i32!] [
+import "std/types.lin"
+
+entry: func [return: [i32!]] [
     42
 ]
 // CHECK: i32 {{.*}} = 42

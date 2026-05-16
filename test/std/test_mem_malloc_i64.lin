@@ -7,7 +7,11 @@ import "std/types.lin"
 import "std/mem.lin"
 
 state: 0
-state: ptr: (malloc state 8)
-state: (store_i64 state ptr 123456789)
-(val: (load_i64 state ptr))
+res_m: (malloc state 8)
+state: res_m.0
+ptr: res_m.1
+state: (store_i64 state ptr 123456789).0
+res_l: (load_i64 state ptr)
+state: res_l.0
+val: res_l.1
 val

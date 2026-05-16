@@ -14,5 +14,5 @@ make_counter: func [start [i32!]] [
     next
 ]
 
-(next_counter: (make_counter 0))
+next_counter: (make_counter 0)
 (next_counter)

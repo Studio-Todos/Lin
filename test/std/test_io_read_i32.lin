@@ -6,5 +6,5 @@
 import "std/types.lin"
 import "std/io.lin"
 
-(state: (read_i32 0))
-val
+state: (read_i32 0)
+state.1

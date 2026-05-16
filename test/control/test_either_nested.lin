@@ -6,10 +6,10 @@
 import "std/types.lin"
 
 sign: func [x [i32!] return: [i32!]] [
-    either x > 0 [
+    either (x > 0) [
         1
     ][
-        either x < 0 [
+        either (x < 0) [
             -1
         ][
             0

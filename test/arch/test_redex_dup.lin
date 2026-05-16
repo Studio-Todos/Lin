@@ -5,6 +5,6 @@
 
 import "std/types.lin"
 
-dup_test: func [return: [(i32!, i32!)]] [10]
+dup_test: func [return: [i32!]] [10]
 
 (dup_test)
