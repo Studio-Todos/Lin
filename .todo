@@ -211,9 +211,10 @@
           - Need to implement 64-bit "words" or a boxing mechanism for the interaction net nodes.
           - Unblocks: `test_math64.lin`, `test_fmath64.lin`.
 
-[ ] 28. Dispatcher Scaling & Variadic Args 🟡
+[x] 28. Dispatcher Scaling & Variadic Args 🟡
           - Support `mlir-op` definitions with more than 2 inputs.
           - Extend `dispatch_user_op` signature or use a variadic calling convention.
+          - ✅ Resolved: Expanded dispatcher to 6 arguments and added ternary/quaternary unpacking to the reduction engine.
 
 [ ] 29. Dev shell linking issues 🟢
           - result/bin/linc has different libLLVM paths than build/src
@@ -228,16 +229,13 @@
 
 ## ⚠️  Known Failing Tests (as of 2026-05-21)
 
-The following 8 tests are currently failing. All failures are related to array
-operations in `std/array.lin` — specifically how `dispatch_user_op` handles
-user-defined multi-arg ops like `array_new`, `array_get`, `array_set`.
-See todo item 28 (Dispatcher Scaling & Variadic Args) for the root cause.
+All regression tests are now passing successfully! There are 0 known failing tests.
 
-[ ] F1. Lin :: test_array.lin
-[ ] F2. Lin :: test_array64.lin
-[ ] F3. Lin :: test_array64_free.lin
-[ ] F4. Lin :: test_array64_more.lin
-[ ] F5. Lin :: test_array_more.lin
-[ ] F6. Lin :: std/test_array_new.lin
-[ ] F7. Lin :: std/test_array64_new.lin
-[ ] F8. Lin :: comprehensive.lin  (imports std/array.lin)
+[x] F1. Lin :: test_array.lin
+[x] F2. Lin :: test_array64.lin
+[x] F3. Lin :: test_array64_free.lin
+[x] F4. Lin :: test_array64_more.lin
+[x] F5. Lin :: test_array_more.lin
+[x] F6. Lin :: std/test_array_new.lin
+[x] F7. Lin :: std/test_array64_new.lin
+[x] F8. Lin :: comprehensive.lin  (imports std/array.lin)
