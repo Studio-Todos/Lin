@@ -512,6 +512,25 @@ static AstNode* parsePrimary(Parser *parser) {
         case TOKEN_EITHER:     return parseEither(parser);
         case TOKEN_FUNC:       return parseFuncDecl(parser, true);
         case TOKEN_LBRACKET:   return parseBlock(parser);
+        case TOKEN_MINUS: {
+            parserAdvance(parser); // consume '-'
+            if (parser->current.type == TOKEN_NUMBER) {
+                AstNode *node = createNode(parser, AST_NUMBER);
+                if (!node) return NULL;
+                node->as.number.value = -atoll(parser->current.start);
+                parserAdvance(parser);
+                return node;
+            } else if (parser->current.type == TOKEN_FLOAT) {
+                AstNode *node = createNode(parser, AST_FLOAT);
+                if (!node) return NULL;
+                node->as.f_number.value = -strtod(parser->current.start, NULL);
+                parserAdvance(parser);
+                return node;
+            } else {
+                error(parser, "Expect number or float after unary '-'.");
+                return NULL;
+            }
+        }
         default:
             error(parser, "Expect expression.");
             parserAdvance(parser);
@@ -584,19 +603,7 @@ static AstNode* parseExpression(Parser *parser) {
 static AstNode* parseBlock(Parser *parser) {
     consume(parser, TOKEN_LBRACKET, "Expect '[' before block.");
     
-    // Peek at the next meaningful token to determine if this is a data block
-    Lexer savedLexer = parser->lexer;
-    Token firstToken = scanToken(&parser->lexer);
-    
-    bool isDataBlock = (firstToken.type == TOKEN_NUMBER || firstToken.type == TOKEN_FLOAT ||
-                     firstToken.type == TOKEN_STRING || firstToken.type == TOKEN_LBRACKET);
-    
-    // Restore lexer position if not a data block (will reparse in code mode)
-    if (!isDataBlock) {
-        parser->lexer = savedLexer;
-    }
-    
-    AstNode *block = createNode(parser, isDataBlock ? AST_BLOCK_DATA : AST_BLOCK);
+    AstNode *block = createNode(parser, AST_BLOCK);
     if (!block) return NULL;
     block->as.block.statements = NULL;
     block->as.block.count = 0;
@@ -801,6 +808,9 @@ AstNode* parse(const char *source) {
     initLexer(&parser.lexer, source);
     parser.hadError = false;
     parser.current = makeToken(&parser.lexer, TOKEN_EOF);
+
+
+
     parserAdvance(&parser);
 
     AstNode *block = createNode(&parser, AST_BLOCK);
@@ -829,6 +839,10 @@ AstNode* parse(const char *source) {
              }
              block->as.block.statements[block->as.block.count++] = stmt;
         }
+    }
+    if (parser.hadError) {
+        freeAst(block);
+        return NULL;
     }
     return block;
 }

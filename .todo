@@ -225,3 +225,19 @@
           - Rewrite the Lin compiler (`linc`) in Lin
           - Requires robust string processing, file I/O, and MLIR bindings in Lin
           - Goal: A self-hosting compiler that leverages Lin's own parallel runtime for compilation
+
+## ⚠️  Known Failing Tests (as of 2026-05-21)
+
+The following 8 tests are currently failing. All failures are related to array
+operations in `std/array.lin` — specifically how `dispatch_user_op` handles
+user-defined multi-arg ops like `array_new`, `array_get`, `array_set`.
+See todo item 28 (Dispatcher Scaling & Variadic Args) for the root cause.
+
+[ ] F1. Lin :: test_array.lin
+[ ] F2. Lin :: test_array64.lin
+[ ] F3. Lin :: test_array64_free.lin
+[ ] F4. Lin :: test_array64_more.lin
+[ ] F5. Lin :: test_array_more.lin
+[ ] F6. Lin :: std/test_array_new.lin
+[ ] F7. Lin :: std/test_array64_new.lin
+[ ] F8. Lin :: comprehensive.lin  (imports std/array.lin)

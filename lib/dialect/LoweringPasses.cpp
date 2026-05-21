@@ -47,6 +47,72 @@ static void replaceAll(std::string &str, const std::string &from, const std::str
     }
 }
 
+static std::string extractType(const std::string& payload, const std::string& varName) {
+    size_t pos = 0;
+    std::string targetLine = "";
+    bool foundVar = false;
+    while (true) {
+        pos = payload.find(varName, pos);
+        if (pos == std::string::npos) break;
+        size_t next = pos + varName.size();
+        while (next < payload.size() && std::isspace(static_cast<unsigned char>(payload[next]))) next++;
+        if (next < payload.size() && payload[next] == '=') {
+            size_t endOfLine = payload.find('\n', pos);
+            if (endOfLine == std::string::npos) endOfLine = payload.size();
+            targetLine = payload.substr(pos, endOfLine - pos);
+            foundVar = true;
+            break;
+        }
+        pos += varName.size();
+    }
+    
+    if (!foundVar) {
+        size_t lastLinePos = payload.find_last_not_of(" \t\r\n");
+        if (lastLinePos != std::string::npos) {
+            size_t startOfLastLine = payload.find_last_of("\n", lastLinePos);
+            if (startOfLastLine == std::string::npos) startOfLastLine = 0;
+            else startOfLastLine++;
+            targetLine = payload.substr(startOfLastLine, lastLinePos - startOfLastLine + 1);
+        } else {
+            targetLine = payload;
+        }
+    }
+    
+    size_t colon = targetLine.rfind(':');
+    if (colon != std::string::npos) {
+        std::string typePart = targetLine.substr(colon + 1);
+        typePart.erase(0, typePart.find_first_not_of(" \t\r\n"));
+        typePart.erase(typePart.find_last_not_of(" \t\r\n") + 1);
+        
+        size_t toPos = typePart.rfind(" to ");
+        if (toPos != std::string::npos) {
+            std::string t = typePart.substr(toPos + 4);
+            t.erase(0, t.find_first_not_of(" \t\r\n"));
+            t.erase(t.find_last_not_of(" \t\r\n") + 1);
+            return t;
+        }
+        
+        size_t arrowPos = typePart.rfind("->");
+        if (arrowPos != std::string::npos) {
+            std::string t = typePart.substr(arrowPos + 2);
+            t.erase(0, t.find_first_not_of(" \t\r\n"));
+            t.erase(t.find_last_not_of(" \t\r\n") + 1);
+            return t;
+        }
+        
+        if (targetLine.find("cmpi") != std::string::npos || 
+            targetLine.find("cmpf") != std::string::npos ||
+            targetLine.find("icmp") != std::string::npos ||
+            targetLine.find("fcmp") != std::string::npos) {
+            return "i1";
+        }
+        
+        return typePart;
+    }
+    
+    return "i64";
+}
+
 static uint32_t opcodeForLabel(StringRef label) {
   uint32_t hash = 2166136261u;
   for (unsigned char c : label) {
@@ -293,6 +359,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                     
                     int numArgs = 0;
                     if (argsAttr) {
+                        llvm::errs() << "RegistryOp: " << label << ", arg_names attribute: [" << argsAttr.getValue() << "]\n";
                         std::string argsStr = argsAttr.getValue().str();
                         for (size_t i = 0; i < argsStr.size(); i++) {
                             if (argsStr[i] == '[') numArgs++;
@@ -322,6 +389,9 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                             if (cleanName.empty()) continue;
                             if (cleanName[0] != '%') cleanName = "%" + cleanName;
                             argNamesList.push_back(cleanName);
+                        }
+                        for (unsigned i = 0; i < argNamesList.size(); ++i) {
+                             llvm::errs() << "Outer loop: argNamesList[" << i << "] = [" << argNamesList[i] << "]\n";
                         }
 
                         std::string payload = p.getValue().str();
@@ -357,6 +427,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                             else if (argNamesList[i].find("_i64") != std::string::npos) { type = "i64"; argNamesList[i].erase(argNamesList[i].find("_i64"), 4); }
                             else if (argNamesList[i].find("_i1") != std::string::npos) { type = "i1"; argNamesList[i].erase(argNamesList[i].find("_i1"), 4); }
                             argTypes.push_back(type);
+                            llvm::errs() << "Outer loop: Inferred type for " << argNamesList[i] << " is [" << type << "]\n";
                             argS += argNamesList[i] + " : " + type;
                             if (i < argNamesList.size() - 1) argS += ", ";
                         }
@@ -436,14 +507,16 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                             resVar = "%res_state";
                         }
                         
+                        std::string actualType = extractType(pStrRenamed, resVar);
+                        
                         // If no result variable found in payload, assume the payload expression ITSELF is the result
                         if (pStrRenamed.find(resVar) == std::string::npos) {
                             tempModuleStr += "  %res_auto = " + pStrRenamed + "\n";
-                            tempModuleStr += "  %res_coerced = \"lin.coerce\"(%res_auto) : (any) -> i64\n";
+                            tempModuleStr += "  %res_coerced = \"lin.coerce\"(%res_auto) : (" + actualType + ") -> i64\n";
                             tempModuleStr += "  func.return %res_coerced : i64\n";
                         } else {
                             // We'll use a custom op to do the coercion after parsing
-                            tempModuleStr += "  %res_coerced = \"lin.coerce\"(" + resVar + ") : (any) -> i64\n";
+                            tempModuleStr += "  %res_coerced = \"lin.coerce\"(" + resVar + ") : (" + actualType + ") -> i64\n";
                             tempModuleStr += "  func.return %res_coerced : i64\n";
                         }
                         tempModuleStr += "}\n}\n";
@@ -461,27 +534,33 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                                      }
                                  }
                              }
+                             if (auto mainTemp = module.lookupSymbol<func::FuncOp>("temp")) {
+                                 mainTemp.erase();
+                             }
                          }
 
                          func::FuncOp tempFunc = parsedSnippet ? parsedSnippet->lookupSymbol<func::FuncOp>("temp") : nullptr;
                             if (tempFunc && !tempFunc.getBody().empty()) {
                                 IRMapping mapper;
                                 OpBuilder bBody = OpBuilder::atBlockBegin(fEntry);
-                                for (unsigned i = 0; i < argNamesList.size(); ++i) {
-                                    if (i < f.getNumArguments() && i < tempFunc.getNumArguments()) {
-                                        Value arg = fEntry->getArgument(i);
-                                        if (argTypes[i] == "f32") {
-                                            arg = bBody.create<LLVM::BitcastOp>(module.getLoc(), builder.getF32Type(), arg);
-                                        } else if (argTypes[i] == "i1") {
-                                            arg = bBody.create<LLVM::TruncOp>(module.getLoc(), builder.getI1Type(), arg);
-                                        } else if (argTypes[i] == "i32") {
-                                            arg = bBody.create<LLVM::TruncOp>(module.getLoc(), builder.getI32Type(), arg);
-                                        } else if (argTypes[i] == "i64" || argTypes[i] == "f64") {
-                                            if (argTypes[i] == "i64") arg = safeZExt(bBody, module.getLoc(), i64Type, arg);
-                                        }
-                                        mapper.map(tempFunc.getArgument(i), arg);
-                                    }
-                                }
+                                 for (unsigned i = 0; i < argNamesList.size(); ++i) {
+                                     if (i < f.getNumArguments() && i < tempFunc.getNumArguments()) {
+                                         Value arg = fEntry->getArgument(i);
+                                         if (argTypes[i] == "f32") {
+                                             Value trunc = bBody.create<LLVM::TruncOp>(module.getLoc(), builder.getI32Type(), arg);
+                                             arg = bBody.create<LLVM::BitcastOp>(module.getLoc(), builder.getF32Type(), trunc);
+                                         } else if (argTypes[i] == "f64") {
+                                             arg = bBody.create<LLVM::BitcastOp>(module.getLoc(), builder.getF64Type(), arg);
+                                         } else if (argTypes[i] == "i1") {
+                                             arg = bBody.create<LLVM::TruncOp>(module.getLoc(), builder.getI1Type(), arg);
+                                         } else if (argTypes[i] == "i32") {
+                                             arg = bBody.create<LLVM::TruncOp>(module.getLoc(), builder.getI32Type(), arg);
+                                         } else if (argTypes[i] == "i64") {
+                                             arg = safeZExt(bBody, module.getLoc(), i64Type, arg);
+                                         }
+                                         mapper.map(tempFunc.getArgument(i), arg);
+                                     }
+                                 }
                                 
                                 Value finalRetVal = nullptr;
                                 for (auto &op : tempFunc.getBody().front().getOperations()) {
@@ -529,21 +608,27 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                                  }
                                  
                                  // No need for separate finalRetVal processing anymore as it's handled by lin.coerce or the loop
-                                 if (false && finalRetVal) {
-                                    if (finalRetVal.getType() != i64Type) {
-                                        if (finalRetVal.getType().isa<IntegerType>()) {
-                                            finalRetVal = safeZExt(bBody, module.getLoc(), i64Type, finalRetVal);
-                                        } else if (finalRetVal.getType().isF64()) {
-                                            finalRetVal = bBody.create<LLVM::BitcastOp>(module.getLoc(), i64Type, finalRetVal);
-                                        } else if (finalRetVal.getType().isF32()) {
-                                            Value ext = bBody.create<LLVM::FPExtOp>(module.getLoc(), builder.getF64Type(), finalRetVal);
-                                            finalRetVal = bBody.create<LLVM::BitcastOp>(module.getLoc(), i64Type, ext);
-                                        }
-                                    }
-                                    bBody.create<LLVM::ReturnOp>(module.getLoc(), finalRetVal);
-                                } else {
-                                    bBody.create<LLVM::ReturnOp>(module.getLoc(), builder.create<LLVM::ConstantOp>(module.getLoc(), i64Type, builder.getI64IntegerAttr(0)));
-                                }
+                                 if (finalRetVal) {
+                                     if (finalRetVal.getType() != i64Type) {
+                                         if (finalRetVal.getType().isa<IntegerType>()) {
+                                             finalRetVal = safeZExt(bBody, module.getLoc(), i64Type, finalRetVal);
+                                         } else if (finalRetVal.getType().isa<FloatType>()) {
+                                             if (finalRetVal.getType().isF64()) {
+                                                 finalRetVal = bBody.create<LLVM::BitcastOp>(module.getLoc(), i64Type, finalRetVal);
+                                             } else {
+                                                 Value ext = bBody.create<LLVM::FPExtOp>(module.getLoc(), bBody.getF64Type(), finalRetVal);
+                                                 finalRetVal = bBody.create<LLVM::BitcastOp>(module.getLoc(), i64Type, ext);
+                                             }
+                                         } else if (finalRetVal.getType().isa<LLVM::LLVMPointerType>()) {
+                                             finalRetVal = bBody.create<LLVM::PtrToIntOp>(module.getLoc(), i64Type, finalRetVal);
+                                         } else if (finalRetVal.getType().isa<IndexType>()) {
+                                             finalRetVal = bBody.create<arith::IndexCastOp>(module.getLoc(), i64Type, finalRetVal);
+                                         }
+                                     }
+                                     bBody.create<LLVM::ReturnOp>(module.getLoc(), finalRetVal);
+                                 } else {
+                                     bBody.create<LLVM::ReturnOp>(module.getLoc(), bBody.create<LLVM::ConstantOp>(module.getLoc(), i64Type, bBody.getI64IntegerAttr(0)));
+                                 }
                             }
                         
                         // Always ensure a terminator
@@ -1126,6 +1211,35 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         builder.create<LLVM::CallOp>(entry.getLoc(), ptrType, "worker_thread", ValueRange{as});
         builder.create<LLVM::ReturnOp>(entry.getLoc(), ValueRange{builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(0))});
     }
+
+    if (enableGPU) {
+        OpBuilder b(module.getBodyRegion());
+        auto fType = b.getFunctionType({}, {});
+        auto f = b.create<func::FuncOp>(module.getLoc(), "pic", fType);
+        Block *entry = f.addEntryBlock();
+        b.setInsertionPointToStart(entry);
+        
+        Value oneIdx = b.create<arith::ConstantIndexOp>(module.getLoc(), 1);
+        auto launchOp = b.create<gpu::LaunchOp>(
+            module.getLoc(),
+            oneIdx, oneIdx, oneIdx,
+            oneIdx, oneIdx, oneIdx,
+            /*dynamicSharedMemorySize=*/nullptr,
+            /*asyncTokenType=*/Type{},
+            /*asyncDependencies=*/ValueRange{},
+            /*workgroupAttributions=*/TypeRange{},
+            /*privateAttributions=*/TypeRange{},
+            /*clusterSizeX=*/nullptr,
+            /*clusterSizeY=*/nullptr,
+            /*clusterSizeZ=*/nullptr
+        );
+        b.setInsertionPointToStart(&launchOp.getBody().front());
+        b.create<gpu::TerminatorOp>(module.getLoc());
+        
+        b.setInsertionPointAfter(launchOp);
+        b.create<func::ReturnOp>(module.getLoc());
+    }
+
     SmallVector<Operation*> castsToErase;
     module.walk([&](UnrealizedConversionCastOp op) {
         op.getResult(0).replaceAllUsesWith(op.getOperand(0));
