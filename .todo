@@ -160,6 +160,12 @@
         - Arena reset after reduction for long-running programs
         - GPU GC: thousands of ε nodes propagate simultaneously via gpu.launch
 
+[ ] 18a. Offload type-directed dispatch to runtime rule lookup table
+        - Move `add` -> `fadd` and type checks out of compile-time `main.cpp` and into runtime `register_rule()` mappings.
+
+[ ] 18b. Remove compiler-hardcoded types and primitives
+        - Purge hardcoded `"i32"`, `"f32"`, etc. from the compiler frontend, making type tags entirely user-definable.
+
 ## 🔵 Architecture — Long-Term
 
 [ ] 19. Unified CPU/GPU reduction pipeline via pic.reduce
