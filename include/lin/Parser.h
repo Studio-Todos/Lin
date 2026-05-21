@@ -49,6 +49,7 @@ typedef enum {
     TOKEN_LBRACE,
     TOKEN_RBRACE,
     TOKEN_DOT,
+    TOKEN_ANNOTATION,
 } TokenType;
 
 typedef struct {
@@ -119,11 +120,24 @@ typedef struct AstNode {
             struct AstNode *body;
             const char *return_type_name;
             int return_type_len;
+            const char *dispatch;
+            int dispatch_len;
         } func_decl;
         struct { const char *value; int length; } string;
         struct { const char *name; int name_len; struct AstNode *value; } assignment;
         struct { const char *name; int name_len; struct AstNode *value; struct AstNode *next; } assignment_multi;
-        struct { const char *name; int name_len; const char *inputs; int inputs_len; const char *outputs; int outputs_len; const char *mlir_payload; int payload_len; } mlir_op;
+        struct {
+            const char *name;
+            int name_len;
+            const char *inputs;
+            int inputs_len;
+            const char *outputs;
+            int outputs_len;
+            const char *mlir_payload;
+            int payload_len;
+            const char *dispatch;
+            int dispatch_len;
+        } mlir_op;
         struct { const char *path; int length; struct AstNode *module_block; } import_stmt;
         struct { const char *name; int name_len; struct AstNode *module_block; } module;
         struct { struct AstNode *condition; struct AstNode *body; } while_loop;

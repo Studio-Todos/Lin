@@ -177,7 +177,7 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
                 }
             }
             val = opcodeForLabel(strKey);
-            builder.create<pic::graph::RegistryOp>(loc, builder.getStringAttr(strKey), op.getStrVal().value());
+            builder.create<pic::graph::RegistryOp>(loc, builder.getStringAttr(strKey), op.getStrVal().value(), StringAttr{});
         } else val = opcodeForLabel(label);
 
         auto alloc = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, 4, val);
@@ -279,6 +279,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
     auto i32Type = builder.getI32Type();
     auto i64Type = builder.getI64Type();
+    auto i1Type = builder.getI1Type();
     auto ptrType = LLVM::LLVMPointerType::get(builder.getContext());
     auto voidType = LLVM::LLVMVoidType::get(builder.getContext());
 
@@ -414,6 +415,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         std::string funcName;
         int numArgs;
         SmallVector<std::string> argTypes;
+        std::string dispatch;
     };
     std::vector<UserOp> userOps;
     SmallVector<pic::graph::RegistryOp> regOps;
@@ -817,7 +819,11 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                                 termOp.erase();
                             }
                         }
-                        userOps.push_back({opcodeForLabel(label), label, funcName, (int)numArgs, argTypes});
+                        std::string dispatch = "";
+                        if (auto dispAttr = op->getAttrOfType<StringAttr>("dispatch")) {
+                            dispatch = dispAttr.getValue().str();
+                        }
+                        userOps.push_back({opcodeForLabel(label), label, funcName, (int)numArgs, argTypes, dispatch});
                     }
                 }
             }
@@ -959,7 +965,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
     auto genDispatcher = [&]() {
         OpBuilder b(module.getBodyRegion());
-        auto fType = LLVM::LLVMFunctionType::get(i64Type, {i32Type, i64Type, i64Type, i64Type, i64Type, ptrType});
+        auto fType = LLVM::LLVMFunctionType::get(i64Type, {i32Type, i64Type, i64Type, i64Type, i64Type, i32Type, i32Type, ptrType});
         auto f = b.create<LLVM::LLVMFuncOp>(module.getLoc(), "dispatch_user_op", fType);
         Block *entry = f.addEntryBlock();
         Value hash = entry->getArgument(0);
@@ -967,7 +973,9 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         Value arg1 = entry->getArgument(2);
         Value arg2 = entry->getArgument(3);
         Value arg3 = entry->getArgument(4);
-        Value dState = entry->getArgument(5);
+        Value nodeA = entry->getArgument(5);
+        Value nodeB = entry->getArgument(6);
+        Value dState = entry->getArgument(7);
         OpBuilder eb(entry, entry->end());
         Value wState = eb.create<LLVM::PtrToIntOp>(module.getLoc(), i64Type, dState);
 
@@ -988,22 +996,94 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             caseOperands.push_back(ValueRange{});
             OpBuilder ob(block, block->end());
             Value res;
-            Value zeroVal = ob.create<LLVM::ConstantOp>(module.getLoc(), i64Type, ob.getI64IntegerAttr(0));
-            SmallVector<Value> callArgs;
-            if (op.numArgs >= 1) callArgs.push_back(arg0);
-            if (op.numArgs >= 2) callArgs.push_back(arg1);
-            if (op.numArgs >= 3) callArgs.push_back(arg2);
-            if (op.numArgs >= 4) callArgs.push_back(arg3);
-            for (int i = 5; i <= op.numArgs; i++) {
-                callArgs.push_back(zeroVal);
+            if (op.dispatch == "gpu") {
+                Value two32 = ob.create<LLVM::ConstantOp>(module.getLoc(), i32Type, ob.getI32IntegerAttr(2));
+                Value pairBuf = ob.create<LLVM::AllocaOp>(module.getLoc(), ptrType, i32Type, two32);
+                
+                Value zeroIdx = ob.create<LLVM::ConstantOp>(module.getLoc(), i64Type, ob.getI64IntegerAttr(0));
+                Value ptr0 = ob.create<LLVM::GEPOp>(module.getLoc(), ptrType, i32Type, pairBuf, zeroIdx);
+                ob.create<LLVM::StoreOp>(module.getLoc(), nodeA, ptr0);
+                
+                Value oneIdx = ob.create<LLVM::ConstantOp>(module.getLoc(), i64Type, ob.getI64IntegerAttr(1));
+                Value ptr1 = ob.create<LLVM::GEPOp>(module.getLoc(), ptrType, i32Type, pairBuf, oneIdx);
+                ob.create<LLVM::StoreOp>(module.getLoc(), nodeB, ptr1);
+
+                Value oZero = ob.create<LLVM::ConstantOp>(module.getLoc(), i32Type, ob.getI32IntegerAttr(0));
+                Value gepNet = ob.create<LLVM::GEPOp>(module.getLoc(), ptrType, ptrType, dState, ValueRange{oZero});
+                Value dNet = ob.create<LLVM::LoadOp>(module.getLoc(), ptrType, gepNet);
+
+                auto gpuDispatchFty = LLVM::LLVMFunctionType::get(
+                    LLVM::LLVMVoidType::get(ob.getContext()),
+                    {ptrType, ptrType, i32Type}
+                );
+                auto gpuDispatchFunc = module.lookupSymbol<LLVM::LLVMFuncOp>("pic_gpu_dispatch");
+                if (!gpuDispatchFunc) {
+                    OpBuilder moduleBuilder(module.getBodyRegion());
+                    gpuDispatchFunc = moduleBuilder.create<LLVM::LLVMFuncOp>(module.getLoc(), "pic_gpu_dispatch", gpuDispatchFty);
+                }
+                
+                Value one32 = ob.create<LLVM::ConstantOp>(module.getLoc(), i32Type, ob.getI32IntegerAttr(1));
+                ob.create<LLVM::CallOp>(module.getLoc(), TypeRange{}, "pic_gpu_dispatch", ValueRange{dNet, pairBuf, one32});
+
+                res = ob.create<LLVM::ConstantOp>(module.getLoc(), i64Type, ob.getI64IntegerAttr(0));
+            } else {
+                Value zeroVal = ob.create<LLVM::ConstantOp>(module.getLoc(), i64Type, ob.getI64IntegerAttr(0));
+                SmallVector<Value> callArgs;
+                if (op.numArgs >= 1) callArgs.push_back(arg0);
+                if (op.numArgs >= 2) callArgs.push_back(arg1);
+                if (op.numArgs >= 3) callArgs.push_back(arg2);
+                if (op.numArgs >= 4) callArgs.push_back(arg3);
+                for (int i = 5; i <= op.numArgs; i++) {
+                    callArgs.push_back(zeroVal);
+                }
+                res = ob.create<LLVM::CallOp>(module.getLoc(), i64Type, op.funcName, callArgs).getResult();
             }
-            res = ob.create<LLVM::CallOp>(module.getLoc(), i64Type, op.funcName, callArgs).getResult();
             ob.create<LLVM::ReturnOp>(module.getLoc(), res);
         }
 
         eb.create<LLVM::SwitchOp>(module.getLoc(), hash, defaultBlock, ValueRange{}, caseValues, caseBlocks, caseOperands);
     };
     genDispatcher();
+
+    auto genIsGpuOp = [&]() {
+        OpBuilder b(module.getBodyRegion());
+        auto fType = LLVM::LLVMFunctionType::get(i1Type, {i32Type});
+        auto f = b.create<LLVM::LLVMFuncOp>(module.getLoc(), "is_gpu_op", fType);
+        Block *entry = f.addEntryBlock();
+        Value hash = entry->getArgument(0);
+
+        Block *defaultBlock = f.addBlock();
+        {
+            OpBuilder ob(defaultBlock, defaultBlock->end());
+            Value zero = ob.create<LLVM::ConstantOp>(module.getLoc(), i1Type, ob.getBoolAttr(false));
+            ob.create<LLVM::ReturnOp>(module.getLoc(), zero);
+        }
+        
+        SmallVector<int32_t> caseValues;
+        SmallVector<Block*> caseBlocks;
+        SmallVector<ValueRange> caseOperands;
+        for (auto &op : userOps) {
+            if (op.dispatch == "gpu") {
+                caseValues.push_back(op.hash);
+                Block *block = f.addBlock();
+                caseBlocks.push_back(block);
+                caseOperands.push_back(ValueRange{});
+                OpBuilder ob(block, block->end());
+                Value one = ob.create<LLVM::ConstantOp>(module.getLoc(), i1Type, ob.getBoolAttr(true));
+                ob.create<LLVM::ReturnOp>(module.getLoc(), one);
+            }
+        }
+        if (!caseValues.empty()) {
+            OpBuilder eb(entry, entry->end());
+            eb.create<LLVM::SwitchOp>(module.getLoc(), hash, defaultBlock, ValueRange{}, caseValues, caseBlocks, caseOperands);
+        } else {
+            OpBuilder eb(entry, entry->end());
+            Value zero = eb.create<LLVM::ConstantOp>(module.getLoc(), i1Type, eb.getBoolAttr(false));
+            eb.create<LLVM::ReturnOp>(module.getLoc(), zero);
+        }
+    };
+    genIsGpuOp();
+
 
     auto genGetNumArgs = [&]() {
         OpBuilder b(module.getBodyRegion());
@@ -1305,7 +1385,20 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             builder.setInsertionPointToStart(doUnary);
             {
                 Value zero64 = builder.create<LLVM::ConstantOp>(module.getLoc(), i64Type, builder.getI64IntegerAttr(0));
-                Value resVal = builder.create<LLVM::CallOp>(module.getLoc(), i64Type, "dispatch_user_op", ValueRange{impl, v0, zero64, zero64, zero64, wState}).getResult();
+                Value nodeA = builder.create<LLVM::LShrOp>(module.getLoc(), i32Type, valP, builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(2)));
+                Value nodeB = builder.create<LLVM::LShrOp>(module.getLoc(), i32Type, opP, builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(2)));
+                
+                Value isGpu = builder.create<LLVM::CallOp>(module.getLoc(), i1Type, "is_gpu_op", ValueRange{impl}).getResult();
+                Block *gpuBranch = wFunc.addBlock();
+                Block *cpuBranch = wFunc.addBlock();
+                builder.create<LLVM::CondBrOp>(module.getLoc(), isGpu, gpuBranch, cpuBranch);
+                
+                builder.setInsertionPointToStart(gpuBranch);
+                builder.create<LLVM::CallOp>(module.getLoc(), i64Type, "dispatch_user_op", ValueRange{impl, v0, zero64, zero64, zero64, nodeA, nodeB, wState});
+                builder.create<LLVM::BrOp>(module.getLoc(), lHead);
+                
+                builder.setInsertionPointToStart(cpuBranch);
+                Value resVal = builder.create<LLVM::CallOp>(module.getLoc(), i64Type, "dispatch_user_op", ValueRange{impl, v0, zero64, zero64, zero64, nodeA, nodeB, wState}).getResult();
                 linkPorts(getAux(opP, 2), makeVal(resVal, valLabel), wState);
                 builder.create<LLVM::BrOp>(module.getLoc(), lHead);
             }
@@ -1329,7 +1422,20 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 {
                     Value v1 = getAux(rTarget, 1);
                     Value zero64 = builder.create<LLVM::ConstantOp>(module.getLoc(), i64Type, builder.getI64IntegerAttr(0));
-                    Value resVal = builder.create<LLVM::CallOp>(module.getLoc(), i64Type, "dispatch_user_op", ValueRange{impl, v1, v0, zero64, zero64, wState}).getResult();
+                    Value nodeA = builder.create<LLVM::LShrOp>(module.getLoc(), i32Type, valP, builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(2)));
+                    Value nodeB = builder.create<LLVM::LShrOp>(module.getLoc(), i32Type, opP, builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(2)));
+
+                    Value isGpu = builder.create<LLVM::CallOp>(module.getLoc(), i1Type, "is_gpu_op", ValueRange{impl}).getResult();
+                    Block *gpuBranch = wFunc.addBlock();
+                    Block *cpuBranch = wFunc.addBlock();
+                    builder.create<LLVM::CondBrOp>(module.getLoc(), isGpu, gpuBranch, cpuBranch);
+                    
+                    builder.setInsertionPointToStart(gpuBranch);
+                    builder.create<LLVM::CallOp>(module.getLoc(), i64Type, "dispatch_user_op", ValueRange{impl, v1, v0, zero64, zero64, nodeA, nodeB, wState});
+                    builder.create<LLVM::BrOp>(module.getLoc(), lHead);
+                    
+                    builder.setInsertionPointToStart(cpuBranch);
+                    Value resVal = builder.create<LLVM::CallOp>(module.getLoc(), i64Type, "dispatch_user_op", ValueRange{impl, v1, v0, zero64, zero64, nodeA, nodeB, wState}).getResult();
                     linkPorts(getAux(opP, 2), makeVal(resVal, valLabel), wState);
                     builder.create<LLVM::BrOp>(module.getLoc(), lHead);
                 }

@@ -173,6 +173,17 @@ Token scanToken(Lexer *lexer) {
         case '-': return makeToken(lexer, TOKEN_MINUS);
         case '%': return makeToken(lexer, TOKEN_IDENTIFIER);
         case '.': return makeToken(lexer, TOKEN_DOT);
+        case '@': {
+            if (isalpha(peek(lexer)) || peek(lexer) == '_') {
+                advance(lexer);
+                while (isalpha(peek(lexer)) || isdigit(peek(lexer)) || peek(lexer) == '_' ||
+                       (peek(lexer) == '-' && isalpha(peekNext(lexer)))) {
+                    advance(lexer);
+                }
+                return makeToken(lexer, TOKEN_ANNOTATION);
+            }
+            return makeToken(lexer, TOKEN_ERROR);
+        }
         case ',': return makeToken(lexer, TOKEN_IDENTIFIER);
         case '0': case '1': case '2': case '3': case '4':
         case '5': case '6': case '7': case '8': case '9': return number(lexer);
@@ -676,6 +687,21 @@ static AstNode* parseEither(Parser *parser) {
 }
 
 static AstNode* parseStatement(Parser *parser) {
+    if (parser->current.type == TOKEN_ANNOTATION) {
+        Token ann = parser->current;
+        parserAdvance(parser); // consume annotation
+        AstNode *node = parseExpression(parser);
+        if (node) {
+            if (node->type == AST_FUNC_DECL) {
+                node->as.func_decl.dispatch = ann.start + 1; // skip '@'
+                node->as.func_decl.dispatch_len = ann.length - 1;
+            } else if (node->type == AST_MLIR_OP) {
+                node->as.mlir_op.dispatch = ann.start + 1; // skip '@'
+                node->as.mlir_op.dispatch_len = ann.length - 1;
+            }
+        }
+        return node;
+    }
     return parseExpression(parser);
 }
 
@@ -886,7 +912,11 @@ void printAst(AstNode *node, int depth) {
             for (int i=0; i<node->as.block.count; i++) printAst(node->as.block.statements[i], depth + 1);
             break;
         case AST_FUNC_DECL:
-            printf("FuncDecl(%.*s, args: [", node->as.func_decl.name_len, node->as.func_decl.name);
+            if (node->as.func_decl.dispatch) {
+                printf("FuncDecl(%.*s, dispatch: @%.*s, args: [", node->as.func_decl.name_len, node->as.func_decl.name, node->as.func_decl.dispatch_len, node->as.func_decl.dispatch);
+            } else {
+                printf("FuncDecl(%.*s, args: [", node->as.func_decl.name_len, node->as.func_decl.name);
+            }
             for (int j = 0; j < node->as.func_decl.arg_count; j++) {
                 printf("%.*s%s", node->as.func_decl.args[j].name_len, node->as.func_decl.args[j].name,
                        (j < node->as.func_decl.arg_count - 1) ? ", " : "");
@@ -895,7 +925,11 @@ void printAst(AstNode *node, int depth) {
             printAst(node->as.func_decl.body, depth + 1);
             break;
         case AST_MLIR_OP:
-            printf("MlirOp(%.*s)\n", node->as.mlir_op.name_len, node->as.mlir_op.name);
+            if (node->as.mlir_op.dispatch) {
+                printf("MlirOp(%.*s, dispatch: @%.*s)\n", node->as.mlir_op.name_len, node->as.mlir_op.name, node->as.mlir_op.dispatch_len, node->as.mlir_op.dispatch);
+            } else {
+                printf("MlirOp(%.*s)\n", node->as.mlir_op.name_len, node->as.mlir_op.name);
+            }
             break;
         case AST_IMPORT:
             printf("Import(%.*s)\n", node->as.import_stmt.length, node->as.import_stmt.path);

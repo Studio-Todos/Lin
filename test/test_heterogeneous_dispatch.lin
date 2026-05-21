@@ -1,0 +1,25 @@
+// RUN: %linc build %s -o %t_het && test -s %t_het.spv && spirv-val %t_het.spv
+
+@gpu
+gpu_func: func [
+    return: [i32!]
+][
+    add 10 20
+]
+
+@cpu
+cpu_func: func [
+    return: [i32!]
+][
+    add 5 5
+]
+
+test_main: func [
+    return: [i32!]
+][
+    x: (gpu_func)
+    y: (cpu_func)
+    add x y
+]
+
+(test_main)

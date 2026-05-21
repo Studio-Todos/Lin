@@ -503,8 +503,17 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         MlirAttribute namesAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(cleanNames));
         MlirNamedAttribute namesNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("arg_names")), namesAttr);
 
-        MlirNamedAttribute attrs[] = {nameNamedAttr, payloadNamedAttr, namesNamedAttr};
-        mlirOperationStateAddAttributes(&regState, 3, attrs);
+        int regAttrCount = 3;
+        MlirNamedAttribute attrs[4];
+        attrs[0] = nameNamedAttr;
+        attrs[1] = payloadNamedAttr;
+        attrs[2] = namesNamedAttr;
+        if (expr->as.mlir_op.dispatch) {
+            MlirAttribute dispatchAttr = mlirStringAttrGet(ctx, mlirStringRefCreate(expr->as.mlir_op.dispatch, expr->as.mlir_op.dispatch_len));
+            attrs[3] = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("dispatch")), dispatchAttr);
+            regAttrCount = 4;
+        }
+        mlirOperationStateAddAttributes(&regState, regAttrCount, attrs);
 
         MlirOperation regOp = mlirOperationCreate(&regState);
         mlirBlockAppendOwnedOperation(block, regOp);
@@ -518,8 +527,17 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         MlirAttribute labelAttr = mlirStringAttrGet(ctx, mlirStringRefCreate(expr->as.mlir_op.name, expr->as.mlir_op.name_len));
         MlirNamedAttribute labelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), labelAttr);
 
-        MlirNamedAttribute agentAttrs[] = {typeNamedAttr, polNamedAttr, labelNamedAttr};
-        mlirOperationStateAddAttributes(&state, 3, agentAttrs);
+        int agentAttrCount = 3;
+        MlirNamedAttribute agentAttrs[4];
+        agentAttrs[0] = typeNamedAttr;
+        agentAttrs[1] = polNamedAttr;
+        agentAttrs[2] = labelNamedAttr;
+        if (expr->as.mlir_op.dispatch) {
+            MlirAttribute dispatchAttr = mlirStringAttrGet(ctx, mlirStringRefCreate(expr->as.mlir_op.dispatch, expr->as.mlir_op.dispatch_len));
+            agentAttrs[3] = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("dispatch")), dispatchAttr);
+            agentAttrCount = 4;
+        }
+        mlirOperationStateAddAttributes(&state, agentAttrCount, agentAttrs);
 
         MlirType portType = getPicPortType(ctx);
         MlirType types[] = {portType, portType, portType};
@@ -1018,8 +1036,17 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         MlirNamedAttribute payloadNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("payload")), payloadAttr);
         MlirAttribute argNamesAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("[%arg0][%arg1][%state]"));
         MlirNamedAttribute argNamesNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("arg_names")), argNamesAttr);
-        MlirNamedAttribute regAttrs[] = {opNameNamed, payloadNamed, argNamesNamed};
-        mlirOperationStateAddAttributes(&regState, 3, regAttrs);
+        int regAttrCount = 3;
+        MlirNamedAttribute regAttrs[4];
+        regAttrs[0] = opNameNamed;
+        regAttrs[1] = payloadNamed;
+        regAttrs[2] = argNamesNamed;
+        if (expr->as.func_decl.dispatch) {
+            MlirAttribute dispatchAttr = mlirStringAttrGet(ctx, mlirStringRefCreate(expr->as.func_decl.dispatch, expr->as.func_decl.dispatch_len));
+            regAttrs[3] = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("dispatch")), dispatchAttr);
+            regAttrCount = 4;
+        }
+        mlirOperationStateAddAttributes(&regState, regAttrCount, regAttrs);
         if (!mlirBlockIsNull(moduleBody)) {
             mlirBlockAppendOwnedOperation(moduleBody, mlirOperationCreate(&regState));
         }
@@ -1030,8 +1057,17 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         MlirNamedAttribute agTypeNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), agTypeAttr);
         MlirAttribute fnLabelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(funcNameStr));
         MlirNamedAttribute fnLabelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), fnLabelAttr);
-        MlirNamedAttribute agentAttrs[] = {agTypeNamed, plusPolAttr, fnLabelNamedAttr};
-        mlirOperationStateAddAttributes(&baseState, 3, agentAttrs);
+        int agentAttrCount = 3;
+        MlirNamedAttribute agentAttrs[4];
+        agentAttrs[0] = agTypeNamed;
+        agentAttrs[1] = plusPolAttr;
+        agentAttrs[2] = fnLabelNamedAttr;
+        if (expr->as.func_decl.dispatch) {
+            MlirAttribute dispatchAttr = mlirStringAttrGet(ctx, mlirStringRefCreate(expr->as.func_decl.dispatch, expr->as.func_decl.dispatch_len));
+            agentAttrs[3] = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("dispatch")), dispatchAttr);
+            agentAttrCount = 4;
+        }
+        mlirOperationStateAddAttributes(&baseState, agentAttrCount, agentAttrs);
         mlirOperationStateAddResults(&baseState, 3, agentTypes);
         MlirOperation baseOp = mlirOperationCreate(&baseState);
         mlirBlockAppendOwnedOperation(block, baseOp);
