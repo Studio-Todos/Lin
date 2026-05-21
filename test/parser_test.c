@@ -163,6 +163,19 @@ void test_unterminated_string() {
     printf("test_unterminated_string passed\n");
 }
 
+void test_empty_ret() {
+    const char *source = "test_fn: func [return: []] [ 0 ]";
+    AstNode *ast = parse(source);
+    assert(ast != NULL);
+    assert(ast->type == AST_BLOCK);
+    assert(ast->as.block.count == 1);
+    assert(ast->as.block.statements[0]->type == AST_FUNC_DECL);
+    assert(strncmp(ast->as.block.statements[0]->as.func_decl.name, "test_fn", 7) == 0);
+    assert(ast->as.block.statements[0]->as.func_decl.return_type_len == 0);
+    freeAst(ast);
+    printf("test_empty_ret passed\n");
+}
+
 int main() {
     test_number();
     test_float();
@@ -176,6 +189,7 @@ int main() {
     test_import();
     test_while();
     test_unterminated_string();
+    test_empty_ret();
     printf("All parser tests passed!\n");
     return 0;
 }
