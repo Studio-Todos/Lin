@@ -354,7 +354,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         MlirNamedAttribute typeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), typeAttr);
         MlirAttribute polAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("+"));
         MlirNamedAttribute polNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), polAttr);
-        MlirAttribute labelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("num"));
+        MlirAttribute labelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(expr->type == AST_NUMBER ? "i32" : "bool"));
         MlirNamedAttribute labelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), labelAttr);
 
         int64_t val = (expr->type == AST_NUMBER) ? expr->as.number.value : (expr->as.boolean.value ? 1 : 0);
@@ -475,11 +475,15 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
                                 while (i < len && isspace((unsigned char)p[i])) i++;
                                 if (i < len && p[i] == '[') {
                                     i++;
-                                    if (i + 3 <= len && strncmp(p + i, "f32", 3) == 0) strcat(cleanNames, "_f32");
-                                    else if (i + 3 <= len && strncmp(p + i, "f64", 3) == 0) strcat(cleanNames, "_f64");
-                                    else if (i + 3 <= len && strncmp(p + i, "i64", 3) == 0) strcat(cleanNames, "_i64");
-                                    else if (i + 3 <= len && strncmp(p + i, "i32", 3) == 0) strcat(cleanNames, "_i32");
-                                    else if (i + 2 <= len && strncmp(p + i, "i1", 2) == 0) strcat(cleanNames, "_i1");
+                                    const char *typeStart = p + i;
+                                    while (i < len && p[i] != '!' && p[i] != ']' && !isspace((unsigned char)p[i])) {
+                                        i++;
+                                    }
+                                    int typeLen = (int)(p + i - typeStart);
+                                    if (typeLen > 0) {
+                                        strcat(cleanNames, "_");
+                                        strncat(cleanNames, typeStart, typeLen);
+                                    }
                                     
                                     int depth = 1;
                                     while (i < len && depth > 0) {
@@ -839,13 +843,13 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
             snprintf(funcNameStr, sizeof(funcNameStr), "anon_fn_%d", anon_counter++);
         }
 
-        // Skip type declaration functions to avoid duplicate symbol errors
-        if (expr->as.func_decl.name_len > 0 && (
-            strcmp(funcNameStr, "i1") == 0 || strcmp(funcNameStr, "i8") == 0 ||
-            strcmp(funcNameStr, "i16") == 0 || strcmp(funcNameStr, "i32") == 0 ||
-            strcmp(funcNameStr, "i64") == 0 || strcmp(funcNameStr, "f32") == 0 ||
-            strcmp(funcNameStr, "f64") == 0 || strcmp(funcNameStr, "bool") == 0 ||
-            strcmp(funcNameStr, "str") == 0)) {
+        // Skip type declaration functions to avoid duplicate symbol errors.
+        // A type declaration function is a function with no arguments, a return type, and an empty body.
+        if (expr->as.func_decl.name_len > 0 &&
+            expr->as.func_decl.arg_count == 0 &&
+            expr->as.func_decl.return_type_len > 0 &&
+            (!expr->as.func_decl.body ||
+             (expr->as.func_decl.body->type == AST_BLOCK && expr->as.func_decl.body->as.block.count == 0))) {
             MlirValue nullVal = {NULL};
             return nullVal;
         }

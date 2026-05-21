@@ -1,0 +1,50 @@
+// RUN: %linc build %s -o %t && %t
+
+import "std/types.lin"
+
+// Declare custom type
+mytype: func [return: [mytype!]] []
+
+// Define an operator to cast i32 to mytype
+i32-to-mytype: mlir-op [
+    inputs:  [a [i32!]]
+    outputs: [res [mytype!]]
+] {
+    %res = llvm.bitcast %a : i32 to i32
+}
+
+// Define custom operation on mytype
+add_mytype: mlir-op [
+    inputs: [a [mytype!] b [mytype!]]
+    outputs: [res [mytype!]]
+] {
+    %res = arith.addi %a, %b : i32
+}
+
+// Cast mytype back to i32 for verification
+mytype-to-i32: mlir-op [
+    inputs:  [a [mytype!]]
+    outputs: [res [i32!]]
+] {
+    %res = llvm.bitcast %a : i32 to i32
+}
+
+test_dyn: func [
+    dummy [i32!]
+    return: [i32!]
+][
+    v1: (i32-to-mytype 10)
+    v2: (i32-to-mytype 20)
+    
+    // Will dynamically dispatch to add_mytype
+    v3: (add v1 v2)
+    
+    res: (mytype-to-i32 v3)
+    either res == 30 [
+        0
+    ][
+        1
+    ]
+]
+
+(test_dyn 0)
