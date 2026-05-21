@@ -84,6 +84,7 @@ While Lin currently supports a minimal core, it is fundamentally a multi-paradig
    - More primitives (`f32`, `f64`, `bool`, `str`).
    - Complex structured types (Objects/Structs, Arrays).
    - Polymorphism and type inference.
+   - **Note:** `any` / untyped / erased types are not supported and will never be. All Lin types must be concrete and statically known at compile time.
 3. **Advanced Control Flow:**
    - Loop constructs (`while`, `foreach`).
    - Pattern matching and algebraic data types.

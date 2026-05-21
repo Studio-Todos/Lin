@@ -28,6 +28,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
 #if __has_include("mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h")
 #include "mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h"
@@ -41,11 +42,18 @@
 #if __has_include("mlir/Conversion/IndexToSPIRV/IndexToSPIRVPass.h")
 #include "mlir/Conversion/IndexToSPIRV/IndexToSPIRVPass.h"
 #endif
+#if __has_include("mlir/Conversion/ControlFlowToSPIRV/ControlFlowToSPIRVPass.h")
+#include "mlir/Conversion/ControlFlowToSPIRV/ControlFlowToSPIRVPass.h"
+#endif
+#if __has_include("mlir/Conversion/FuncToSPIRV/FuncToSPIRVPass.h")
+#include "mlir/Conversion/FuncToSPIRV/FuncToSPIRVPass.h"
+#endif
 #endif
 #if __has_include("mlir/Dialect/SPIRV/IR/SPIRVDialect.h")
 #include "mlir/Dialect/SPIRV/IR/SPIRVDialect.h"
 #include "mlir/Dialect/SPIRV/IR/SPIRVOps.h"
 #include "mlir/Dialect/SPIRV/IR/SPIRVAttributes.h"
+#include "mlir/Dialect/SPIRV/IR/TargetAndABI.h"
 #endif
 #if __has_include("mlir/Target/SPIRV/Serialization.h")
 #include "mlir/Target/SPIRV/Serialization.h"
@@ -574,6 +582,10 @@ int main(int argc, char **argv) {
   registry.insert<mlir::gpu::GPUDialect>();
   registry.insert<mlir::scf::SCFDialect>();
   registry.insert<mlir::math::MathDialect>();
+  registry.insert<mlir::cf::ControlFlowDialect>();
+#if __has_include("mlir/Dialect/SPIRV/IR/SPIRVDialect.h")
+  registry.insert<mlir::spirv::SPIRVDialect>();
+#endif
   mlir::registerAllToLLVMIRTranslations(registry);
   mlir::registerConvertMathToLLVMInterface(registry);
 
@@ -616,55 +628,72 @@ int main(int argc, char **argv) {
 
       ModuleOp module = unwrap(cModule);
 
+#if __has_include("mlir/Dialect/SPIRV/IR/TargetAndABI.h")
+      if (enableGPU) {
+          auto targetEnv = mlir::spirv::getDefaultTargetEnv(module.getContext());
+          module->setAttr(mlir::spirv::getTargetEnvAttrName(), targetEnv);
+      }
+#endif
+
       // std::cout << "Generated MLIR (before lowering):\n";
       // module.print(llvm::outs());
-      // llvm::outs() << "\n";
-
-      // optimizeInteractionNetWithEGraphs(cModule);
-
       PassManager pm(&context);
       pm.addPass(createPicGraphToReducePass());
       pm.addPass(createPicRuntimeToLLVMPass(enableGPU));
 
-      // Lower remaining high-level dialects to LLVM
-      
-pm.addPass(mlir::createConvertSCFToCFPass());
-      pm.addPass(mlir::createConvertControlFlowToLLVMPass());
-      pm.addPass(mlir::createConvertMathToLibmPass());
-      pm.addPass(mlir::createConvertMathToLLVMPass());
-      pm.addPass(mlir::createArithToLLVMConversionPass());
-      pm.addPass(mlir::createConvertFuncToLLVMPass());
-      pm.addPass(mlir::createReconcileUnrealizedCastsPass());
-
       if (enableGPU) {
           pm.addPass(mlir::createGpuKernelOutliningPass());
+      }
+
+      if (mlir::failed(pm.run(module))) {
+          std::cerr << "Lowering and outlining pass failed.\n";
+          return 1;
+      }
+
+#if __has_include("mlir/Dialect/SPIRV/IR/TargetAndABI.h")
+      if (enableGPU) {
+          module.walk([&](mlir::gpu::GPUFuncOp gpuFunc) {
+              if (gpuFunc.isKernel()) {
+                  auto abi = mlir::spirv::getEntryPointABIAttr(gpuFunc.getContext(), {1, 1, 1});
+                  gpuFunc->setAttr(mlir::spirv::getEntryPointABIAttrName(), abi);
+              }
+          });
+      }
+#endif
+
+      if (enableGPU) {
+          PassManager pm_gpu(&context);
 #if __has_include("mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h")
+           pm_gpu.addPass(mlir::createGpuSPIRVAttachTarget());
 #if __has_include("mlir/Conversion/MemRefToSPIRV/MemRefToSPIRVPass.h")
-           pm.addPass(mlir::createMapMemRefStorageClassPass());
-           pm.addPass(mlir::createConvertMemRefToSPIRVPass());
+           pm_gpu.addPass(mlir::createMapMemRefStorageClassPass());
+           pm_gpu.addPass(mlir::createConvertMemRefToSPIRVPass());
 #endif
 #if __has_include("mlir/Conversion/ArithToSPIRV/ArithToSPIRVPass.h")
-           pm.addPass(mlir::createConvertArithToSPIRVPass());
+           pm_gpu.addPass(mlir::createConvertArithToSPIRVPass());
 #endif
 #if __has_include("mlir/Conversion/IndexToSPIRV/IndexToSPIRVPass.h")
-           pm.addPass(mlir::createConvertIndexToSPIRVPass());
+           pm_gpu.addPass(mlir::createConvertIndexToSPIRVPass());
 #endif
-           pm.addPass(mlir::createConvertGPUToSPIRVPass());
+#if __has_include("mlir/Conversion/ControlFlowToSPIRV/ControlFlowToSPIRVPass.h")
+           pm_gpu.addPass(mlir::createConvertControlFlowToSPIRVPass());
+#endif
+// #if __has_include("mlir/Conversion/FuncToSPIRV/FuncToSPIRVPass.h")
+//            pm_gpu.addPass(mlir::createConvertFuncToSPIRVPass());
+// #endif
+           pm_gpu.addPass(mlir::createConvertGPUToSPIRVPass());
 #if __has_include("mlir/Dialect/SPIRV/Transforms/Passes.h")
-           pm.addNestedPass<mlir::spirv::ModuleOp>(mlir::spirv::createSPIRVLowerABIAttributesPass());
-           pm.addNestedPass<mlir::spirv::ModuleOp>(mlir::spirv::createSPIRVUpdateVCEPass());
+           pm_gpu.addNestedPass<mlir::spirv::ModuleOp>(mlir::spirv::createSPIRVLowerABIAttributesPass());
+           pm_gpu.addNestedPass<mlir::spirv::ModuleOp>(mlir::spirv::createSPIRVUpdateVCEPass());
 #endif
 #else
           std::cerr << "Warning: MLIR GPU-to-SPIRV conversion headers not available; skipping SPIR-V conversion.\n";
 #endif
+          if (mlir::failed(pm_gpu.run(module))) {
+              std::cerr << "GPU to SPIR-V conversion pass failed.\n";
+              return 1;
+          }
       }
-
-      if (mlir::failed(pm.run(module))) {
-          std::cerr << "Lowering pass failed.\n";
-          return 1;
-      }
-
-      std::cout << "\nLowering pass successful.\n";
 
 #if __has_include("mlir/Target/SPIRV/Serialization.h")
       if (enableGPU) {
@@ -708,13 +737,51 @@ pm.addPass(mlir::createConvertSCFToCFPass());
 #endif
 
       if (enableGPU) {
-          if (auto spirvModule = module.lookupSymbol<mlir::spirv::ModuleOp>("__spv__pic_gpu")) {
-              spirvModule.erase();
+          llvm::SmallVector<mlir::Operation *> opsToErase;
+          module.walk([&](mlir::Operation *op) {
+              if (auto symNameAttr = op->getAttrOfType<mlir::StringAttr>("sym_name")) {
+                  if (symNameAttr.getValue() == "pic") {
+                      opsToErase.push_back(op);
+                  }
+              }
+          });
+          for (auto op : opsToErase) {
+              op->erase();
           }
-          if (auto gpuModule = module.lookupSymbol<mlir::gpu::GPUModuleOp>("pic_gpu")) {
-              gpuModule.erase();
-          }
+          llvm::SmallVector<mlir::spirv::ModuleOp> spirvModules;
+          module.walk([&](mlir::spirv::ModuleOp op) {
+              spirvModules.push_back(op);
+          });
+          for (auto op : spirvModules) op.erase();
+
+          llvm::SmallVector<mlir::gpu::GPUModuleOp> gpuModules;
+          module.walk([&](mlir::gpu::GPUModuleOp op) {
+              gpuModules.push_back(op);
+          });
+          for (auto op : gpuModules) op.erase();
       }
+
+      if (enableGPU) {
+          std::cout << "--- MLIR Module before LLVM PassManager ---\n";
+          module.print(llvm::outs());
+          std::cout << "-------------------------------------------\n";
+      }
+
+      PassManager pm2(&context);
+      pm2.addPass(mlir::createConvertSCFToCFPass());
+      pm2.addPass(mlir::createConvertControlFlowToLLVMPass());
+      pm2.addPass(mlir::createConvertMathToLibmPass());
+      pm2.addPass(mlir::createConvertMathToLLVMPass());
+      pm2.addPass(mlir::createArithToLLVMConversionPass());
+      pm2.addPass(mlir::createConvertFuncToLLVMPass());
+      pm2.addPass(mlir::createReconcileUnrealizedCastsPass());
+
+      if (mlir::failed(pm2.run(module))) {
+          std::cerr << "LLVM conversion passes failed.\n";
+          return 1;
+      }
+
+      std::cout << "\nLowering pass successful.\n";
 
       llvm::LLVMContext llvmContext;
       auto llvmModule = mlir::translateModuleToLLVMIR(module, llvmContext);

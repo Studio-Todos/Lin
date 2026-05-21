@@ -1,4 +1,4 @@
-// RUN: %linc %s -o %t 2 | FileCheck %s
+// RUN: %linc build %s -o %t 2>&1 | FileCheck %s
 // Test A4: Boundary lowering - E-graph congruence
 
 // A4: A simple test that exercises the boundary infrastructure
