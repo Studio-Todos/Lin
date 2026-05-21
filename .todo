@@ -145,7 +145,7 @@
         - Compile to binary and execute in one step: linc run file.lin -o /tmp/bin
         - Prints exit code and stdout; requires pre-built binary path
 
-[ ] 16. @gpu / @cpu per-function annotations
+[x] 16. @gpu / @cpu per-function annotations
         - Parser: recognize @identifier before func/mlir-op declarations
         - Lowering: attach dispatch attr to γ⁺ / ω agents
         - pic.reduce → pic.runtime routing via annotation (no user pragma needed)
@@ -168,7 +168,7 @@
 
 ## 🔵 Architecture — Long-Term
 
-[ ] 19. Unified CPU/GPU reduction pipeline via pic.reduce
+[x] 19. Unified CPU/GPU reduction pipeline via pic.reduce
         - Define link/annihilate/dup/erase/fire_op in scf+arith+memref dialect
         - Lower once to LLVM for CPU; once to gpu+spirv for GPU
         - Target: CPU (std LLVM), general GPU (Vulkan/SPIR-V), shader GPU (perf)
