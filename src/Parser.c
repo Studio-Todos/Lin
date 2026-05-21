@@ -466,25 +466,6 @@ static AstNode* parseGroupingExpr(Parser *parser) {
         }
         consume(parser, TOKEN_RPAREN, "Expect ')' after arguments.");
 
-        if (call->as.call.arg_count == 1) {
-            AstNode *pair = createNode(parser, AST_PAIR);
-            if (pair) {
-                pair->as.pair.left = createNode(parser, AST_IDENTIFIER);
-                if (pair->as.pair.left) {
-                    pair->as.pair.left->as.identifier.name = malloc(call->as.call.callee_len + 1);
-                    if (pair->as.pair.left->as.identifier.name) {
-                        memcpy((void*)pair->as.pair.left->as.identifier.name, call->as.call.callee, call->as.call.callee_len);
-                        ((char*)pair->as.pair.left->as.identifier.name)[call->as.call.callee_len] = '\0';
-                        pair->as.pair.left->as.identifier.length = call->as.call.callee_len;
-                    }
-                }
-                pair->as.pair.right = call->as.call.args[0];
-                free(call->as.call.args);
-                free(call);
-                return pair;
-            }
-        }
-
         AstNode *result = call;
         while (parser->current.type == TOKEN_DOT) {
             result = parseFieldAccess(parser, result);
