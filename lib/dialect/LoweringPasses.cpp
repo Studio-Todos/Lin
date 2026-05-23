@@ -129,6 +129,13 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
     ModuleOp module = getOperation();
     OpBuilder builder(module.getContext());
 
+    std::vector<std::string> userOpLabels;
+    module.walk([&](pic::graph::RegistryOp op) {
+        if (auto attr = op->getAttrOfType<StringAttr>("op_name")) {
+            userOpLabels.push_back(attr.getValue().str());
+        }
+    });
+
     module.walk([&](func::FuncOp funcOp) {
       builder.setInsertionPointToStart(&funcOp.getBody().front());
       auto i32Type = builder.getI32Type();
@@ -200,14 +207,23 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
             return builder.create<arith::OrIOp>(loc, i64Type, shifted, builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(i)));
         };
 
-        // Port mapping:
-        // For omega (operations), we make Port 1 (Arg 0) principal to trigger reduction.
-        // Port 0 (Result) is moved to Port 2.
-        // Port 2 (Arg 1) is moved to Port 1.
         if (agentType == "omega") {
-            valueToPort[op.getP0()] = makePort(2); // Result -> Port 2
-            valueToPort[op.getP1()] = makePort(0); // Arg0   -> Port 0 (Principal)
-            valueToPort[op.getP2()] = makePort(1); // Arg1   -> Port 1
+            bool isUserOp = (label == "call");
+            for (const auto &uLabel : userOpLabels) {
+                if (label == uLabel) {
+                    isUserOp = true;
+                    break;
+                }
+            }
+            if (isUserOp) {
+                valueToPort[op.getP0()] = makePort(0); // Callee/Function -> Port 0 (Principal)
+                valueToPort[op.getP1()] = makePort(1); // Arg/Bundle      -> Port 1
+                valueToPort[op.getP2()] = makePort(2); // Result          -> Port 2
+            } else {
+                valueToPort[op.getP0()] = makePort(2); // Result -> Port 2
+                valueToPort[op.getP1()] = makePort(0); // Arg0   -> Port 0 (Principal)
+                valueToPort[op.getP2()] = makePort(1); // Arg1   -> Port 1
+            }
         } else {
             valueToPort[op.getP0()] = makePort(0);
             valueToPort[op.getP1()] = makePort(1);
@@ -270,7 +286,8 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
 struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PicRuntimeToLLVMPass)
   bool enableGPU;
-  PicRuntimeToLLVMPass(bool enableGPU) : enableGPU(enableGPU) {}
+  std::string spirvPath;
+  PicRuntimeToLLVMPass(bool enableGPU, std::string spirvPath) : enableGPU(enableGPU), spirvPath(spirvPath) {}
 
   void runOnOperation() override {
     ModuleOp module = getOperation();
@@ -282,6 +299,13 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
     auto i1Type = builder.getI1Type();
     auto ptrType = LLVM::LLVMPointerType::get(builder.getContext());
     auto voidType = LLVM::LLVMVoidType::get(builder.getContext());
+
+    if (!module.lookupSymbol<LLVM::GlobalOp>("GPU_SPIRV_PATH")) {
+        OpBuilder b(module.getBodyRegion());
+        std::string pathVal = spirvPath;
+        pathVal.push_back('\0');
+        b.create<LLVM::GlobalOp>(module.getLoc(), LLVM::LLVMArrayType::get(builder.getI8Type(), pathVal.size()), true, LLVM::Linkage::Internal, "GPU_SPIRV_PATH", builder.getStringAttr(pathVal));
+    }
 
     auto decl = [&](StringRef n, Type r, ArrayRef<Type> a, bool var = false) { 
         if (!module.lookupSymbol<LLVM::LLVMFuncOp>(n)) 
@@ -433,7 +457,9 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         // Trim trailing whitespace
         s.erase(s.find_last_not_of(" \n\r\t") + 1);
         
+#ifdef ENABLE_DEBUG_LOGS
         llvm::errs() << "Captured Decl (func): [" << s << "]\n";
+#endif
         existingDecls.push_back(s);
     }
     for (auto func : module.getOps<LLVM::LLVMFuncOp>()) {
@@ -443,7 +469,9 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         std::string s = os.str();
         auto pos = s.find("{");
         if (pos != std::string::npos) s = s.substr(0, pos);
+#ifdef ENABLE_DEBUG_LOGS
         llvm::errs() << "Captured Decl (llvm): [" << s << "]\n";
+#endif
         existingDecls.push_back(s);
     }
 
@@ -468,7 +496,9 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                     
                     int numArgs = 0;
                     if (argsAttr) {
+#ifdef ENABLE_DEBUG_LOGS
                         llvm::errs() << "RegistryOp: " << label << ", arg_names attribute: [" << argsAttr.getValue() << "]\n";
+#endif
                         std::string argsStr = argsAttr.getValue().str();
                         for (size_t i = 0; i < argsStr.size(); i++) {
                             if (argsStr[i] == '[') numArgs++;
@@ -501,7 +531,9 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                             argNamesList.push_back(cleanName);
                         }
                         for (unsigned i = 0; i < argNamesList.size(); ++i) {
+#ifdef ENABLE_DEBUG_LOGS
                              llvm::errs() << "Outer loop: argNamesList[" << i << "] = [" << argNamesList[i] << "]\n";
+#endif
                         }
 
                         std::string payload = p.getValue().str();
@@ -537,7 +569,9 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                                 argNamesList[i] = argNamesList[i].substr(0, underscorePos);
                             }
                             argTypes.push_back(type);
+#ifdef ENABLE_DEBUG_LOGS
                             llvm::errs() << "Outer loop: Inferred type for " << argNamesList[i] << " is [" << type << "]\n";
+#endif
                             std::string mlirType = type;
                             if (mlirType != "i1" && mlirType != "i8" && mlirType != "i16" &&
                                 mlirType != "i32" && mlirType != "i64" &&
@@ -646,7 +680,9 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                         tempModuleStr += "}\n}\n";
                         
                         
+#ifdef ENABLE_DEBUG_LOGS
                         llvm::errs() << "Final Snippet Module:\n" << tempModuleStr << "\n";
+#endif
                         MLIRContext *ctx = module.getContext();
                         ctx->allowUnregisteredDialects();
                         auto parsedSnippet = parseSourceString<ModuleOp>(tempModuleStr, ctx);
@@ -1014,7 +1050,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
                 auto gpuDispatchFty = LLVM::LLVMFunctionType::get(
                     LLVM::LLVMVoidType::get(ob.getContext()),
-                    {ptrType, ptrType, i32Type}
+                    {ptrType, ptrType, i32Type, ptrType}
                 );
                 auto gpuDispatchFunc = module.lookupSymbol<LLVM::LLVMFuncOp>("pic_gpu_dispatch");
                 if (!gpuDispatchFunc) {
@@ -1023,7 +1059,8 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 }
                 
                 Value one32 = ob.create<LLVM::ConstantOp>(module.getLoc(), i32Type, ob.getI32IntegerAttr(1));
-                ob.create<LLVM::CallOp>(module.getLoc(), TypeRange{}, "pic_gpu_dispatch", ValueRange{dNet, pairBuf, one32});
+                Value pathPtr = ob.create<LLVM::AddressOfOp>(module.getLoc(), ptrType, "GPU_SPIRV_PATH");
+                ob.create<LLVM::CallOp>(module.getLoc(), TypeRange{}, "pic_gpu_dispatch", ValueRange{dNet, pairBuf, one32, pathPtr});
 
                 res = ob.create<LLVM::ConstantOp>(module.getLoc(), i64Type, ob.getI64IntegerAttr(0));
             } else {
@@ -1031,7 +1068,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 SmallVector<Value> callArgs;
                 if (op.numArgs >= 1) callArgs.push_back(arg0);
                 if (op.numArgs >= 2) callArgs.push_back(arg1);
-                if (op.numArgs >= 3) callArgs.push_back(arg2);
+                if (op.numArgs >= 3) callArgs.push_back(wState);
                 if (op.numArgs >= 4) callArgs.push_back(arg3);
                 for (int i = 5; i <= op.numArgs; i++) {
                     callArgs.push_back(zeroVal);
@@ -1108,7 +1145,9 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             caseBlocks.push_back(block);
             caseOperands.push_back(ValueRange{});
             OpBuilder ob(block, block->end());
-            Value n = ob.create<LLVM::ConstantOp>(module.getLoc(), i32Type, ob.getI32IntegerAttr(op.numArgs));
+            int32_t netArgs = op.numArgs;
+            if (netArgs == 3) netArgs = 2; // User-defined functions have 3 C args but 2 net args
+            Value n = ob.create<LLVM::ConstantOp>(module.getLoc(), i32Type, ob.getI32IntegerAttr(netArgs));
             ob.create<LLVM::ReturnOp>(module.getLoc(), n);
         }
         OpBuilder eb(entry, entry->end());
@@ -1184,6 +1223,8 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
     Value polB = builder.create<LLVM::LShrOp>(module.getLoc(), i32Type, metaB32, builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(30)));
     Value labelA = builder.create<LLVM::AndOp>(module.getLoc(), i32Type, metaA32, builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(0xFFFFFF)));
     Value labelB = builder.create<LLVM::AndOp>(module.getLoc(), i32Type, metaB32, builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(0xFFFFFF)));
+
+    logRedex(labelA, labelB);
 
     Block *specBlock = wFunc.addBlock(), *genBlock = wFunc.addBlock();
     
@@ -1413,7 +1454,9 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 Value rPort = getAux(opP, 1);
                 Value rTarget = builder.create<LLVM::LoadOp>(module.getLoc(), i64Type, builder.create<LLVM::GEPOp>(module.getLoc(), ptrType, i64Type, wNet, ValueRange{safeZExt(builder, module.getLoc(), i64Type, rPort)}));
                 Value rLabel = builder.create<LLVM::AndOp>(module.getLoc(), i32Type, safeZExt(builder, module.getLoc(), i32Type, getMeta(rTarget)), builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(0xFFFFFF)));
-                Value isRVal = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, rLabel, valLabel);
+                
+                Value isCall = builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, valLabel, builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel("call"))));
+                Value isRVal = builder.create<LLVM::OrOp>(module.getLoc(), builder.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, rLabel, valLabel), isCall);
                 
                 Block *doFullBinary = wFunc.addBlock();
                 builder.create<LLVM::CondBrOp>(module.getLoc(), isRVal, doFullBinary, doComm);
@@ -1421,6 +1464,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 builder.setInsertionPointToStart(doFullBinary);
                 {
                     Value v1 = getAux(rTarget, 1);
+                    Value firstArg = builder.create<LLVM::SelectOp>(module.getLoc(), isCall, rTarget, v1);
                     Value zero64 = builder.create<LLVM::ConstantOp>(module.getLoc(), i64Type, builder.getI64IntegerAttr(0));
                     Value nodeA = builder.create<LLVM::LShrOp>(module.getLoc(), i32Type, valP, builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(2)));
                     Value nodeB = builder.create<LLVM::LShrOp>(module.getLoc(), i32Type, opP, builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(2)));
@@ -1431,11 +1475,11 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                     builder.create<LLVM::CondBrOp>(module.getLoc(), isGpu, gpuBranch, cpuBranch);
                     
                     builder.setInsertionPointToStart(gpuBranch);
-                    builder.create<LLVM::CallOp>(module.getLoc(), i64Type, "dispatch_user_op", ValueRange{impl, v1, v0, zero64, zero64, nodeA, nodeB, wState});
+                    builder.create<LLVM::CallOp>(module.getLoc(), i64Type, "dispatch_user_op", ValueRange{impl, firstArg, v0, zero64, zero64, nodeA, nodeB, wState});
                     builder.create<LLVM::BrOp>(module.getLoc(), lHead);
                     
                     builder.setInsertionPointToStart(cpuBranch);
-                    Value resVal = builder.create<LLVM::CallOp>(module.getLoc(), i64Type, "dispatch_user_op", ValueRange{impl, v1, v0, zero64, zero64, nodeA, nodeB, wState}).getResult();
+                    Value resVal = builder.create<LLVM::CallOp>(module.getLoc(), i64Type, "dispatch_user_op", ValueRange{impl, firstArg, v0, zero64, zero64, nodeA, nodeB, wState}).getResult();
                     linkPorts(getAux(opP, 2), makeVal(resVal, valLabel), wState);
                     builder.create<LLVM::BrOp>(module.getLoc(), lHead);
                 }
@@ -1628,6 +1672,13 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 Value implHash = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel(op.label)));
                 builder.create<LLVM::CallOp>(entry.getLoc(), TypeRange{}, "register_rule", ValueRange{opHash, typeHash, implHash});
             }
+            // Always register user-defined closure application rule: op.label meets "call"
+            {
+                Value opHash = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel(op.label)));
+                Value typeHash = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel("call")));
+                Value implHash = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel(op.label)));
+                builder.create<LLVM::CallOp>(entry.getLoc(), TypeRange{}, "register_rule", ValueRange{opHash, typeHash, implHash});
+            }
         }
         auto i1Type = builder.getI1Type();
         Value nS = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(128000000));
@@ -1688,4 +1739,4 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
 std::unique_ptr<Pass> createPicGraphToReducePass() { return std::make_unique<PicGraphToReducePass>(); }
 std::unique_ptr<Pass> createPicReduceToRuntimePass() { return std::make_unique<PicReduceToRuntimePass>(); }
-std::unique_ptr<Pass> createPicRuntimeToLLVMPass(bool enableGPU) { return std::make_unique<PicRuntimeToLLVMPass>(enableGPU); }
+std::unique_ptr<Pass> createPicRuntimeToLLVMPass(bool enableGPU, std::string spirvPath) { return std::make_unique<PicRuntimeToLLVMPass>(enableGPU, spirvPath); }

@@ -37,6 +37,11 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR}/lib/dialect)
 
 add_definitions(${LLVM_DEFINITIONS})
 
+option(ENABLE_DEBUG_LOGS "Enable compiler debug logs and IR dumps" OFF)
+if (ENABLE_DEBUG_LOGS)
+    add_compile_definitions(ENABLE_DEBUG_LOGS)
+endif()
+
 add_subdirectory(lib/dialect)
 add_subdirectory(src)
 add_subdirectory(test)

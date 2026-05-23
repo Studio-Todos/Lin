@@ -15,7 +15,7 @@
 #include <string.h>
 
 // Declared in gpu_runtime.c
-void pic_gpu_dispatch(int64_t* netPtr, int32_t* activePairsPtr, int32_t numPairs);
+void pic_gpu_dispatch(int64_t* netPtr, int32_t* activePairsPtr, int32_t numPairs, const char* spirvPath);
 
 // Port encoding: nodeIdx << 2 | portNum
 static int32_t makePort(int32_t nodeIdx, int portNum) {
@@ -44,7 +44,7 @@ int main(void) {
     int32_t pairs[2] = { idxA, idxB };
 
     printf("[TEST] Dispatching GPU with 1 active pair: (%d, %d)\n", idxA, idxB);
-    pic_gpu_dispatch(net, pairs, 1);
+    pic_gpu_dispatch(net, pairs, 1, "linc_out.spv");
 
     // After annihilation: p1A should point to p1B's target and vice versa
     printf("[TEST] After reduction:\n");

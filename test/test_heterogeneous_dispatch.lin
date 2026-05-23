@@ -2,24 +2,27 @@
 
 @gpu
 gpu_func: func [
+    dummy [i32!]
     return: [i32!]
 ][
-    add 10 20
+    (add 10 20)
 ]
 
 @cpu
 cpu_func: func [
+    dummy [i32!]
     return: [i32!]
 ][
-    add 5 5
+    (add 5 5)
 ]
 
 test_main: func [
+    dummy [i32!]
     return: [i32!]
 ][
-    x: (gpu_func)
-    y: (cpu_func)
-    add x y
+    x: (gpu_func 0)
+    y: (cpu_func 0)
+    (add x y)
 ]
 
-(test_main)
+(test_main 0)

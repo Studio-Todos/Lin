@@ -686,11 +686,14 @@ int main(int argc, char **argv) {
       }
 #endif
 
-      // std::cout << "Generated MLIR (before lowering):\n";
-      // module.print(llvm::outs());
+#ifdef ENABLE_DEBUG_LOGS
+      std::cout << "Generated MLIR (before lowering):\n";
+      module.print(llvm::outs());
+      llvm::outs().flush();
+#endif
       PassManager pm(&context);
       pm.addPass(createPicGraphToReducePass());
-      pm.addPass(createPicRuntimeToLLVMPass(enableGPU));
+      pm.addPass(createPicRuntimeToLLVMPass(enableGPU, outputBinary + ".spv"));
 
       if (enableGPU) {
           pm.addPass(mlir::createGpuKernelOutliningPass());
@@ -812,11 +815,13 @@ int main(int argc, char **argv) {
           for (auto op : gpuModules) op.erase();
       }
 
+#ifdef ENABLE_DEBUG_LOGS
       if (enableGPU) {
           std::cout << "--- MLIR Module before LLVM PassManager ---\n";
           module.print(llvm::outs());
           std::cout << "-------------------------------------------\n";
       }
+#endif
 
       PassManager pm2(&context);
       pm2.addPass(mlir::createConvertSCFToCFPass());
@@ -840,9 +845,11 @@ int main(int argc, char **argv) {
           std::cerr << "Failed to translate MLIR to LLVM IR.\n";
           return 1;
       }
+#ifdef ENABLE_DEBUG_LOGS
       std::cout << "Generated LLVM IR:\n";
       llvmModule->print(llvm::outs(), nullptr);
       llvm::outs() << "\n";
+#endif
 
       std::string error;
       std::string targetTriple = enableWasm ? "wasm32-unknown-unknown" : llvm::sys::getDefaultTargetTriple();

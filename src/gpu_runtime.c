@@ -79,17 +79,17 @@ void copyBuffer(VkDevice device, VkCommandPool commandPool, VkQueue computeQueue
     vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
 }
 
-void pic_gpu_dispatch(int64_t* netPtr, int32_t* activePairsPtr, int32_t numPairs) {
-    printf("[GPU DISPATCH] Launching parallel kernel for %d active pairs\n", numPairs);
+void pic_gpu_dispatch(int64_t* netPtr, int32_t* activePairsPtr, int32_t numPairs, const char* spirvPath) {
+    printf("[GPU DISPATCH] Launching parallel kernel for %d active pairs (SPIR-V: %s)\n", numPairs, spirvPath);
 
     if (numPairs == 0) {
         printf("[GPU DISPATCH] No active pairs to process.\n");
         return;
     }
 
-    FILE *f = fopen("linc_out.spv", "rb");
+    FILE *f = fopen(spirvPath, "rb");
     if (!f) {
-        printf("[GPU DISPATCH] Error: SPIR-V module linc_out.spv not found\n");
+        printf("[GPU DISPATCH] Error: SPIR-V module %s not found\n", spirvPath);
         return;
     }
     fseek(f, 0, SEEK_END);

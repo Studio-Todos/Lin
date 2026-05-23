@@ -8,6 +8,14 @@
 #include <string.h>
 #include <ctype.h>
 
+#ifdef ENABLE_DEBUG_LOGS
+#define LOG_REDEX(...) printf(__VA_ARGS__)
+#define LOG_STDERR(...) fprintf(stderr, __VA_ARGS__)
+#else
+#define LOG_REDEX(...) ((void)0)
+#define LOG_STDERR(...) ((void)0)
+#endif
+
 static MlirType getPicPortType(MlirContext ctx) {
     return mlirTypeParseGet(ctx, mlirStringRefCreateFromCString("!pic_graph.port"));
 }
@@ -310,6 +318,11 @@ static int count_var_usage(AstNode *node, const char *name, int name_len) {
 
     if (node->type == AST_CALL) {
         int c = 0;
+        if (node->as.call.callee_len == name_len && strncmp(node->as.call.callee, name, name_len) == 0) {
+            c++;
+        } else if (node->as.call.resolved_callee && strlen(node->as.call.resolved_callee) == (size_t)name_len && strncmp(node->as.call.resolved_callee, name, name_len) == 0) {
+            c++;
+        }
         for (int i = 0; i < node->as.call.arg_count; i++) {
             c += count_var_usage(node->as.call.args[i], name, name_len);
         }
@@ -881,6 +894,12 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         findFreeVars(expr->as.func_decl.body, &fv, bound_args, arg_count);
         free(bound_args);
 
+        LOG_REDEX("DEBUG_CAPTURES: Function %.*s (len %d), free vars count: %d\n", expr->as.func_decl.name_len, expr->as.func_decl.name, expr->as.func_decl.name_len, fv.count);
+        for (int i = 0; i < fv.count; i++) {
+            MlirValue testFetch = env_get(env, fv.names[i], strlen(fv.names[i]));
+            LOG_REDEX("  - %s (env_getIsNull: %d)\n", fv.names[i], mlirValueIsNull(testFetch));
+        }
+
         int total_args = fv.count + arg_count;
         MlirType portType = getPicPortType(ctx);
 
@@ -1425,7 +1444,7 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
 
         MlirType retTypes[] = {i64Type};
         MlirType funcType = mlirFunctionTypeGet(ctx, 3, types, 1, retTypes);
-        fprintf(stderr, "Lowering Func: %s with 1 result\n", funcNameStr);
+        LOG_STDERR("Lowering Func: %s with 1 result\n", funcNameStr);
         MlirAttribute typeAttr = mlirTypeAttrGet(funcType);
         MlirNamedAttribute typeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("function_type")), typeAttr);
         mlirOperationStateAddAttributes(&funcState, 1, &typeNamedAttr);
