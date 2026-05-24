@@ -233,6 +233,11 @@
           - Requires robust string processing, file I/O, and MLIR bindings in Lin
           - Goal: A self-hosting compiler that leverages Lin's own parallel runtime for compilation
 
+[ ] 31. Unified CPU/GPU reduction pipeline via pic.reduce 🔴
+          - Port the reduction engine (annihilate, duplicate, erase, fire_op) from LLVM builder logic to a target-independent pass in PicReduceToRuntimePass.
+          - Use std MLIR dialects (scf, arith, memref) instead of the LLVM dialect.
+          - Lower this target-independent representation to LLVM for CPU and to GPU/SPIR-V for the GPU compute kernel.
+
 ## ⚠️  Known Failing Tests (as of 2026-05-21)
 
 All regression tests are now passing successfully! There are 0 known failing tests.
