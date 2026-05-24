@@ -341,6 +341,28 @@ static int count_var_usage(AstNode *node, const char *name, int name_len) {
     return 0;
 }
 
+static void linkToEra(MlirContext ctx, MlirBlock block, MlirLocation loc, MlirValue v) {
+    MlirOperationState eraState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+    MlirAttribute eraTypeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("epsilon"));
+    MlirNamedAttribute eraTypeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), eraTypeAttr);
+    MlirAttribute eraPolAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("*"));
+    MlirNamedAttribute eraPolNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), eraPolAttr);
+    MlirAttribute eraLabelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("era"));
+    MlirNamedAttribute eraLabelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), eraLabelAttr);
+    MlirNamedAttribute eraAttrs[] = {eraTypeNamedAttr, eraPolNamedAttr, eraLabelNamedAttr};
+    mlirOperationStateAddAttributes(&eraState, 3, eraAttrs);
+    MlirType portType = getPicPortType(ctx);
+    MlirType eraTypes[] = {portType, portType, portType};
+    mlirOperationStateAddResults(&eraState, 3, eraTypes);
+    MlirOperation eraOp = mlirOperationCreate(&eraState);
+    mlirBlockAppendOwnedOperation(block, eraOp);
+
+    MlirOperationState linkState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
+    MlirValue linkOps[] = {v, mlirOperationGetResult(eraOp, 0)};
+    mlirOperationStateAddOperands(&linkState, 2, linkOps);
+    mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkState));
+}
+
 static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation loc, AstNode *expr, Environment *env) {
     if (!expr) {
         MlirValue nullVal = {NULL};
@@ -1165,6 +1187,46 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
     }
 
     if (expr->type == AST_CALL) {
+        if (expr->as.call.callee_len == 6 && strncmp(expr->as.call.callee, "either", 6) == 0) {
+            MlirValue cond = lowerExpression(ctx, block, loc, expr->as.call.args[0], env);
+            MlirValue pair = lowerExpression(ctx, block, loc, expr->as.call.args[1], env);
+
+            MlirOperationState state = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+
+            MlirAttribute typeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("omega"));
+            MlirNamedAttribute typeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), typeAttr);
+            MlirAttribute polAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("-"));
+            MlirNamedAttribute polNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), polAttr);
+
+            MlirAttribute labelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("either"));
+            MlirNamedAttribute labelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), labelAttr);
+
+            MlirNamedAttribute attrs[] = {typeNamedAttr, polNamedAttr, labelNamedAttr};
+            mlirOperationStateAddAttributes(&state, 3, attrs);
+
+            MlirType portType = getPicPortType(ctx);
+            MlirType types[] = {portType, portType, portType};
+            mlirOperationStateAddResults(&state, 3, types);
+
+            MlirOperation op = mlirOperationCreate(&state);
+            mlirBlockAppendOwnedOperation(block, op);
+
+            MlirValue p0 = mlirOperationGetResult(op, 0); // cond
+            MlirValue p1 = mlirOperationGetResult(op, 1); // pair
+            MlirValue p2 = mlirOperationGetResult(op, 2); // result
+
+            MlirOperationState linkCondState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
+            MlirValue condOps[] = {p0, cond};
+            mlirOperationStateAddOperands(&linkCondState, 2, condOps);
+            mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkCondState));
+
+            MlirOperationState linkPairState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
+            MlirValue pairOps[] = {p1, pair};
+            mlirOperationStateAddOperands(&linkPairState, 2, pairOps);
+            mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkPairState));
+
+            return p2;
+        }
         // Use resolved_callee (type-directed rewrite) if set, else fall back to callee.
         // resolved_callee is set by the type checker for binary ops (e.g. add→fadd for f32).
         const char *effectiveCallee = expr->as.call.resolved_callee
@@ -1179,6 +1241,33 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         // If not found with effective callee, also try original callee (for closures stored by original name)
         if (mlirValueIsNull(currentVal) && expr->as.call.resolved_callee)
             currentVal = env_fetch(ctx, block, loc, env, expr->as.call.callee, expr->as.call.callee_len);
+
+        if (mlirValueIsNull(currentVal)) {
+            bool is_print = (effectiveCalleeLen == 5 && strncmp(effectiveCallee, "print", 5) == 0);
+            if (!is_print) {
+                MlirOperationState state = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+                MlirAttribute typeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("omega"));
+                MlirNamedAttribute typeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), typeAttr);
+                MlirAttribute polAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("+"));
+                MlirNamedAttribute polNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), polAttr);
+                MlirAttribute labelAttr = mlirStringAttrGet(ctx, mlirStringRefCreate(effectiveCallee, effectiveCalleeLen));
+                MlirNamedAttribute labelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), labelAttr);
+                MlirNamedAttribute attrs[] = {typeNamedAttr, polNamedAttr, labelNamedAttr};
+                mlirOperationStateAddAttributes(&state, 3, attrs);
+                MlirType portType = getPicPortType(ctx);
+                MlirType types[] = {portType, portType, portType};
+                mlirOperationStateAddResults(&state, 3, types);
+                MlirOperation op = mlirOperationCreate(&state);
+                mlirBlockAppendOwnedOperation(block, op);
+
+                currentVal = mlirOperationGetResult(op, 0);
+                MlirValue p1 = mlirOperationGetResult(op, 1);
+                MlirValue p2 = mlirOperationGetResult(op, 2);
+
+                linkToEra(ctx, block, loc, p1);
+                linkToEra(ctx, block, loc, p2);
+            }
+        }
 
         if (!mlirValueIsNull(currentVal)) {
             MlirType portType = getPicPortType(ctx);
@@ -1359,11 +1448,17 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
             (void)p2;
 
             MlirOperationState linkLeftState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-            MlirValue leftOps[] = {p1, arg};
-            mlirOperationStateAddOperands(&linkLeftState, 2, leftOps);
-            mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkLeftState));
-
-            return result;
+            if (effectiveCalleeLen == 5 && strncmp(effectiveCallee, "print", 5) == 0) {
+                MlirValue leftOps[] = {result, arg};
+                mlirOperationStateAddOperands(&linkLeftState, 2, leftOps);
+                mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkLeftState));
+                return p1;
+            } else {
+                MlirValue leftOps[] = {p1, arg};
+                mlirOperationStateAddOperands(&linkLeftState, 2, leftOps);
+                mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkLeftState));
+                return result;
+            }
         }
 
         // For general calls, wait! If arg_count is neither 1 nor 2, what happens?
