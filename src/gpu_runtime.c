@@ -221,7 +221,7 @@ void pic_gpu_cleanup() {
     printf("[GPU DISPATCH] Cleaned up Vulkan resources successfully.\n");
 }
 
-void pic_gpu_dispatch(int64_t* netPtr, int32_t* activePairsPtr, int32_t numPairs, const char* spirvPath) {
+void pic_gpu_dispatch(int64_t* netPtr, int32_t* activePairsPtr, int32_t numPairs, int32_t* alPtr, const char* spirvPath) {
     printf("[GPU DISPATCH] Launching parallel kernel for %d active pairs (SPIR-V: %s)\n", numPairs, spirvPath);
 
     if (numPairs == 0) {
@@ -305,11 +305,11 @@ void pic_gpu_dispatch(int64_t* netPtr, int32_t* activePairsPtr, int32_t numPairs
     VkBuffer bufferPairs = g_bufferPairs;
     VkDeviceMemory memoryPairs = g_memoryPairs;
 
-    // We still allocate staging and device buffer for numPairs since it's just a single int32_t
+    // We still allocate staging and device buffer for numPairs since it's just a single int32_t, but now 2 * sizeof(int32_t) to include allocation pointer
     VkBuffer stagingBufferNumPairs, bufferNumPairs;
     VkDeviceMemory stagingMemoryNumPairs, memoryNumPairs;
-    createBuffer(device, physicalDevice, sizeof(int32_t), VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &stagingBufferNumPairs, &stagingMemoryNumPairs);
-    createBuffer(device, physicalDevice, sizeof(int32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &bufferNumPairs, &memoryNumPairs);
+    createBuffer(device, physicalDevice, 2 * sizeof(int32_t), VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &stagingBufferNumPairs, &stagingMemoryNumPairs);
+    createBuffer(device, physicalDevice, 2 * sizeof(int32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &bufferNumPairs, &memoryNumPairs);
 
     void* data;
 
@@ -327,13 +327,20 @@ void pic_gpu_dispatch(int64_t* netPtr, int32_t* activePairsPtr, int32_t numPairs
     }
     vkUnmapMemory(device, stagingMemoryNet);
 
-    vkMapMemory(device, stagingMemoryNumPairs, 0, sizeof(int32_t), 0, &data);
-    memcpy(data, &numPairs, sizeof(int32_t));
+    struct {
+        int32_t numPairs;
+        int32_t al;
+    } gpuState;
+    gpuState.numPairs = numPairs;
+    gpuState.al = alPtr ? *alPtr : 0;
+
+    vkMapMemory(device, stagingMemoryNumPairs, 0, 2 * sizeof(int32_t), 0, &data);
+    memcpy(data, &gpuState, 2 * sizeof(int32_t));
     vkUnmapMemory(device, stagingMemoryNumPairs);
 
     copyBuffer(device, commandPool, computeQueue, stagingBufferNet, bufferNet, netBufferSize);
     copyBuffer(device, commandPool, computeQueue, stagingBufferPairs, bufferPairs, requiredPairsBufferSize);
-    copyBuffer(device, commandPool, computeQueue, stagingBufferNumPairs, bufferNumPairs, sizeof(int32_t));
+    copyBuffer(device, commandPool, computeQueue, stagingBufferNumPairs, bufferNumPairs, 2 * sizeof(int32_t));
 
     VkDescriptorSetLayoutBinding bindings[3];
     for (int i = 0; i < 3; i++) {
@@ -444,12 +451,21 @@ void pic_gpu_dispatch(int64_t* netPtr, int32_t* activePairsPtr, int32_t numPairs
 
     // Read results back to host
     copyBuffer(device, commandPool, computeQueue, bufferNet, stagingBufferNet, netBufferSize);
+    copyBuffer(device, commandPool, computeQueue, bufferNumPairs, stagingBufferNumPairs, 2 * sizeof(int32_t));
 
     vkMapMemory(device, stagingMemoryNet, 0, netBufferSize, 0, &data);
     if (netPtr != NULL) {
         memcpy(netPtr, data, netBufferSize);
     }
     vkUnmapMemory(device, stagingMemoryNet);
+
+    vkMapMemory(device, stagingMemoryNumPairs, 0, 2 * sizeof(int32_t), 0, &data);
+    memcpy(&gpuState, data, 2 * sizeof(int32_t));
+    vkUnmapMemory(device, stagingMemoryNumPairs);
+
+    if (alPtr) {
+        *alPtr = gpuState.al;
+    }
 
     printf("[GPU DISPATCH] Completed successfully.\n");
 
