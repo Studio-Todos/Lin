@@ -259,7 +259,7 @@
         - NODE_BRANCH=7 added to encoding (to be folded into ω via A3)
         - TODO(A1): GPU kernel parity via unified pic.reduce pass
 
-[ ] 2b. `while` loop lowering is unsound — always evaluates both branches 🔴
+[x] 2b. `while` loop lowering is unsound — always evaluates both branches 🔴
         # Lowering.c:759-788 — the while loop is lowered by:
         #   1. Evaluating the condition via lowerExpression()
         #   2. Evaluating the body via lowerExpression()

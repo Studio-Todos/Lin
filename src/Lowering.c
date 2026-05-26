@@ -20,6 +20,160 @@ static MlirType getPicPortType(MlirContext ctx) {
     return mlirTypeParseGet(ctx, mlirStringRefCreateFromCString("!pic_graph.port"));
 }
 
+static void linkValues(MlirBlock block, MlirLocation loc, MlirValue v1, MlirValue v2) {
+    MlirOperationState linkState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
+    MlirValue linkOps[] = {v1, v2};
+    mlirOperationStateAddOperands(&linkState, 2, linkOps);
+    mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkState));
+}
+
+static MlirValue createOmegaP0(MlirContext ctx, MlirBlock block, MlirLocation loc, const char *labelName, const char *polarity) {
+    MlirType portType = getPicPortType(ctx);
+    MlirType agentTypes[] = {portType, portType, portType};
+
+    MlirOperationState baseState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+    MlirAttribute agTypeAttr  = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("omega"));
+    MlirNamedAttribute agTypeNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), agTypeAttr);
+    MlirAttribute fnPolAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(polarity));
+    MlirNamedAttribute fnPolNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), fnPolAttr);
+    MlirAttribute fnLabelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(labelName));
+    MlirNamedAttribute fnLabelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), fnLabelAttr);
+    MlirNamedAttribute agentAttrs[3];
+    agentAttrs[0] = agTypeNamed;
+    agentAttrs[1] = fnPolNamedAttr;
+    agentAttrs[2] = fnLabelNamedAttr;
+    mlirOperationStateAddAttributes(&baseState, 3, agentAttrs);
+    mlirOperationStateAddResults(&baseState, 3, agentTypes);
+    MlirOperation baseOp = mlirOperationCreate(&baseState);
+    mlirBlockAppendOwnedOperation(block, baseOp);
+    return mlirOperationGetResult(baseOp, 0);
+}
+
+static void createOmega(MlirContext ctx, MlirBlock block, MlirLocation loc, const char *labelName, const char *polarity, MlirValue *p0, MlirValue *p1, MlirValue *p2) {
+    MlirType portType = getPicPortType(ctx);
+    MlirType agentTypes[] = {portType, portType, portType};
+
+    MlirOperationState baseState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+    MlirAttribute agTypeAttr  = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("omega"));
+    MlirNamedAttribute agTypeNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), agTypeAttr);
+    MlirAttribute fnPolAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(polarity));
+    MlirNamedAttribute fnPolNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), fnPolAttr);
+    MlirAttribute fnLabelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(labelName));
+    MlirNamedAttribute fnLabelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), fnLabelAttr);
+    MlirNamedAttribute agentAttrs[3];
+    agentAttrs[0] = agTypeNamed;
+    agentAttrs[1] = fnPolNamedAttr;
+    agentAttrs[2] = fnLabelNamedAttr;
+    mlirOperationStateAddAttributes(&baseState, 3, agentAttrs);
+    mlirOperationStateAddResults(&baseState, 3, agentTypes);
+    MlirOperation baseOp = mlirOperationCreate(&baseState);
+    mlirBlockAppendOwnedOperation(block, baseOp);
+    *p0 = mlirOperationGetResult(baseOp, 0);
+    *p1 = mlirOperationGetResult(baseOp, 1);
+    *p2 = mlirOperationGetResult(baseOp, 2);
+}
+
+
+static MlirValue bundleClosure(MlirContext ctx, MlirBlock block, MlirLocation loc, MlirValue omegaP0, MlirValue capBundle) {
+    MlirType portType = getPicPortType(ctx);
+    MlirType agentTypes[] = {portType, portType, portType};
+
+    MlirAttribute pairType = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("gamma"));
+    MlirNamedAttribute pairTypeAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), pairType);
+    MlirAttribute plusPol = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("+"));
+    MlirNamedAttribute plusPolAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), plusPol);
+    MlirAttribute labelPair = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("pair"));
+    MlirNamedAttribute labelPairAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), labelPair);
+
+    MlirOperationState closureState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+    MlirNamedAttribute closureAttrs[] = {pairTypeAttr, plusPolAttr, labelPairAttr};
+    mlirOperationStateAddAttributes(&closureState, 3, closureAttrs);
+    mlirOperationStateAddResults(&closureState, 3, agentTypes);
+    MlirOperation closureOp = mlirOperationCreate(&closureState);
+    mlirBlockAppendOwnedOperation(block, closureOp);
+
+    MlirValue clP0 = mlirOperationGetResult(closureOp, 0);
+    MlirValue clP1 = mlirOperationGetResult(closureOp, 1);
+    MlirValue clP2 = mlirOperationGetResult(closureOp, 2);
+
+    linkValues(block, loc, clP1, omegaP0);
+    linkValues(block, loc, clP2, capBundle);
+
+    return clP0;
+}
+
+static MlirValue createPair(MlirContext ctx, MlirBlock block, MlirLocation loc, MlirValue left, MlirValue right) {
+    MlirType portType = getPicPortType(ctx);
+    MlirType agentTypes[] = {portType, portType, portType};
+
+    MlirOperationState pairState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+    MlirAttribute typeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("delta"));
+    MlirNamedAttribute typeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), typeAttr);
+    MlirAttribute polAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("*"));
+    MlirNamedAttribute polNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), polAttr);
+    MlirAttribute labelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("pair"));
+    MlirNamedAttribute labelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), labelAttr);
+    MlirNamedAttribute attrs[] = {typeNamedAttr, polNamedAttr, labelNamedAttr};
+    mlirOperationStateAddAttributes(&pairState, 3, attrs);
+    mlirOperationStateAddResults(&pairState, 3, agentTypes);
+
+    MlirOperation pairOp = mlirOperationCreate(&pairState);
+    mlirBlockAppendOwnedOperation(block, pairOp);
+
+    MlirValue p0 = mlirOperationGetResult(pairOp, 0);
+    MlirValue p1 = mlirOperationGetResult(pairOp, 1);
+    MlirValue p2 = mlirOperationGetResult(pairOp, 2);
+
+    linkValues(block, loc, p1, left);
+    linkValues(block, loc, p2, right);
+
+    return p0;
+}
+
+
+static MlirBlock createFunctionBlock(MlirContext ctx, MlirLocation loc, MlirBlock moduleBody, const char *prefixedName) {
+    MlirType portType = getPicPortType(ctx);
+    MlirType funcArgTypes[] = {portType, portType, portType};
+    MlirLocation funcArgLocs[] = {loc, loc, loc};
+    MlirType retTypes[] = {portType};
+    MlirType funcType = mlirFunctionTypeGet(ctx, 3, funcArgTypes, 1, retTypes);
+
+    MlirOperationState funcState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.func"), loc);
+    MlirAttribute fnNameAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(prefixedName));
+    MlirNamedAttribute fnNameNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("sym_name")), fnNameAttr);
+    MlirAttribute fnTypeAttr = mlirTypeAttrGet(funcType);
+    MlirNamedAttribute fnTypeNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("function_type")), fnTypeAttr);
+    MlirNamedAttribute funcAttrs[] = {fnNameNamed, fnTypeNamed};
+    mlirOperationStateAddAttributes(&funcState, 2, funcAttrs);
+
+    MlirRegion innerRegion = mlirRegionCreate();
+    MlirBlock innerBlock = mlirBlockCreate(3, funcArgTypes, funcArgLocs);
+    mlirRegionAppendOwnedBlock(innerRegion, innerBlock);
+    mlirOperationStateAddOwnedRegions(&funcState, 1, &innerRegion);
+
+    MlirOperation funcOp = mlirOperationCreate(&funcState);
+    if (!mlirBlockIsNull(moduleBody)) {
+        mlirBlockAppendOwnedOperation(moduleBody, funcOp);
+    }
+    return innerBlock;
+}
+
+static void registerFunction(MlirContext ctx, MlirLocation loc, MlirBlock moduleBody, const char *funcName, const char *prefixedName) {
+    MlirOperationState regState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.registry"), loc);
+    MlirAttribute opNameAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(funcName));
+    MlirNamedAttribute opNameNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("op_name")), opNameAttr);
+    MlirAttribute payloadAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(prefixedName));
+    MlirNamedAttribute payloadNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("payload")), payloadAttr);
+    MlirAttribute argNamesAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("[env][arg]"));
+    MlirNamedAttribute argNamesNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("arg_names")), argNamesAttr);
+    MlirNamedAttribute regAttrs[] = {opNameNamed, payloadNamed, argNamesNamed};
+    mlirOperationStateAddAttributes(&regState, 3, regAttrs);
+    if (!mlirBlockIsNull(moduleBody)) {
+        mlirBlockAppendOwnedOperation(moduleBody, mlirOperationCreate(&regState));
+    }
+}
+
+
 typedef struct {
     const char *name;
     int name_len;
@@ -341,7 +495,7 @@ static int count_var_usage(AstNode *node, const char *name, int name_len) {
     return 0;
 }
 
-static void linkToEra(MlirContext ctx, MlirBlock block, MlirLocation loc, MlirValue v) {
+static MlirValue createEra(MlirContext ctx, MlirBlock block, MlirLocation loc) {
     MlirOperationState eraState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
     MlirAttribute eraTypeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("epsilon"));
     MlirNamedAttribute eraTypeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), eraTypeAttr);
@@ -356,12 +510,13 @@ static void linkToEra(MlirContext ctx, MlirBlock block, MlirLocation loc, MlirVa
     mlirOperationStateAddResults(&eraState, 3, eraTypes);
     MlirOperation eraOp = mlirOperationCreate(&eraState);
     mlirBlockAppendOwnedOperation(block, eraOp);
-
-    MlirOperationState linkState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-    MlirValue linkOps[] = {v, mlirOperationGetResult(eraOp, 0)};
-    mlirOperationStateAddOperands(&linkState, 2, linkOps);
-    mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkState));
+    return mlirOperationGetResult(eraOp, 0);
 }
+
+static void linkToEra(MlirContext ctx, MlirBlock block, MlirLocation loc, MlirValue v) {
+    linkValues(block, loc, v, createEra(ctx, block, loc));
+}
+
 
 static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation loc, AstNode *expr, Environment *env) {
     if (!expr) {
@@ -703,187 +858,463 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
     }
 
     if (expr->type == AST_WHILE) {
-        // Lower to recursion.
-        // We dynamically generate an MLIR function that represents the loop.
-        static int loop_counter = 0;
-        char loop_func_name[64];
-        snprintf(loop_func_name, sizeof(loop_func_name), "_loop_macro_%d", loop_counter++);
+        // Find all active variables in env
+        int active_count = 0;
+        for (int i = 0; i < env->count; i++) {
+            if (!mlirValueIsNull(env->vars[i].value)) {
+                active_count++;
+            }
+        }
+        const char **active_names = (const char **)malloc(sizeof(char*) * active_count);
+        int *active_lens = (int *)malloc(sizeof(int) * active_count);
+        MlirValue *active_vals = (MlirValue *)malloc(sizeof(MlirValue) * active_count);
+        int idx = 0;
+        for (int i = 0; i < env->count; i++) {
+            if (!mlirValueIsNull(env->vars[i].value)) {
+                active_names[idx] = env->vars[i].name;
+                active_lens[idx] = env->vars[i].name_len;
+                active_vals[idx] = env->vars[i].value;
+                env->vars[i].value = (MlirValue){NULL}; // Consume
+                idx++;
+            }
+        }
 
-        MlirOperationState funcState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.func"), loc);
-        MlirAttribute nameAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(loop_func_name));
-        MlirNamedAttribute nameNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("sym_name")), nameAttr);
-        mlirOperationStateAddAttributes(&funcState, 1, &nameNamedAttr);
-
-        // Function arguments are the current environment variables.
-        int arg_count = env->count;
         MlirType portType = getPicPortType(ctx);
-        MlirType *types = NULL;
-        MlirLocation *locs = NULL;
-        if (arg_count > 0) {
-            types = (MlirType *)malloc(sizeof(MlirType) * arg_count);
-            locs = (MlirLocation *)malloc(sizeof(MlirLocation) * arg_count);
-            if (!types || !locs) {
-                fprintf(stderr, "Out of memory\n");
-                exit(1);
+        MlirType agentTypes[] = {portType, portType, portType};
+
+        MlirAttribute pairType = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("gamma"));
+        MlirNamedAttribute pairTypeAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), pairType);
+        MlirAttribute plusPol = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("+"));
+        MlirNamedAttribute plusPolAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), plusPol);
+        MlirAttribute minusPol = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("-"));
+        MlirNamedAttribute minusPolAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), minusPol);
+        MlirAttribute labelPair = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("pair"));
+        MlirNamedAttribute labelPairAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), labelPair);
+
+        // Pack init_bundle in parent block
+        MlirValue currentBundle = createEra(ctx, block, loc);
+        for (int i = active_count - 1; i >= 0; i--) {
+            MlirOperationState packState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+            MlirNamedAttribute packAttrs[] = {pairTypeAttr, plusPolAttr, labelPairAttr};
+            mlirOperationStateAddAttributes(&packState, 3, packAttrs);
+            mlirOperationStateAddResults(&packState, 3, agentTypes);
+            MlirOperation packOp = mlirOperationCreate(&packState);
+            mlirBlockAppendOwnedOperation(block, packOp);
+
+            MlirValue p0 = mlirOperationGetResult(packOp, 0);
+            MlirValue p1 = mlirOperationGetResult(packOp, 1);
+            MlirValue p2 = mlirOperationGetResult(packOp, 2);
+
+            linkValues(block, loc, p1, active_vals[i]);
+            linkValues(block, loc, p2, currentBundle);
+            currentBundle = p0;
+        }
+        MlirValue init_bundle = currentBundle;
+
+        static int loop_counter = 0;
+        char macro_func_name[128];
+        char body_func_name[128];
+        char exit_func_name[128];
+        snprintf(macro_func_name, sizeof(macro_func_name), "_loop_macro_%d", loop_counter);
+        snprintf(body_func_name, sizeof(body_func_name), "_loop_body_%d", loop_counter);
+        snprintf(exit_func_name, sizeof(exit_func_name), "_loop_exit_%d", loop_counter);
+        loop_counter++;
+
+        char prefixedMacroName[256];
+        char prefixedBodyName[256];
+        char prefixedExitName[256];
+        sprintf(prefixedMacroName, "lin_%s", macro_func_name);
+        sprintf(prefixedBodyName, "lin_%s", body_func_name);
+        sprintf(prefixedExitName, "lin_%s", exit_func_name);
+
+        // 1. Generate _loop_exit_X
+        {
+            MlirBlock exitBlock = createFunctionBlock(ctx, loc, moduleBody, prefixedExitName);
+            registerFunction(ctx, loc, moduleBody, exit_func_name, prefixedExitName);
+
+            MlirValue exitRawBundle = mlirBlockGetArgument(exitBlock, 0);
+            MlirValue exitResultPort = mlirBlockGetArgument(exitBlock, 1);
+
+            MlirOperationState exitUnpackState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+            MlirNamedAttribute exitUnpackAttrs[] = {pairTypeAttr, minusPolAttr, labelPairAttr};
+            mlirOperationStateAddAttributes(&exitUnpackState, 3, exitUnpackAttrs);
+            mlirOperationStateAddResults(&exitUnpackState, 3, agentTypes);
+            MlirOperation exitUnpackOp = mlirOperationCreate(&exitUnpackState);
+            mlirBlockAppendOwnedOperation(exitBlock, exitUnpackOp);
+            linkValues(exitBlock, loc, mlirOperationGetResult(exitUnpackOp, 0), exitRawBundle);
+
+            MlirValue exitEnvBundle = mlirOperationGetResult(exitUnpackOp, 1);
+            MlirValue exitMainArg = mlirOperationGetResult(exitUnpackOp, 2);
+
+            linkToEra(ctx, exitBlock, loc, exitEnvBundle);
+            linkValues(exitBlock, loc, exitMainArg, exitResultPort);
+
+            MlirOperationState exitRetState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
+            MlirType exitI64Type = mlirTypeParseGet(ctx, mlirStringRefCreateFromCString("i64"));
+            MlirOperationState exitCastState = mlirOperationStateGet(mlirStringRefCreateFromCString("builtin.unrealized_conversion_cast"), loc);
+            mlirOperationStateAddOperands(&exitCastState, 1, &exitResultPort);
+            mlirOperationStateAddResults(&exitCastState, 1, &exitI64Type);
+            MlirOperation exitCast = mlirOperationCreate(&exitCastState);
+            mlirBlockAppendOwnedOperation(exitBlock, exitCast);
+            MlirValue exitRetVal = mlirOperationGetResult(exitCast, 0);
+            mlirOperationStateAddOperands(&exitRetState, 1, &exitRetVal);
+            mlirBlockAppendOwnedOperation(exitBlock, mlirOperationCreate(&exitRetState));
+        }
+
+        // 2. Generate _loop_body_X
+        {
+            MlirBlock bodyBlock = createFunctionBlock(ctx, loc, moduleBody, prefixedBodyName);
+            registerFunction(ctx, loc, moduleBody, body_func_name, prefixedBodyName);
+
+            MlirValue bodyRawBundle = mlirBlockGetArgument(bodyBlock, 0);
+            MlirValue bodyResultPort = mlirBlockGetArgument(bodyBlock, 1);
+
+            MlirOperationState bodyUnpackState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+            MlirNamedAttribute bodyUnpackAttrs[] = {pairTypeAttr, minusPolAttr, labelPairAttr};
+            mlirOperationStateAddAttributes(&bodyUnpackState, 3, bodyUnpackAttrs);
+            mlirOperationStateAddResults(&bodyUnpackState, 3, agentTypes);
+            MlirOperation bodyUnpackOp = mlirOperationCreate(&bodyUnpackState);
+            mlirBlockAppendOwnedOperation(bodyBlock, bodyUnpackOp);
+            linkValues(bodyBlock, loc, mlirOperationGetResult(bodyUnpackOp, 0), bodyRawBundle);
+
+            MlirValue bodyEnvBundle = mlirOperationGetResult(bodyUnpackOp, 1);
+            MlirValue bodyMainArg = mlirOperationGetResult(bodyUnpackOp, 2);
+
+            MlirOperationState capUnpackState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+            mlirOperationStateAddAttributes(&capUnpackState, 3, bodyUnpackAttrs);
+            mlirOperationStateAddResults(&capUnpackState, 3, agentTypes);
+            MlirOperation capUnpackOp = mlirOperationCreate(&capUnpackState);
+            mlirBlockAppendOwnedOperation(bodyBlock, capUnpackOp);
+            linkValues(bodyBlock, loc, mlirOperationGetResult(capUnpackOp, 0), bodyEnvBundle);
+
+            MlirValue loop_macro_closure = mlirOperationGetResult(capUnpackOp, 1);
+            MlirValue capRemaining = mlirOperationGetResult(capUnpackOp, 2);
+            linkToEra(ctx, bodyBlock, loc, capRemaining);
+
+            Environment bodyEnv;
+            env_init(&bodyEnv);
+            MlirValue bodyCurrentBundle = bodyMainArg;
+            for (int i = 0; i < active_count; i++) {
+                MlirOperationState unpackState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+                mlirOperationStateAddAttributes(&unpackState, 3, bodyUnpackAttrs);
+                mlirOperationStateAddResults(&unpackState, 3, agentTypes);
+                MlirOperation unpackOp = mlirOperationCreate(&unpackState);
+                mlirBlockAppendOwnedOperation(bodyBlock, unpackOp);
+
+                MlirValue p0 = mlirOperationGetResult(unpackOp, 0);
+                MlirValue p1 = mlirOperationGetResult(unpackOp, 1);
+                MlirValue p2 = mlirOperationGetResult(unpackOp, 2);
+
+                linkValues(bodyBlock, loc, p0, bodyCurrentBundle);
+                env_add(&bodyEnv, active_names[i], active_lens[i], p1);
+                bodyCurrentBundle = p2;
             }
-            for (int i = 0; i < arg_count; i++) {
-                types[i] = portType;
-                locs[i] = loc;
+            linkToEra(ctx, bodyBlock, loc, bodyCurrentBundle);
+
+            MlirValue body_res = lowerExpression(ctx, bodyBlock, loc, expr->as.while_loop.body, &bodyEnv);
+
+            MlirValue *next_vals = malloc(sizeof(MlirValue) * active_count);
+            for (int i = 0; i < active_count; i++) {
+                MlirValue val = {NULL};
+                for (int j = bodyEnv.count - 1; j >= 0; j--) {
+                    if (bodyEnv.vars[j].name_len == active_lens[i] &&
+                        strncmp(bodyEnv.vars[j].name, active_names[i], active_lens[i]) == 0) {
+                        val = bodyEnv.vars[j].value;
+                        bodyEnv.vars[j].value = (MlirValue){NULL}; // Consume
+                        break;
+                    }
+                }
+                if (mlirValueIsNull(val)) {
+                    val = createEra(ctx, bodyBlock, loc);
+                }
+                next_vals[i] = val;
             }
+            linkToEra(ctx, bodyBlock, loc, body_res);
+            env_free(&bodyEnv, ctx, bodyBlock, loc);
+
+            MlirValue next_bundle = createEra(ctx, bodyBlock, loc);
+            for (int i = active_count - 1; i >= 0; i--) {
+                MlirOperationState packState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+                MlirNamedAttribute packAttrs[] = {pairTypeAttr, plusPolAttr, labelPairAttr};
+                mlirOperationStateAddAttributes(&packState, 3, packAttrs);
+                mlirOperationStateAddResults(&packState, 3, agentTypes);
+                MlirOperation packOp = mlirOperationCreate(&packState);
+                mlirBlockAppendOwnedOperation(bodyBlock, packOp);
+
+                MlirValue p0 = mlirOperationGetResult(packOp, 0);
+                MlirValue p1 = mlirOperationGetResult(packOp, 1);
+                MlirValue p2 = mlirOperationGetResult(packOp, 2);
+
+                linkValues(bodyBlock, loc, p1, next_vals[i]);
+                linkValues(bodyBlock, loc, p2, next_bundle);
+                next_bundle = p0;
+            }
+            free(next_vals);
+
+            MlirOperationState macroUnpackState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+            mlirOperationStateAddAttributes(&macroUnpackState, 3, bodyUnpackAttrs);
+            mlirOperationStateAddResults(&macroUnpackState, 3, agentTypes);
+            MlirOperation macroUnpackOp = mlirOperationCreate(&macroUnpackState);
+            mlirBlockAppendOwnedOperation(bodyBlock, macroUnpackOp);
+            linkValues(bodyBlock, loc, mlirOperationGetResult(macroUnpackOp, 0), loop_macro_closure);
+
+            MlirValue macroF = mlirOperationGetResult(macroUnpackOp, 1);
+            MlirValue macroClEnv = mlirOperationGetResult(macroUnpackOp, 2);
+
+            MlirValue appP0, appP1, appP2;
+            createOmega(ctx, bodyBlock, loc, "call", "-", &appP0, &appP1, &appP2);
+            linkValues(bodyBlock, loc, appP0, macroF);
+
+            MlirOperationState callPackState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+            MlirNamedAttribute callPackAttrs[] = {pairTypeAttr, plusPolAttr, labelPairAttr};
+            mlirOperationStateAddAttributes(&callPackState, 3, callPackAttrs);
+            mlirOperationStateAddResults(&callPackState, 3, agentTypes);
+            MlirOperation callPackOp = mlirOperationCreate(&callPackState);
+            mlirBlockAppendOwnedOperation(bodyBlock, callPackOp);
+
+            MlirValue cpP0 = mlirOperationGetResult(callPackOp, 0);
+            MlirValue cpP1 = mlirOperationGetResult(callPackOp, 1);
+            MlirValue cpP2 = mlirOperationGetResult(callPackOp, 2);
+
+            linkValues(bodyBlock, loc, cpP1, macroClEnv);
+            linkValues(bodyBlock, loc, cpP2, next_bundle);
+            linkValues(bodyBlock, loc, cpP0, appP1);
+            linkValues(bodyBlock, loc, appP2, bodyResultPort);
+
+            MlirOperationState bodyRetState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
+            MlirType bodyI64Type = mlirTypeParseGet(ctx, mlirStringRefCreateFromCString("i64"));
+            MlirOperationState bodyCastState = mlirOperationStateGet(mlirStringRefCreateFromCString("builtin.unrealized_conversion_cast"), loc);
+            mlirOperationStateAddOperands(&bodyCastState, 1, &bodyResultPort);
+            mlirOperationStateAddResults(&bodyCastState, 1, &bodyI64Type);
+            MlirOperation bodyCast = mlirOperationCreate(&bodyCastState);
+            mlirBlockAppendOwnedOperation(bodyBlock, bodyCast);
+            MlirValue bodyRetVal = mlirOperationGetResult(bodyCast, 0);
+            mlirOperationStateAddOperands(&bodyRetState, 1, &bodyRetVal);
+            mlirBlockAppendOwnedOperation(bodyBlock, mlirOperationCreate(&bodyRetState));
         }
-        MlirType retTypes[] = {portType};
-        MlirType funcType = mlirFunctionTypeGet(ctx, arg_count, types, 1, retTypes);
-        MlirAttribute typeAttr = mlirTypeAttrGet(funcType);
-        MlirNamedAttribute typeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("function_type")), typeAttr);
-        mlirOperationStateAddAttributes(&funcState, 1, &typeNamedAttr);
 
-        MlirRegion region = mlirRegionCreate();
-        MlirBlock loopBlock = mlirBlockCreate(arg_count, types, locs);
-        mlirRegionAppendOwnedBlock(region, loopBlock);
-        mlirOperationStateAddOwnedRegions(&funcState, 1, &region);
+        // 3. Generate _loop_macro_X
+        {
+            MlirBlock macroBlock = createFunctionBlock(ctx, loc, moduleBody, prefixedMacroName);
+            registerFunction(ctx, loc, moduleBody, macro_func_name, prefixedMacroName);
 
-        MlirOperation funcOp = mlirOperationCreate(&funcState);
-        if (!mlirBlockIsNull(moduleBody)) {
-            mlirBlockAppendOwnedOperation(moduleBody, funcOp);
+            MlirValue macroRawBundle = mlirBlockGetArgument(macroBlock, 0);
+            MlirValue macroResultPort = mlirBlockGetArgument(macroBlock, 1);
+
+            MlirOperationState macroUnpackState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+            MlirNamedAttribute macroUnpackAttrs[] = {pairTypeAttr, minusPolAttr, labelPairAttr};
+            mlirOperationStateAddAttributes(&macroUnpackState, 3, macroUnpackAttrs);
+            mlirOperationStateAddResults(&macroUnpackState, 3, agentTypes);
+            MlirOperation macroUnpackOp = mlirOperationCreate(&macroUnpackState);
+            mlirBlockAppendOwnedOperation(macroBlock, macroUnpackOp);
+            linkValues(macroBlock, loc, mlirOperationGetResult(macroUnpackOp, 0), macroRawBundle);
+
+            MlirValue macroEnvBundle = mlirOperationGetResult(macroUnpackOp, 1);
+            MlirValue macroMainArg = mlirOperationGetResult(macroUnpackOp, 2);
+            linkToEra(ctx, macroBlock, loc, macroEnvBundle);
+
+            Environment macroEnv;
+            env_init(&macroEnv);
+            MlirValue macroCurrentBundle = macroMainArg;
+            for (int i = 0; i < active_count; i++) {
+                MlirOperationState unpackState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+                mlirOperationStateAddAttributes(&unpackState, 3, macroUnpackAttrs);
+                mlirOperationStateAddResults(&unpackState, 3, agentTypes);
+                MlirOperation unpackOp = mlirOperationCreate(&unpackState);
+                mlirBlockAppendOwnedOperation(macroBlock, unpackOp);
+
+                MlirValue p0 = mlirOperationGetResult(unpackOp, 0);
+                MlirValue p1 = mlirOperationGetResult(unpackOp, 1);
+                MlirValue p2 = mlirOperationGetResult(unpackOp, 2);
+
+                linkValues(macroBlock, loc, p0, macroCurrentBundle);
+                env_add(&macroEnv, active_names[i], active_lens[i], p1);
+                macroCurrentBundle = p2;
+            }
+            linkToEra(ctx, macroBlock, loc, macroCurrentBundle);
+
+            MlirValue cond = lowerExpression(ctx, macroBlock, loc, expr->as.while_loop.condition, &macroEnv);
+
+            MlirValue *v_trues = malloc(sizeof(MlirValue) * active_count);
+            MlirValue *v_falses = malloc(sizeof(MlirValue) * active_count);
+            for (int i = 0; i < active_count; i++) {
+                MlirValue v = {NULL};
+                for (int j = macroEnv.count - 1; j >= 0; j--) {
+                    if (macroEnv.vars[j].name_len == active_lens[i] &&
+                        strncmp(macroEnv.vars[j].name, active_names[i], active_lens[i]) == 0) {
+                        v = macroEnv.vars[j].value;
+                        macroEnv.vars[j].value = (MlirValue){NULL}; // Consume
+                        break;
+                    }
+                }
+                if (mlirValueIsNull(v)) {
+                    v = createEra(ctx, macroBlock, loc);
+                }
+                MlirOperationState dupState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+                MlirAttribute deltaType = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("delta"));
+                MlirNamedAttribute typeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), deltaType);
+                MlirAttribute starPol = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("*"));
+                MlirNamedAttribute polNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), starPol);
+                MlirAttribute dupLabel = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("dup"));
+                MlirNamedAttribute labelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), dupLabel);
+                MlirNamedAttribute attrs[] = {typeNamedAttr, polNamedAttr, labelNamedAttr};
+                mlirOperationStateAddAttributes(&dupState, 3, attrs);
+                mlirOperationStateAddResults(&dupState, 3, agentTypes);
+                MlirOperation dupOp = mlirOperationCreate(&dupState);
+                mlirBlockAppendOwnedOperation(macroBlock, dupOp);
+
+                MlirValue dupP0 = mlirOperationGetResult(dupOp, 0);
+                MlirValue dupP1 = mlirOperationGetResult(dupOp, 1);
+                MlirValue dupP2 = mlirOperationGetResult(dupOp, 2);
+
+                linkValues(macroBlock, loc, dupP0, v);
+                v_trues[i] = dupP1;
+                v_falses[i] = dupP2;
+            }
+            env_free(&macroEnv, ctx, macroBlock, loc);
+
+            MlirValue false_cap_bundle = createEra(ctx, macroBlock, loc);
+            for (int i = active_count - 1; i >= 0; i--) {
+                MlirOperationState packState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+                MlirNamedAttribute packAttrs[] = {pairTypeAttr, plusPolAttr, labelPairAttr};
+                mlirOperationStateAddAttributes(&packState, 3, packAttrs);
+                mlirOperationStateAddResults(&packState, 3, agentTypes);
+                MlirOperation packOp = mlirOperationCreate(&packState);
+                mlirBlockAppendOwnedOperation(macroBlock, packOp);
+
+                MlirValue p0 = mlirOperationGetResult(packOp, 0);
+                MlirValue p1 = mlirOperationGetResult(packOp, 1);
+                MlirValue p2 = mlirOperationGetResult(packOp, 2);
+
+                linkValues(macroBlock, loc, p1, v_falses[i]);
+                linkValues(macroBlock, loc, p2, false_cap_bundle);
+                false_cap_bundle = p0;
+            }
+            MlirValue exit_omega = createOmegaP0(ctx, macroBlock, loc, exit_func_name, "+");
+            MlirValue false_branch = bundleClosure(ctx, macroBlock, loc, exit_omega, false_cap_bundle);
+
+            MlirValue macro_omega = createOmegaP0(ctx, macroBlock, loc, macro_func_name, "+");
+            MlirValue macro_dummy_era = createEra(ctx, macroBlock, loc);
+            MlirValue loop_macro_closure_inner = bundleClosure(ctx, macroBlock, loc, macro_omega, macro_dummy_era);
+
+            MlirValue true_cap_bundle = createEra(ctx, macroBlock, loc);
+            for (int i = active_count - 1; i >= 0; i--) {
+                MlirOperationState packState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+                MlirNamedAttribute packAttrs[] = {pairTypeAttr, plusPolAttr, labelPairAttr};
+                mlirOperationStateAddAttributes(&packState, 3, packAttrs);
+                mlirOperationStateAddResults(&packState, 3, agentTypes);
+                MlirOperation packOp = mlirOperationCreate(&packState);
+                mlirBlockAppendOwnedOperation(macroBlock, packOp);
+
+                MlirValue p0 = mlirOperationGetResult(packOp, 0);
+                MlirValue p1 = mlirOperationGetResult(packOp, 1);
+                MlirValue p2 = mlirOperationGetResult(packOp, 2);
+
+                linkValues(macroBlock, loc, p1, v_trues[i]);
+                linkValues(macroBlock, loc, p2, true_cap_bundle);
+                true_cap_bundle = p0;
+            }
+            MlirOperationState macroPackState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+            MlirNamedAttribute macroPackAttrs[] = {pairTypeAttr, plusPolAttr, labelPairAttr};
+            mlirOperationStateAddAttributes(&macroPackState, 3, macroPackAttrs);
+            mlirOperationStateAddResults(&macroPackState, 3, agentTypes);
+            MlirOperation macroPackOp = mlirOperationCreate(&macroPackState);
+            mlirBlockAppendOwnedOperation(macroBlock, macroPackOp);
+
+            MlirValue mp0 = mlirOperationGetResult(macroPackOp, 0);
+            MlirValue mp1 = mlirOperationGetResult(macroPackOp, 1);
+            MlirValue mp2 = mlirOperationGetResult(macroPackOp, 2);
+
+            linkValues(macroBlock, loc, mp1, loop_macro_closure_inner);
+            linkValues(macroBlock, loc, mp2, true_cap_bundle);
+            true_cap_bundle = mp0;
+
+            MlirValue body_omega = createOmegaP0(ctx, macroBlock, loc, body_func_name, "+");
+            MlirValue true_branch = bundleClosure(ctx, macroBlock, loc, body_omega, true_cap_bundle);
+
+            MlirValue branches_pair = createPair(ctx, macroBlock, loc, true_branch, false_branch);
+
+            MlirValue eitherP0, eitherP1, eitherP2;
+            createOmega(ctx, macroBlock, loc, "either", "-", &eitherP0, &eitherP1, &eitherP2);
+
+            linkValues(macroBlock, loc, eitherP0, cond);
+            linkValues(macroBlock, loc, eitherP1, branches_pair);
+            linkValues(macroBlock, loc, eitherP2, macroResultPort);
+
+            MlirOperationState macroRetState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
+            MlirType macroI64Type = mlirTypeParseGet(ctx, mlirStringRefCreateFromCString("i64"));
+            MlirOperationState macroCastState = mlirOperationStateGet(mlirStringRefCreateFromCString("builtin.unrealized_conversion_cast"), loc);
+            mlirOperationStateAddOperands(&macroCastState, 1, &macroResultPort);
+            mlirOperationStateAddResults(&macroCastState, 1, &macroI64Type);
+            MlirOperation macroCast = mlirOperationCreate(&macroCastState);
+            mlirBlockAppendOwnedOperation(macroBlock, macroCast);
+            MlirValue macroRetVal = mlirOperationGetResult(macroCast, 0);
+            mlirOperationStateAddOperands(&macroRetState, 1, &macroRetVal);
+            mlirBlockAppendOwnedOperation(macroBlock, mlirOperationCreate(&macroRetState));
+
+            free(v_trues);
+            free(v_falses);
         }
 
-        // Inside the loop function
-        Environment loopEnv;
-        env_init(&loopEnv);
-        for (int i = 0; i < arg_count; i++) {
-            MlirValue argValue = mlirBlockGetArgument(loopBlock, i);
-            env_add(&loopEnv, env->vars[i].name, env->vars[i].name_len, argValue);
+        // 4. Call _loop_macro_X in parent block
+        MlirValue parent_macro_omega = createOmegaP0(ctx, block, loc, macro_func_name, "+");
+        MlirValue parent_macro_dummy_era = createEra(ctx, block, loc);
+        MlirValue macro_closure = bundleClosure(ctx, block, loc, parent_macro_omega, parent_macro_dummy_era);
+
+        MlirOperationState macroUnpackStateParent = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+        MlirNamedAttribute macroUnpackAttrsParent[] = {pairTypeAttr, minusPolAttr, labelPairAttr};
+        mlirOperationStateAddAttributes(&macroUnpackStateParent, 3, macroUnpackAttrsParent);
+        mlirOperationStateAddResults(&macroUnpackStateParent, 3, agentTypes);
+        MlirOperation macroUnpackOpParent = mlirOperationCreate(&macroUnpackStateParent);
+        mlirBlockAppendOwnedOperation(block, macroUnpackOpParent);
+        linkValues(block, loc, mlirOperationGetResult(macroUnpackOpParent, 0), macro_closure);
+
+        MlirValue macroFParent = mlirOperationGetResult(macroUnpackOpParent, 1);
+        MlirValue macroClEnvParent = mlirOperationGetResult(macroUnpackOpParent, 2);
+
+        MlirValue appP0Parent, appP1Parent, appP2Parent;
+        createOmega(ctx, block, loc, "call", "-", &appP0Parent, &appP1Parent, &appP2Parent);
+        linkValues(block, loc, appP0Parent, macroFParent);
+
+        MlirOperationState callPackStateParent = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+        MlirNamedAttribute callPackAttrsParent[] = {pairTypeAttr, plusPolAttr, labelPairAttr};
+        mlirOperationStateAddAttributes(&callPackStateParent, 3, callPackAttrsParent);
+        mlirOperationStateAddResults(&callPackStateParent, 3, agentTypes);
+        MlirOperation callPackOpParent = mlirOperationCreate(&callPackStateParent);
+        mlirBlockAppendOwnedOperation(block, callPackOpParent);
+
+        MlirValue cpP0Parent = mlirOperationGetResult(callPackOpParent, 0);
+        MlirValue cpP1Parent = mlirOperationGetResult(callPackOpParent, 1);
+        MlirValue cpP2Parent = mlirOperationGetResult(callPackOpParent, 2);
+
+        linkValues(block, loc, cpP1Parent, macroClEnvParent);
+        linkValues(block, loc, cpP2Parent, init_bundle);
+        linkValues(block, loc, cpP0Parent, appP1Parent);
+
+        // Unpack parentCurrentBundle (which is appP2Parent)
+        MlirValue parentCurrentBundle = appP2Parent;
+        for (int i = 0; i < active_count; i++) {
+            MlirOperationState unpackState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+            mlirOperationStateAddAttributes(&unpackState, 3, macroUnpackAttrsParent);
+            mlirOperationStateAddResults(&unpackState, 3, agentTypes);
+            MlirOperation unpackOp = mlirOperationCreate(&unpackState);
+            mlirBlockAppendOwnedOperation(block, unpackOp);
+
+            MlirValue p0 = mlirOperationGetResult(unpackOp, 0);
+            MlirValue p1 = mlirOperationGetResult(unpackOp, 1);
+            MlirValue p2 = mlirOperationGetResult(unpackOp, 2);
+
+            linkValues(block, loc, p0, parentCurrentBundle);
+            env_add(env, active_names[i], active_lens[i], p1);
+            parentCurrentBundle = p2;
         }
+        linkToEra(ctx, block, loc, parentCurrentBundle);
 
-        // Evaluate condition
-        MlirValue cond = lowerExpression(ctx, loopBlock, loc, expr->as.while_loop.condition, &loopEnv);
+        free(active_names);
+        free(active_lens);
+        free(active_vals);
 
-        // We use an either branch to route based on condition.
-        // But instead of generating an AST_EITHER, we'll construct the true branch manually,
-        // which evaluates the body and then recursively calls the loop function.
-        MlirValue body_res = lowerExpression(ctx, loopBlock, loc, expr->as.while_loop.body, &loopEnv);
-
-        // True branch: evaluate body, then recursively call the loop function.
-        MlirOperationState recState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
-        MlirAttribute recTypeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("omega"));
-        MlirNamedAttribute recTypeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), recTypeAttr);
-        MlirAttribute recPolAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("-"));
-        MlirNamedAttribute recPolNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), recPolAttr);
-        MlirAttribute recLabelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(loop_func_name));
-        MlirNamedAttribute recLabelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), recLabelAttr);
-        MlirNamedAttribute recAttrs[] = {recTypeNamedAttr, recPolNamedAttr, recLabelNamedAttr};
-        mlirOperationStateAddAttributes(&recState, 3, recAttrs);
-        MlirType recTypes[3] = {portType, portType, portType};
-        mlirOperationStateAddResults(&recState, 3, recTypes);
-        MlirOperation recOp = mlirOperationCreate(&recState);
-        mlirBlockAppendOwnedOperation(loopBlock, recOp);
-
-        MlirValue recP0 = mlirOperationGetResult(recOp, 0); // principal result
-        MlirValue recP1 = mlirOperationGetResult(recOp, 1); // arg 1
-
-        // Link Dummy Arg for MVP
-        MlirOperationState dummyLink = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-        MlirValue dummyLinkOps[] = {recP1, body_res};
-        mlirOperationStateAddOperands(&dummyLink, 2, dummyLinkOps);
-        mlirBlockAppendOwnedOperation(loopBlock, mlirOperationCreate(&dummyLink));
-
-        // Loop branch node
-        MlirOperationState eitherState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
-        MlirAttribute eitherTypeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("omega"));
-        MlirNamedAttribute eitherTypeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), eitherTypeAttr);
-        MlirAttribute eitherPolAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("-"));
-        MlirNamedAttribute eitherPolNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), eitherPolAttr);
-        MlirAttribute eitherLabelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("branch"));
-        MlirNamedAttribute eitherLabelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), eitherLabelAttr);
-        MlirNamedAttribute eitherAttrs[] = {eitherTypeNamedAttr, eitherPolNamedAttr, eitherLabelNamedAttr};
-        mlirOperationStateAddAttributes(&eitherState, 3, eitherAttrs);
-        MlirType eitherTypes[] = {portType, portType, portType};
-        mlirOperationStateAddResults(&eitherState, 3, eitherTypes);
-        MlirOperation eitherOp = mlirOperationCreate(&eitherState);
-        mlirBlockAppendOwnedOperation(loopBlock, eitherOp);
-
-        MlirValue eitherP0 = mlirOperationGetResult(eitherOp, 0); // cond
-        MlirValue eitherP1 = mlirOperationGetResult(eitherOp, 1); // true
-        MlirValue eitherP2 = mlirOperationGetResult(eitherOp, 2); // false
-
-        // Link Condition
-        MlirOperationState linkCond = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-        MlirValue linkCondOps[] = {eitherP0, cond};
-        mlirOperationStateAddOperands(&linkCond, 2, linkCondOps);
-        mlirBlockAppendOwnedOperation(loopBlock, mlirOperationCreate(&linkCond));
-
-        // Link True Branch to recursion
-        MlirOperationState linkTrue = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-        MlirValue linkTrueOps[] = {eitherP1, recP0};
-        mlirOperationStateAddOperands(&linkTrue, 2, linkTrueOps);
-        mlirBlockAppendOwnedOperation(loopBlock, mlirOperationCreate(&linkTrue));
-
-        // Link False Branch to an epsilon/null state
-        MlirOperationState eraState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
-        MlirAttribute eraTypeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("epsilon"));
-        MlirNamedAttribute eraTypeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), eraTypeAttr);
-        MlirAttribute eraPolAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("*"));
-        MlirNamedAttribute eraPolNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), eraPolAttr);
-        MlirAttribute eraLabelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("era"));
-        MlirNamedAttribute eraLabelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), eraLabelAttr);
-        MlirNamedAttribute eraAttrs[] = {eraTypeNamedAttr, eraPolNamedAttr, eraLabelNamedAttr};
-        mlirOperationStateAddAttributes(&eraState, 3, eraAttrs);
-        MlirType eraTypes[] = {portType, portType, portType};
-        mlirOperationStateAddResults(&eraState, 3, eraTypes);
-        MlirOperation eraOp = mlirOperationCreate(&eraState);
-        mlirBlockAppendOwnedOperation(loopBlock, eraOp);
-
-        MlirValue eraP0 = mlirOperationGetResult(eraOp, 0);
-
-        MlirOperationState linkFalse = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-        MlirValue linkFalseOps[] = {eitherP2, eraP0};
-        mlirOperationStateAddOperands(&linkFalse, 2, linkFalseOps);
-        mlirBlockAppendOwnedOperation(loopBlock, mlirOperationCreate(&linkFalse));
-
-        // env_free MUST precede func.return
-        env_free(&loopEnv, ctx, loopBlock, loc);
-
-        // Return the condition from the loop function
-        MlirOperationState retState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
-        mlirOperationStateAddOperands(&retState, 1, &cond);
-        mlirBlockAppendOwnedOperation(loopBlock, mlirOperationCreate(&retState));
-
-        if (types) free(types);
-        if (locs) free(locs);
-
-        // Now, emit the AST_CALL to the loop function in the current block
-        MlirOperationState callState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
-        MlirAttribute callTypeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("omega"));
-        MlirNamedAttribute callTypeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), callTypeAttr);
-        MlirAttribute callPolAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("-"));
-        MlirNamedAttribute callPolNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), callPolAttr);
-        MlirAttribute callLabelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(loop_func_name));
-        MlirNamedAttribute callLabelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), callLabelAttr);
-        MlirNamedAttribute callAttrs[] = {callTypeNamedAttr, callPolNamedAttr, callLabelNamedAttr};
-        mlirOperationStateAddAttributes(&callState, 3, callAttrs);
-        MlirType callTypes[] = {portType, portType, portType};
-        mlirOperationStateAddResults(&callState, 3, callTypes);
-        MlirOperation callOp = mlirOperationCreate(&callState);
-        mlirBlockAppendOwnedOperation(block, callOp);
-
-        MlirValue callResult = mlirOperationGetResult(callOp, 0);
-        MlirValue callP1 = mlirOperationGetResult(callOp, 1);
-
-        // Link initial state (just a dummy variable since MVP omegas take 2 auxiliary max)
-        MlirOperationState callLink = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-        MlirOperationState callEraState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
-        mlirOperationStateAddAttributes(&callEraState, 3, eraAttrs);
-        mlirOperationStateAddResults(&callEraState, 3, eraTypes);
-        MlirOperation callEraOp = mlirOperationCreate(&callEraState);
-        mlirBlockAppendOwnedOperation(block, callEraOp);
-
-        MlirValue callEraP0 = mlirOperationGetResult(callEraOp, 0);
-
-        MlirValue callLinkOps[] = {callP1, callEraP0};
-        mlirOperationStateAddOperands(&callLink, 2, callLinkOps);
-        mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&callLink));
-
-        return callResult;
+        return createEra(ctx, block, loc);
     }
 
     if (expr->type == AST_FUNC_DECL) {
