@@ -2091,7 +2091,12 @@ void optimizeInteractionNetWithEGraphs(MlirModule module) {
         int64_t value;
         MlirOperation op;
     };
-    struct ConstHash hashes[1024];
+    int hashCapacity = 1024;
+    struct ConstHash *hashes = malloc(sizeof(struct ConstHash) * hashCapacity);
+    if (!hashes) {
+        fprintf(stderr, "Out of memory\n");
+        exit(1);
+    }
     int hashCount = 0;
 
     // Allocation-safe approach: First iterate and collect ops to rewrite/delete
@@ -2104,7 +2109,13 @@ void optimizeInteractionNetWithEGraphs(MlirModule module) {
         MlirLocation loc;
     };
 
-    struct RewriteAction rewrites[1024];
+    int rewriteCapacity = 1024;
+    struct RewriteAction *rewrites = malloc(sizeof(struct RewriteAction) * rewriteCapacity);
+    if (!rewrites) {
+        free(hashes);
+        fprintf(stderr, "Out of memory\n");
+        exit(1);
+    }
     int rewriteCount = 0;
 
     while (!mlirOperationIsNull(op)) {
@@ -2135,11 +2146,29 @@ void optimizeInteractionNetWithEGraphs(MlirModule module) {
                             }
                         }
 
-                        if (!found && hashCount < 1024) {
+                        if (!found) {
+                            if (hashCount >= hashCapacity) {
+                                hashCapacity *= 2;
+                                struct ConstHash *newHashes = realloc(hashes, sizeof(struct ConstHash) * hashCapacity);
+                                if (!newHashes) {
+                                    fprintf(stderr, "Out of memory\n");
+                                    exit(1);
+                                }
+                                hashes = newHashes;
+                            }
                             hashes[hashCount].value = val;
                             hashes[hashCount].op = currOp;
                             hashCount++;
-                        } else if (found && rewriteCount < 1024) {
+                        } else if (found) {
+                            if (rewriteCount >= rewriteCapacity) {
+                                rewriteCapacity *= 2;
+                                struct RewriteAction *newRewrites = realloc(rewrites, sizeof(struct RewriteAction) * rewriteCapacity);
+                                if (!newRewrites) {
+                                    fprintf(stderr, "Out of memory\n");
+                                    exit(1);
+                                }
+                                rewrites = newRewrites;
+                            }
                             // Stage the rewrite
                             MlirLocation loc = mlirOperationGetLocation(currOp);
                             MlirContext ctx = mlirModuleGetContext(module);
@@ -2253,4 +2282,7 @@ void optimizeInteractionNetWithEGraphs(MlirModule module) {
             }
         }
     }
+
+    free(hashes);
+    free(rewrites);
 }
