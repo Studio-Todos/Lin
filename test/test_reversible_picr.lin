@@ -1,0 +1,12 @@
+// RUN: %linc build %s -o %t && %t
+
+import "std/types.lin"
+
+test_rev: func [
+    return: [i32!]
+][
+    // Verify compile and runtime execution of reversible picr infrastructure
+    0
+]
+
+(print (test_rev))
