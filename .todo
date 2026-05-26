@@ -35,10 +35,36 @@
 
 ## 🔴 Tier 0 — Architecture (foundational correctness)
 
+# CPU/GPU Unification Strategy:
+# The goal is to implement every reduction rule ONCE in the target-independent
+# pic.reduce dialect using scf + arith + memref dialects (no llvm.*), then rely
+# on MLIR's existing conversion passes to lower to:
+#   • LLVM IR (CPU via ConvertToLLVMPass)
+#   • SPIR-V / PTX (GPU via ConvertToSPIRVPass / GPU dialect)
+# This means A1b is the central fix — all other "b" items are cleanup work that
+# becomes natural once the reduction logic lives in the right dialect.
+# Items 31, A4b, 21b, A2b, A3b are all sub-problems of finishing A1b correctly.
+
 [x] A1. pic.reduce pass: implement reduction rules in target-independent MLIR
         - PicReduceToRuntimePass walks pic.graph functions
         - Emits pic_reduce.annihilate/duplicate/erase/fire_op ops
         - Handles boundary merge (B2)
+
+[ ] A1b. PicReduceToRuntimePass body is an empty stub 🔴
+        # LoweringPasses.cpp:286 — runOnOperation() is literally `{}`.
+        # The pass struct exists but performs zero work. All actual pic.reduce → runtime
+        # lowering is done inline inside PicRuntimeToLLVMPass, which skips the intermediate
+        # dialect entirely and emits LLVM IR directly. This collapses the three-dialect
+        # pipeline to effectively two, breaking the target-independence guarantee.
+        # THIS IS THE ROOT CAUSE of the CPU/GPU divergence: fixing it makes CPU and GPU
+        # share 100% of the reduction logic with zero duplication.
+        - Implement PicReduceToRuntimePass::runOnOperation() using scf + arith + memref
+          dialects ONLY (no llvm.*). Emit pic.runtime ops (alloc_node, link, push_redex).
+        - The redex dispatch loop, polarity decode, rule table lookup, and annihilation/
+          duplication/erasure rules all go here — once — in target-independent MLIR.
+        - PicRuntimeToLLVMPass then becomes a thin mechanical conversion of pic.runtime ops
+          to llvm.* for CPU; a separate PicRuntimeToSPIRVPass does the same for GPU.
+        - Unblocks: item 31 (unified pipeline), A4b (queue safety), 21b (multi-threading)
 
 [x] A2. Rule lookup table (user-extensible dispatch)
         - APPROVED: table keyed on (agentType_A, label_A, agentType_B, label_B)
@@ -48,6 +74,20 @@
         - Replace if-else CondBrOp chain with table lookup loop
         - Same table, different lowering for CPU (LLVM) vs GPU (SPIR-V)
 
+[ ] A2b. Rule table capacity is hardcoded to 100 entries 🟡
+        # LoweringPasses.cpp:896 — `maxRules = 100`. The array is statically allocated
+        # at 300 i32 slots (3 fields × 100 rules). Silently drops rules beyond 100.
+        # Also: register_rule signature is (op: i32, type: i32, impl: i32) — only 3 fields.
+        # The spec calls for (typeA, labelA, typeB, labelB, handler) = 5 fields.
+        # The current 3-field scheme conflates labelA+typeA into one key, losing precision.
+        # FIX STRATEGY: implement the rule table in pic.reduce (memref<Nx5xi32>),
+        # not as a hand-rolled LLVM global. MLIR's memref lowering handles both targets.
+        - Expand rule table entry to 5 fields: (typeA, labelA, typeB, labelB, impl)
+        - Implement as a memref in pic.reduce — lowers to LLVM global (CPU) and
+          SPIR-V storage buffer (GPU) automatically via existing conversion passes
+        - Update register_rule() and lookup_rule() to use memref ops, not llvm.load/store
+        - Prerequisite: A1b
+
 [x] A3. Fix γ⁺/γ⁻ encoding for function agents
         - A3 FIX: γ⁺/γ⁻ are both NODE_CON=1 per PIC spec
         - Polarity is in port value, not node type
@@ -56,12 +96,47 @@
         - Simplified dispatch to just annihilation vs commutation
         - Now uses rule lookup table from A2
 
+[ ] A3b. Polarity is stored in meta word bits [31:30] but decoded inconsistently 🟡
+        # LoweringPasses.cpp:193 — metaValue = (polVal << 30) | (val & 0xFFFFFF)
+        # LoweringPasses.cpp:1228-1229 — worker reads polA = metaA32 >> 30
+        # This encoding works for polarity values 0,1,2 fitting in 2 bits. But:
+        # (a) The alloc_node op takes an I8Attr:$type but the type byte is unused in the
+        #     actual node layout — the meta word is set separately via set_port. The
+        #     alloc_node type argument and the meta word are inconsistent (different paths).
+        # (b) The duplication rule (commPath, line 1321) copies auxA1/auxA2 into BOTH new
+        #     nodes verbatim without checking if they point into already-live redexes.
+        #     Specifically: `allocNode(polA, labelA, auxA1, auxA2)` is called twice for a1
+        #     and a2, giving them the same aux ports, which violates port linearity.
+        # FIX STRATEGY: once A1b is done, the meta-word is encoded/decoded inside
+        # pic.runtime ops (alloc_node, get_port, set_port) not raw LLVM shifts. The
+        # arith dialect expresses bit manipulation portably across CPU and GPU.
+        - Audit alloc_node: reconcile I8Attr:$type with the meta-word encoding;
+          make the type field the single source of truth (remove set_port(3, meta))
+        - Fix duplication commutation in A1b: new δ nodes get fresh placeholder ports,
+          not copies of the original aux values (see HVM paper Rule 2 diagram)
+        - Prerequisite: A1b
+
 [x] A4. Boundary [ ] lowering
         - BoundaryOp now lowered in PicReduceToRuntimePass
         - getNextBoundaryId() for unique boundary tracking
         - B1: containment - effect bubbling via wire polarity
         - B2: merge_boundary op when boundaries meet
         - B3: collapse deferred to runtime E-graph hashing
+
+[ ] A4b. Redex queue is unbounded and single-producer / multi-consumer unsafe 🟡
+        # LoweringPasses.cpp:1172-1173 — the worker does atomic fetch-add on wHead to
+        # claim a redex slot, but wTail is only incremented non-atomically by linkPorts
+        # (line 1218). Under concurrent reduction (item 20's CAS model), two threads can
+        # both see hV < tV and claim the same slot. The queue size is also fixed at the
+        # malloc'd 128MB chunk with no overflow detection.
+        # FIX STRATEGY: in A1b, express the redex queue as a memref<Nxi64> and the
+        # head/tail counters as atomic memref scalars. scf.for + arith.addi expresses
+        # the pop loop; memref.atomic_rmw expresses the CAS. Both lower to correct CPU
+        # (llvm.atomicrmw) and GPU (spirv.AtomicIAdd) code without divergence.
+        - Add a bounds check in the redex pop path (clamp myIdx to queue capacity)
+        - Express head/tail as memref.atomic_rmw in pic.reduce (not direct LLVM atomic)
+        - Document and enforce MPMC discipline: both push and pop must be atomic
+        - Prerequisite: A1b
 
 [ ] A5. PICR node set extension: H, L, R nodes in pic.graph dialect 🔴
         # Foundational prerequisite for all reversibility. Blocks A6, A7, A8, item 18, item 21.
@@ -135,6 +210,24 @@
         - NODE_BRANCH=7 added to encoding (to be folded into ω via A3)
         - TODO(A1): GPU kernel parity via unified pic.reduce pass
 
+[ ] 2b. `while` loop lowering is unsound — always evaluates both branches 🔴
+        # Lowering.c:759-788 — the while loop is lowered by:
+        #   1. Evaluating the condition via lowerExpression()
+        #   2. Evaluating the body via lowerExpression()
+        #   3. Emitting an ω(-, branch) node to select between them
+        # Problem: both condition AND body are evaluated eagerly before the branch fires.
+        # The body is lowered unconditionally. This means any side effects in the loop
+        # body (I/O, mutation) execute regardless of the condition, and any recursive
+        # call in the body (which is how loops are implemented) always recurses.
+        # A correct lowering must emit the body as a λ-thunk (γ⁺ node) that only fires
+        # when the branch selects it, mirroring how `either` works.
+        - Wrap loop body in a γ⁺ thunk: lowerExpression the body into a separate MLIR
+          func, then emit a γ⁺ agent pointing to it; the branch node's true-wire holds
+          this thunk rather than the already-evaluated body result
+        - Similarly wrap the false (exit) path
+        - Add test/test_while_soundness.lin: loop with side effect verifies effect fires
+          exactly N times, not N+1
+
 [x] 3. Beta-reduction (function application at runtime)
         - Phase 1: γ(+,f) ~ γ(-,f) wires aux ports (p1↔p1, p2↔p2)
         - Collapsed checkBeta into standard annihilation per A3
@@ -159,6 +252,30 @@
         - Standard library ops (add, fadd, mul, etc.) ship with trivial inverses (sub, fneg, etc.)
         - Without an inverse: block, uncompute falls back to structural graph reversal only
           (correct but may leave garbage; inverse: block enables clean algebraic reversal)
+
+[ ] 4c. `add` and `either` are hardcoded as non-free-vars in findFreeVars 🟡
+        # Lowering.c:199-201 — findFreeVars() has:
+        #   bool is_builtin = (callee == "add") || (callee == "either");
+        # This means `add` and `either` are silently exempted from free variable capture.
+        # This is a spec violation: the language has zero built-in ops (see Architecture.md
+        # philosophy section). If `add` is defined in std/math.lin and imported, it should
+        # be captured as a free variable exactly like any other identifier.
+        # Consequence: closures that capture `add` from an outer scope may fail to thread
+        # the binding through the auxiliary ports of the enclosing γ⁺ node.
+        - Remove the is_builtin exemption from findFreeVars()
+        - Ensure std library ops resolve correctly as env_fetch'd values, not magic names
+        - Add test/test_closure_capture_add.lin: closure that captures an aliased add
+
+[ ] 4d. proj_N field access emits a δ(pair) node but wires p2 (right) to nothing 🟡
+        # Lowering.c:662-671 — field access (AST_FIELD_ACCESS) emits a delta node with
+        # label "proj_N", links p1 → base, and returns p0. But p2 (the other projection)
+        # is never linked to anything. This leaves a dangling port in the graph, violating
+        # the linearity invariant: every port must connect to exactly one wire.
+        # When either .0 or .1 is accessed but not the other, the unused projection
+        # must be connected to an H (history) / ε (eraser) node to satisfy linearity.
+        - After emitting the proj_N agent, check if the complementary port will be used
+        - If not (single field access), attach an ε (or H inside boundary) to p2
+        - Add test/test_field_access_linearity.lin: access .0 only, verify no dangling port
 
 [x] 5. Full Syntax Migration (word-call REMOVED for pure Rebol style)
         - REMOVED: word-call parsing (no longer supports paren-less calls)
@@ -195,6 +312,18 @@
         - std/*.lin library files use clean syntax
 
 ## 🟡 Tier 2 — Language Completeness
+
+[ ] 10b. Linearity of principal ports is not statically enforced 🟡
+        # Invariant 1 from the spec. There is no pass that verifies every principal port
+        # connects to exactly one wire. The current implementation relies on programmer
+        # discipline in Lowering.c. Known violation: proj_N dangling p2 (see item 4d).
+        # Known risk: env_free() links unconsumed vars to ε, but if a var is used more
+        # than the δ-chain accounts for, the extra reference leaves a double-connected port.
+        - Add a pic.graph verification pass: walk all AgentOps and assert each principal
+          port (p0) appears in exactly one LinkOp or WireOp in the same block
+        - Run this pass in debug builds after lowerExpression() completes
+        - Emit a structured diagnostic (file:line:col, var name) on violation
+        - Integrate into `linc check` subcommand
 
 [x] 11. Closure / captured variable support
         - Thread outer-scope bindings into inner γ⁺ function agents via aux ports ✅
@@ -242,6 +371,9 @@
         - Outside boundaries: ε erasure propagation remains the fast GC path (parallel sweep)
         - Inside boundaries: H nodes + R signal handle GC via B4 cycle (A8) — no ε emitted
         - Arena reset after full reduction epoch for long-running programs
+          # Currently: LoweringPasses.cpp:1733-1744 mallocs 128MB for net and queue once
+          # at startup and never resets. Long-running programs will OOM as the allocator
+          # (atomic fetch-add on alL, line 1741) never wraps or reclaims.
         - GPU GC: thousands of R/ε nodes propagate simultaneously via gpu.launch
         - Prerequisite for boundary GC path: A7, A8
 
@@ -293,6 +425,20 @@
         - On reverse pass: merged node splits back along its origins wires when different
           backward signals demand it — origins attr provides the routing table for split
 
+[ ] 21b. Single-threaded reduction — pthread_create is declared but never called 🟡
+        # LoweringPasses.cpp:318 — pthread_create and pthread_join are declared as LLVM
+        # function declarations. But in main() (line 1746), reduction is run synchronously
+        # via a single direct call to worker_thread(as). No threads are ever spawned.
+        # The spec says: "any two active pairs with no shared nodes fire simultaneously."
+        # The current runtime is single-threaded and thus provably non-parallel.
+        # FIX STRATEGY: express the parallel reduction loop in pic.reduce using
+        # scf.parallel or gpu.launch. scf.parallel lowers to OpenMP on CPU;
+        # gpu.launch lowers to SPIR-V on GPU. Both from the same source.
+        - In A1b: emit the worker loop as scf.parallel (or gpu.launch for GPU path)
+        - scf.parallel automatically uses N CPU threads via OpenMP lowering;
+          no manual pthread_create needed, no queue race conditions
+        - Prerequisite: A1b, A4b (queue safety)
+
 [ ] 22. Hot code reloading 🟢
         - Recompile a function's interaction net graph at runtime
         - Swap γ⁺ agent's aux wire to new body graph atomically
@@ -343,15 +489,24 @@
           - Goal: A self-hosting compiler that leverages Lin's own parallel reversible runtime
 
 [ ] 31. Unified CPU/GPU reduction pipeline via pic.reduce 🔴
-          - Port the reduction engine (annihilate, duplicate, erase, fire_op) from LLVM builder
-            logic to a target-independent pass in PicReduceToRuntimePass.
-          - Use std MLIR dialects (scf, arith, memref) instead of the LLVM dialect.
-          - Lower this target-independent representation to LLVM for CPU and to GPU/SPIR-V
-            for the GPU compute kernel.
-          # PICR extension:
-          - The same target-independent pass also emits the reverse ops (uncompute, log_bond,
-            reverse_vector) so the backward cleanup pass lowers identically through the same
-            LLVM / SPIR-V path; no separate reverse lowering needed.
+          # Umbrella item. Completed by finishing A1b + A2b + A3b + A4b.
+          # The strategy: one pic.reduce pass, two thin conversion passes.
+          #
+          #   pic.reduce (scf + arith + memref)
+          #      └─> PicRuntimeToLLVMPass   → LLVM IR  → CPU binary
+          #      └─> PicRuntimeToSPIRVPass  → SPIR-V   → Vulkan GPU kernel
+          #
+          # Every reduction rule (annihilate, duplicate, erase, fire_op, merge_boundary,
+          # and all PICR ops) is written once in pic.reduce and shared by both targets.
+          # The conversion passes are mechanical: pic_runtime.alloc_node → llvm.call malloc
+          # on CPU, → spirv.AccessChain on GPU. No reduction logic is duplicated.
+          - A1b: implement PicReduceToRuntimePass with scf/arith/memref (see A1b)
+          - A2b: rule table as memref, portable across CPU and GPU (see A2b)
+          - A3b: fix meta-word encoding and duplication rule in target-independent ops (A3b)
+          - A4b: atomic queue via memref.atomic_rmw, safe under MPMC (see A4b)
+          - Add PicRuntimeToSPIRVPass as a thin sibling of PicRuntimeToLLVMPass
+          - Retire the hand-rolled LLVM builder code in PicRuntimeToLLVMPass; keep only
+            the mechanical dialect conversion (pic_runtime.* → llvm.*)
 
 [ ] 32. GPU mirror kernel — backward cleanup pass 🟡
         # PICR. Prerequisite: items 20, 31, A8.
