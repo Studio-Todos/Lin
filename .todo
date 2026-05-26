@@ -50,7 +50,7 @@
 #   C2. HOST-ALLOCATED ARENA   — no malloc inside kernels (illegal on GPU)
 #   C3. ω GPU ELIGIBILITY      — payloads restricted to SPIR-V-legal dialects
 
-[ ] C1. Replace indirect dispatch with static opcode switch 🔴
+[x] C1. Replace indirect dispatch with static opcode switch 🔴
         # Architecture constraint: SPIR-V has no function pointers. The current
         # `dispatch_user_op` model (hash → function pointer call) is CPU-only and
         # will silently be dead code on any GPU path.
@@ -65,7 +65,7 @@
         - On GPU: scf.switch lowers to spirv.Switch (legal, portable)
         - Prerequisite: A1b (must live in pic.reduce, not hand-rolled LLVM)
 
-[ ] C2. Formalize host-allocated arena — no malloc inside kernels 🔴
+[x] C2. Formalize host-allocated arena — no malloc inside kernels 🔴
         # Architecture constraint: GPU device code cannot call malloc/free.
         # The current main() mallocs 128MB for net/queue at startup (line 1733-1744)
         # but this is expressed as llvm.call @malloc inside the kernel entry, which
@@ -79,7 +79,7 @@
           on GPU these become StorageBuffer descriptors; on CPU they are flat pointers
         - Prerequisite: A1b, A4b
 
-[ ] C3. ω GPU eligibility check at mlir-op registration time 🟡
+[x] C3. ω GPU eligibility check at mlir-op registration time 🟡
         # Architecture constraint: GPU payloads may only use SPIR-V-legal dialects
         # (arith, math, index, vector, memref/StorageBuffer). Any payload containing
         # llvm.*, func.call, or I/O ops must be marked cpu_only.

@@ -629,6 +629,10 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                     // Generate a specialized LLVM function for this mlir-op
                     std::string funcName = "user_op_" + label;
                     replaceAll(funcName, "-", "_");
+                    std::string dispatch = "";
+                    if (auto dispAttr = op->getAttrOfType<StringAttr>("dispatch")) {
+                        dispatch = dispAttr.getValue().str();
+                    }
                     
                     int numArgs = 0;
                     if (argsAttr) {
@@ -836,6 +840,18 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                          }
 
                          func::FuncOp tempFunc = parsedSnippet ? parsedSnippet->lookupSymbol<func::FuncOp>("temp") : nullptr;
+                         if (dispatch == "gpu" && tempFunc) {
+                             tempFunc.walk([&](Operation *op) {
+                                 if (auto* dialect = op->getDialect()) {
+                                     StringRef dialectName = dialect->getNamespace();
+                                     if (dialectName == "llvm" || dialectName == "pic_runtime" || dialectName == "pic_graph") {
+                                         op->emitError() << "Operation '" << op->getName() << "' in registry op '" << label << "' is illegal on GPU!";
+                                         llvm::errs() << "GPU Compile Error: Operation '" << op->getName() << "' in registry op '" << label << "' is illegal on GPU!\n";
+                                         abort();
+                                     }
+                                 }
+                             });
+                         }
                             if (tempFunc && !tempFunc.getBody().empty()) {
                                 IRMapping mapper;
                                 OpBuilder bBody = OpBuilder::atBlockBegin(fEntry);
@@ -991,10 +1007,6 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                                 termOp.erase();
                             }
                         }
-                        std::string dispatch = "";
-                        if (auto dispAttr = op->getAttrOfType<StringAttr>("dispatch")) {
-                            dispatch = dispAttr.getValue().str();
-                        }
                         userOps.push_back({opcodeForLabel(label), label, funcName, (int)numArgs, argTypes, dispatch});
                     }
                 }
@@ -1007,55 +1019,13 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         OpBuilder::InsertionGuard guard(builder);
         builder.setInsertionPointToStart(module.getBody());
         
-        auto rulesType = LLVM::LLVMArrayType::get(i32Type, 300);
-        builder.create<LLVM::GlobalOp>(module.getLoc(), rulesType, false, LLVM::Linkage::Internal, "runtime_rules", builder.getZeroAttr(rulesType));
-        builder.create<LLVM::GlobalOp>(module.getLoc(), i32Type, false, LLVM::Linkage::Internal, "runtime_num_rules", builder.getI32IntegerAttr(0));
-        
         auto genRegisterRule = [&]() {
             OpBuilder b(module.getBodyRegion());
             auto fType = LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(builder.getContext()), {i32Type, i32Type, i32Type});
             auto f = b.create<LLVM::LLVMFuncOp>(module.getLoc(), "register_rule", fType);
             Block *entry = f.addEntryBlock();
-            Value op = entry->getArgument(0);
-            Value type = entry->getArgument(1);
-            Value impl = entry->getArgument(2);
-            
             OpBuilder eb(entry, entry->end());
-            Location loc = module.getLoc();
-            
-            Value countAddr = eb.create<LLVM::AddressOfOp>(loc, ptrType, "runtime_num_rules");
-            Value count = eb.create<LLVM::LoadOp>(loc, i32Type, countAddr);
-            
-            Value maxRules = eb.create<LLVM::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(100));
-            Value cmp = eb.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::slt, count, maxRules);
-            
-            Block *thenBlock = f.addBlock();
-            Block *mergeBlock = f.addBlock();
-            eb.create<LLVM::CondBrOp>(loc, cmp, thenBlock, mergeBlock);
-            
-            OpBuilder tb(thenBlock, thenBlock->end());
-            Value three = tb.create<LLVM::ConstantOp>(loc, i32Type, tb.getI32IntegerAttr(3));
-            Value offsetBase = tb.create<LLVM::MulOp>(loc, i32Type, count, three);
-            Value rulesAddr = tb.create<LLVM::AddressOfOp>(loc, ptrType, "runtime_rules");
-            
-            auto storeRuleField = [&](Value val, int fieldOffset) {
-                Value offset = tb.create<LLVM::ConstantOp>(loc, i32Type, tb.getI32IntegerAttr(fieldOffset));
-                Value fullIdx = tb.create<LLVM::AddOp>(loc, i32Type, offsetBase, offset);
-                Value gep = tb.create<LLVM::GEPOp>(loc, ptrType, i32Type, rulesAddr, ValueRange{fullIdx});
-                tb.create<LLVM::StoreOp>(loc, val, gep);
-            };
-            
-            storeRuleField(op, 0);
-            storeRuleField(type, 1);
-            storeRuleField(impl, 2);
-            
-            Value one = tb.create<LLVM::ConstantOp>(loc, i32Type, tb.getI32IntegerAttr(1));
-            Value newCount = tb.create<LLVM::AddOp>(loc, i32Type, count, one);
-            tb.create<LLVM::StoreOp>(loc, newCount, countAddr);
-            tb.create<LLVM::BrOp>(loc, mergeBlock);
-            
-            OpBuilder mb(mergeBlock, mergeBlock->end());
-            mb.create<LLVM::ReturnOp>(loc, ValueRange{});
+            eb.create<LLVM::ReturnOp>(module.getLoc(), ValueRange{});
         };
         genRegisterRule();
         
@@ -1064,64 +1034,72 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             auto fType = LLVM::LLVMFunctionType::get(i32Type, {i32Type, i32Type});
             auto f = b.create<LLVM::LLVMFuncOp>(module.getLoc(), "lookup_rule", fType);
             Block *entry = f.addEntryBlock();
-            Value op = entry->getArgument(0);
-            Value type = entry->getArgument(1);
+            Value opArg = entry->getArgument(0);
+            Value typeArg = entry->getArgument(1);
             
             OpBuilder eb(entry, entry->end());
             Location loc = module.getLoc();
             
-            Value countAddr = eb.create<LLVM::AddressOfOp>(loc, ptrType, "runtime_num_rules");
-            Value count = eb.create<LLVM::LoadOp>(loc, i32Type, countAddr);
+            Block *nextBlock = entry;
             
-            Block *loopCond = f.addBlock();
-            Block *loopBody = f.addBlock();
-            Block *loopInc = f.addBlock();
-            Block *retZero = f.addBlock();
+            for (auto &op : userOps) {
+                std::string opName = "";
+                std::string typeName = "";
+                size_t underscore = op.label.find('_');
+                if (underscore != std::string::npos) {
+                    opName = op.label.substr(0, underscore);
+                    typeName = op.label.substr(underscore + 1);
+                } else {
+                    std::string suffix = "";
+                    if (op.label.size() > 2) {
+                        suffix = op.label.substr(op.label.size() - 2);
+                    }
+                    if (suffix == "64" || suffix == "32") {
+                        std::string base = op.label.substr(0, op.label.size() - 2);
+                        bool isFloat = (base[0] == 'f');
+                        if (isFloat) {
+                            base = base.substr(1);
+                            typeName = (suffix == "64") ? "f64" : "f32";
+                        } else {
+                            typeName = (suffix == "64") ? "i64" : "i32";
+                        }
+                        if (base == "divs" || base == "divu") opName = "div";
+                        else if (base == "rems" || base == "remu") opName = "rem";
+                        else if (base == "slt") opName = "lt";
+                        else if (base == "sgt") opName = "gt";
+                        else if (base == "sle") opName = "le";
+                        else if (base == "sge") opName = "ge";
+                        else if (base == "neq") opName = "ne";
+                        else opName = base;
+                    }
+                }
+                
+                auto addRuleMatch = [&](uint32_t keyOp, uint32_t keyType, uint32_t valImpl) {
+                    Block *currBlock = nextBlock;
+                    Block *matchBlock = f.addBlock();
+                    nextBlock = f.addBlock();
+                    
+                    OpBuilder cb(currBlock, currBlock->end());
+                    Value cOp = cb.create<LLVM::ConstantOp>(loc, i32Type, cb.getI32IntegerAttr(keyOp));
+                    Value cType = cb.create<LLVM::ConstantOp>(loc, i32Type, cb.getI32IntegerAttr(keyType));
+                    Value opMatch = cb.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, opArg, cOp);
+                    Value typeMatch = cb.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, typeArg, cType);
+                    Value cond = cb.create<LLVM::AndOp>(loc, opMatch, typeMatch);
+                    cb.create<LLVM::CondBrOp>(loc, cond, matchBlock, nextBlock);
+                    
+                    OpBuilder mb(matchBlock, matchBlock->end());
+                    mb.create<LLVM::ReturnOp>(loc, ValueRange{mb.create<LLVM::ConstantOp>(loc, i32Type, mb.getI32IntegerAttr(valImpl))});
+                };
+                
+                if (!opName.empty() && !typeName.empty()) {
+                    addRuleMatch(opcodeForLabel(opName), opcodeForLabel(typeName), opcodeForLabel(op.label));
+                }
+                addRuleMatch(opcodeForLabel(op.label), opcodeForLabel("call"), opcodeForLabel(op.label));
+            }
             
-            Value zero = eb.create<LLVM::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(0));
-            Value iAlloc = eb.create<LLVM::AllocaOp>(loc, ptrType, eb.getI32Type(), eb.create<LLVM::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(1)));
-            eb.create<LLVM::StoreOp>(loc, zero, iAlloc);
-            eb.create<LLVM::BrOp>(loc, loopCond);
-            
-            OpBuilder cb(loopCond, loopCond->end());
-            Value iVal = cb.create<LLVM::LoadOp>(loc, i32Type, iAlloc);
-            Value loopCmp = cb.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::slt, iVal, count);
-            cb.create<LLVM::CondBrOp>(loc, loopCmp, loopBody, retZero);
-            
-            OpBuilder lb(loopBody, loopBody->end());
-            Value three = lb.create<LLVM::ConstantOp>(loc, i32Type, lb.getI32IntegerAttr(3));
-            Value offsetBase = lb.create<LLVM::MulOp>(loc, i32Type, iVal, three);
-            Value rulesAddr = lb.create<LLVM::AddressOfOp>(loc, ptrType, "runtime_rules");
-            
-            auto loadRuleField = [&](int fieldOffset) {
-                Value offset = lb.create<LLVM::ConstantOp>(loc, i32Type, lb.getI32IntegerAttr(fieldOffset));
-                Value fullIdx = lb.create<LLVM::AddOp>(loc, i32Type, offsetBase, offset);
-                Value gep = lb.create<LLVM::GEPOp>(loc, ptrType, i32Type, rulesAddr, ValueRange{fullIdx});
-                return lb.create<LLVM::LoadOp>(loc, i32Type, gep);
-            };
-            
-            Value ruleOp = loadRuleField(0);
-            Value ruleType = loadRuleField(1);
-            Value ruleImpl = loadRuleField(2);
-            
-            Value opMatch = lb.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, ruleOp, op);
-            Value typeMatch = lb.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, ruleType, type);
-            Value match = lb.create<LLVM::AndOp>(loc, opMatch, typeMatch);
-            
-            Block *foundBlock = f.addBlock();
-            lb.create<LLVM::CondBrOp>(loc, match, foundBlock, loopInc);
-            
-            OpBuilder fb(foundBlock, foundBlock->end());
-            fb.create<LLVM::ReturnOp>(loc, ruleImpl);
-            
-            OpBuilder ib(loopInc, loopInc->end());
-            Value one = ib.create<LLVM::ConstantOp>(loc, i32Type, ib.getI32IntegerAttr(1));
-            Value nextI = ib.create<LLVM::AddOp>(loc, i32Type, iVal, one);
-            ib.create<LLVM::StoreOp>(loc, nextI, iAlloc);
-            ib.create<LLVM::BrOp>(loc, loopCond);
-            
-            OpBuilder rb(retZero, retZero->end());
-            rb.create<LLVM::ReturnOp>(loc, zero);
+            OpBuilder fb(nextBlock, nextBlock->end());
+            Value zero = fb.create<LLVM::ConstantOp>(loc, i32Type, fb.getI32IntegerAttr(0));
+            fb.create<LLVM::ReturnOp>(loc, ValueRange{zero});
         };
         genLookupRule();
     }
@@ -2008,19 +1986,6 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                     else if (base == "neq") opName = "ne";
                     else opName = base;
                 }
-            }
-            if (!opName.empty() && !typeName.empty()) {
-                Value opHash = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel(opName)));
-                Value typeHash = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel(typeName)));
-                Value implHash = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel(op.label)));
-                builder.create<LLVM::CallOp>(entry.getLoc(), TypeRange{}, "register_rule", ValueRange{opHash, typeHash, implHash});
-            }
-            // Always register user-defined closure application rule: op.label meets "call"
-            {
-                Value opHash = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel(op.label)));
-                Value typeHash = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel("call")));
-                Value implHash = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel(op.label)));
-                builder.create<LLVM::CallOp>(entry.getLoc(), TypeRange{}, "register_rule", ValueRange{opHash, typeHash, implHash});
             }
         }
         auto i1Type = builder.getI1Type();
