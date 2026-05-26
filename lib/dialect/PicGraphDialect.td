@@ -24,7 +24,7 @@ def PicGraph_AgentOp : PicGraph_Op<"agent"> {
   let summary = "Agent node (node with polarity)";
   let description = [{
     An agent node in the PIC graph. Polarity can be positive (+), negative (-), or neutral (*).
-    Type can be Constructor (\gamma^+), Destructor (\gamma^-), Duplicator (\delta), Eraser (\epsilon), or Operation (\omega).
+    Type can be Constructor (\gamma^+), Destructor (\gamma^-), Duplicator (\delta), Eraser (\epsilon), History (H), Log-Bond (L), Reverse-Vector (R), or Operation (\omega).
   }];
   let arguments = (ins Builtin_StringAttr:$agentType, Builtin_StringAttr:$polarity, Builtin_StringAttr:$label, OptionalAttr<I64Attr>:$value, OptionalAttr<Builtin_StringAttr>:$str_val, OptionalAttr<Builtin_StringAttr>:$dispatch);
   let results = (outs PicGraph_PortType:$p0, PicGraph_PortType:$p1, PicGraph_PortType:$p2);

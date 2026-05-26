@@ -50,7 +50,7 @@
 #   C2. HOST-ALLOCATED ARENA   — no malloc inside kernels (illegal on GPU)
 #   C3. ω GPU ELIGIBILITY      — payloads restricted to SPIR-V-legal dialects
 
-[ ] C1. Replace indirect dispatch with static opcode switch 🔴
+[x] C1. Replace indirect dispatch with static opcode switch 🔴
         # Architecture constraint: SPIR-V has no function pointers. The current
         # `dispatch_user_op` model (hash → function pointer call) is CPU-only and
         # will silently be dead code on any GPU path.
@@ -65,7 +65,7 @@
         - On GPU: scf.switch lowers to spirv.Switch (legal, portable)
         - Prerequisite: A1b (must live in pic.reduce, not hand-rolled LLVM)
 
-[ ] C2. Formalize host-allocated arena — no malloc inside kernels 🔴
+[x] C2. Formalize host-allocated arena — no malloc inside kernels 🔴
         # Architecture constraint: GPU device code cannot call malloc/free.
         # The current main() mallocs 128MB for net/queue at startup (line 1733-1744)
         # but this is expressed as llvm.call @malloc inside the kernel entry, which
@@ -79,7 +79,7 @@
           on GPU these become StorageBuffer descriptors; on CPU they are flat pointers
         - Prerequisite: A1b, A4b
 
-[ ] C3. ω GPU eligibility check at mlir-op registration time 🟡
+[x] C3. ω GPU eligibility check at mlir-op registration time 🟡
         # Architecture constraint: GPU payloads may only use SPIR-V-legal dialects
         # (arith, math, index, vector, memref/StorageBuffer). Any payload containing
         # llvm.*, func.call, or I/O ops must be marked cpu_only.
@@ -187,7 +187,7 @@
         - Document and enforce MPMC discipline: both push and pop must be atomic
         - Prerequisite: A1b
 
-[ ] A5. PICR node set extension: H, L, R nodes in pic.graph dialect 🔴
+[x] A5. PICR node set extension: H, L, R nodes in pic.graph dialect ✅
         # Foundational prerequisite for all reversibility. Blocks A6, A7, A8, item 18, item 21.
         - Add agentType values: HIS (H), LOG (L), RVEC (R) to PicGraph_AgentOp
         - H node: no principal interaction; accumulates a history_chain attribute pointing
@@ -200,7 +200,7 @@
         - Update node encoding constants in LoweringPasses.cpp (NODE_HIS, NODE_LOG, NODE_RVEC)
         - Add to A2 rule lookup table: default dispatch entries for H, L, R interactions
 
-[ ] A6. Reversible Annihilation — L-bond deposition in pic.reduce 🔴
+[x] A6. Reversible Annihilation — L-bond deposition in pic.reduce ✅
         # Prerequisite: A5
         - Modify PicReduceToRuntimePass: annihilate now emits pic_reduce.log_bond at splice
           site instead of vanishing the γ⁺/γ⁻ pair entirely
@@ -212,7 +212,7 @@
           γ⁺/γ⁻ pair, restoring the original wiring
         - Invariant 4 enforcement: this is the mechanism that satisfies "log your delta"
 
-[ ] A7. Reversible Uncomputation — R signal propagation (replaces ε sweep) 🔴
+[x] A7. Reversible Uncomputation — R signal propagation (replaces ε sweep) ✅
         # Prerequisite: A5, A6
         # This replaces item 18 (Node GC / arena reset) for boundary-scoped memory.
         - Add PicReduce_ReverseVectorOp to PicReduceDialect.td
@@ -228,7 +228,7 @@
         - Outside boundaries: ε erasure path kept as the fast non-logging fallback
         - Inside boundaries: R signal is emitted instead of ε when a branch becomes dead
 
-[ ] A8. Boundary history log and B4 Reversible Boundary Cycle 🔴
+[x] A8. Boundary history log and B4 Reversible Boundary Cycle ✅
         # Prerequisite: A4, A5, A6, A7. Also requires item 21 (E-graph congruence) for
         # the origins attribute to be well-defined.
         - Extend PicGraph_BoundaryOp with two new fields:
@@ -259,7 +259,7 @@
         - NODE_BRANCH=7 added to encoding (to be folded into ω via A3)
         - TODO(A1): GPU kernel parity via unified pic.reduce pass
 
-[ ] 2b. `while` loop lowering is unsound — always evaluates both branches 🔴
+[x] 2b. `while` loop lowering is unsound — always evaluates both branches 🔴
         # Lowering.c:759-788 — the while loop is lowered by:
         #   1. Evaluating the condition via lowerExpression()
         #   2. Evaluating the body via lowerExpression()

@@ -1,0 +1,18 @@
+// RUN: %linc build %s -o %t && %t
+import "std/io.lin"
+
+main: func [
+    return: [i32!]
+][
+    s1: 0
+
+    // Condition is false (1 < 0 is false).
+    // If the body is eagerly evaluated, print_str will run and print "Soundness failure!"
+    i: 1
+    loop_res: while [lt i 0] [
+        s1: print_str s1 "Soundness failure!\n"
+        [s1]
+    ]
+
+    0
+]

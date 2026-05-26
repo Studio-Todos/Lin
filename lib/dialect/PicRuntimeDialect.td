@@ -23,7 +23,7 @@ def PicRuntime_PortType : DialectType<PicRuntime_Dialect, CPred<"$_self.isa<::ml
 // Operations for array-based graph manipulation
 def PicRuntime_AllocNodeOp : PicRuntime_Op<"alloc_node"> {
   let summary = "Allocates a node in the 128-bit atomic array";
-  let arguments = (ins I8Attr:$type, I64Attr:$label_or_val);
+  let arguments = (ins I8Attr:$type, I64Attr:$label_or_val, OptionalAttr<I1Attr>:$inside_boundary);
   let results = (outs I32:$index);
 }
 
@@ -66,6 +66,11 @@ def PicRuntime_GpuBatchOp : PicRuntime_Op<"gpu_batch"> {
 
 def PicRuntime_SyncPointOp : PicRuntime_Op<"sync_point"> {
   let summary = "A synchronization point between CPU and GPU tasks";
+}
+
+def PicRuntime_UncomputeSweepOp : PicRuntime_Op<"uncompute_sweep"> {
+  let summary = "Reads boundary history log and drives R-signal propagation in reverse";
+  let arguments = (ins I32:$boundary_id);
 }
 
 #endif // PIC_RUNTIME_DIALECT

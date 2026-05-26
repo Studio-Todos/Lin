@@ -1,5 +1,6 @@
 //===- PicReduceDialect.cpp - PIC Reduce dialect implementation --------===//
 #include "PicReduceDialect.h"
+#include "mlir/IR/Builders.h"
 
 using namespace mlir;
 using namespace mlir::pic::reduce;
