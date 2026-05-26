@@ -4,21 +4,23 @@
 
 # Lin Programming Language
 
-Welcome to the documentation for **Lin**, which serves as a general-purpose, heterogeneous programming language. Lin is a multi-paradigm, statically typed language built on top of Polarized Interaction Combinators (PIC) to achieve massively parallel, optimal evaluation.
+Welcome to the documentation for **Lin**, which serves as a general-purpose, heterogeneous programming language. Lin is a multi-paradigm, statically typed language built on top of **Reversible Polarized Interaction Combinators (PICR)** to achieve massively parallel, optimal, and reversible evaluation.
 
-Lin takes heavy inspiration from the Red/Rebol syntax family, [Daslang](https://daslang.io/), Microsoft's Verona project, and the unified algebra system while aiming for unparalleled runtime performance through a novel compiler backend. By compiling directly to an Interaction Net model and generating highly optimized LLVM IR (leveraging MLIR), Lin code evaluates via a lock-free, addressable 128-bit atomic array—enabling massive parallelization across CPU threads and GPU cores with zero locks. Because everything lowers to interaction nets, **everything that can run in parallel *will* run in parallel.**
+Lin takes heavy inspiration from the Red/Rebol syntax family, [Daslang](https://daslang.io/), Microsoft's Verona project, and the unified algebra system while aiming for unparalleled runtime performance through a novel compiler backend. By compiling directly to a Reversible Interaction Net model and generating highly optimized LLVM IR (leveraging MLIR), Lin code evaluates via a lock-free, addressable 128-bit atomic array—enabling massive parallelization across CPU threads and GPU cores with zero locks. Because everything lowers to interaction nets, **everything that can run in parallel *will* run in parallel.** Because every rewrite is reversible, **every optimization path remains open.**
 
 ## Goals
 
 1. **Massively Parallel Optimal Evaluation:** Execute graph-based programs without locks, drastically reducing synchronization overhead and leveraging massive core counts on standard CPUs, general purpose GPUs, and high-performance Shaders.
-2. **Predictable Performance:** Utilize lock-free Ahead-Of-Time (AOT) execution mechanisms. The compiler translates the interaction net into a dedicated MLIR `inet` dialect representing a flat, pre-allocated memory array compiled directly to native machine code.
-3. **Clean, Expressive Syntax:** Adopt a clean, whitespace-friendly Red/Rebol-style syntax for rapid development. While Red/Rebol traditionally supports optional type annotations, Lin strictly enforces them to ensure the safety of static typing.
-4. **Cutting-Edge Backend:** Heavily leverage the MLIR compiler infrastructure to enable sophisticated graph optimization, including E-graphs as an IR such that all code is optimal and parallel. This also allows for supercompilation via tools like Google's Souper.
-5. **Language Philosophy:**
-   - **Transparent** (don’t end up like Python)
+2. **Fully Reversible Computation:** Every graph rewrite in the PICR model can be run backward. Dead branches uncomputate structurally rather than being garbage collected; the optimizer can walk the full reachable space of equivalent programs without losing source semantics; and the architecture preserves a path toward formal verification, quantum simulation targets, and energy-aware hardware backends.
+3. **Predictable Performance:** Utilize lock-free Ahead-Of-Time (AOT) execution mechanisms. The compiler translates the interaction net into a dedicated MLIR `inet` dialect representing a flat, pre-allocated memory array compiled directly to native machine code.
+4. **Clean, Expressive Syntax:** Adopt a clean, whitespace-friendly Red/Rebol-style syntax for rapid development. While Red/Rebol traditionally supports optional type annotations, Lin strictly enforces them to ensure the safety of static typing.
+5. **Cutting-Edge Backend:** Heavily leverage the MLIR compiler infrastructure to enable sophisticated graph optimization, including E-graphs as an IR such that all code is optimal and parallel. This also allows for supercompilation via tools like Google's Souper, and bi-directional optimization search enabled by full reversibility.
+6. **Language Philosophy:**
+   - **Transparent** (don't end up like Python)
    - **Minimal featureset** (unlike Java)
    - **Low abstraction** (leveraging the Red/Rebol syntax and build environment to make nearly everything configurable, carefully balancing this against the inherent complexities of interaction net abstraction)
    - **The primary form of abstraction in Lin is scheduling. Further abstraction is left to the developer.**
+   - **Reversibility is structural, not annotated** — enforced by the graph invariants, not by programmer discipline.
    - **Versatile syntax**
 
 ## Getting Started
@@ -40,7 +42,7 @@ nix build .#lin-tests
 Check out the detailed documentation based on your role:
 
 * **[User Guide](docs/Users.md):** Learn how to write Lin code, understand the syntax, and explore planned features like the stochastic accuracy system.
-* **[Architecture](docs/Architecture.md):** Dive deep into how Lin achieves optimal evaluation through Polarized Interaction Combinators (PIC), MLIR, and 128-bit atomic memory arrays.
+* **[Architecture](docs/Architecture.md):** Dive deep into how Lin achieves optimal, reversible evaluation through Reversible Polarized Interaction Combinators (PICR), MLIR, and 128-bit atomic memory arrays.
 * **[Contributor Guide](docs/Contributors.md):** Get the project running locally, build the compiler using Nix, and understand how to contribute. The compiler is primarily written in C, utilizing C++ only when necessary (e.g., for MLIR integration), and uses LLVM's LIT for testing.
 
 ## The Compiler: `linc`
