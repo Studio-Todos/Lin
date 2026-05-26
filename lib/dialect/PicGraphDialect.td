@@ -26,7 +26,7 @@ def PicGraph_AgentOp : PicGraph_Op<"agent"> {
     An agent node in the PIC graph. Polarity can be positive (+), negative (-), or neutral (*).
     Type can be Constructor (\gamma^+), Destructor (\gamma^-), Duplicator (\delta), Eraser (\epsilon), or Operation (\omega).
   }];
-  let arguments = (ins Builtin_StringAttr:$agentType, Builtin_StringAttr:$polarity, Builtin_StringAttr:$label, OptionalAttr<I64Attr>:$value, OptionalAttr<Builtin_StringAttr>:$str_val);
+  let arguments = (ins Builtin_StringAttr:$agentType, Builtin_StringAttr:$polarity, Builtin_StringAttr:$label, OptionalAttr<I64Attr>:$value, OptionalAttr<Builtin_StringAttr>:$str_val, OptionalAttr<Builtin_StringAttr>:$dispatch);
   let results = (outs PicGraph_PortType:$p0, PicGraph_PortType:$p1, PicGraph_PortType:$p2);
 }
 
@@ -55,7 +55,7 @@ def PicGraph_BoundaryOp : PicGraph_Op<"boundary"> {
 
 def PicGraph_RegistryOp : PicGraph_Op<"registry"> {
   let summary = "Internal registry carrier for AST payloads";
-  let arguments = (ins Builtin_StringAttr:$op_name, Builtin_StringAttr:$payload);
+  let arguments = (ins Builtin_StringAttr:$op_name, Builtin_StringAttr:$payload, OptionalAttr<Builtin_StringAttr>:$dispatch);
 }
 
 #endif // PIC_GRAPH_DIALECT

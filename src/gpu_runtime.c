@@ -12,6 +12,25 @@
         } \
     } while (0)
 
+static VkInstance g_instance = VK_NULL_HANDLE;
+static VkPhysicalDevice g_physicalDevice = VK_NULL_HANDLE;
+static VkDevice g_device = VK_NULL_HANDLE;
+static VkQueue g_computeQueue = VK_NULL_HANDLE;
+static uint32_t g_computeFamily = 0xFFFFFFFF;
+static VkCommandPool g_commandPool = VK_NULL_HANDLE;
+
+static VkBuffer g_bufferNet = VK_NULL_HANDLE;
+static VkDeviceMemory g_memoryNet = VK_NULL_HANDLE;
+static VkBuffer g_stagingBufferNet = VK_NULL_HANDLE;
+static VkDeviceMemory g_stagingMemoryNet = VK_NULL_HANDLE;
+static size_t g_netBufferSize = 0;
+
+static VkBuffer g_bufferPairs = VK_NULL_HANDLE;
+static VkDeviceMemory g_memoryPairs = VK_NULL_HANDLE;
+static VkBuffer g_stagingBufferPairs = VK_NULL_HANDLE;
+static VkDeviceMemory g_stagingMemoryPairs = VK_NULL_HANDLE;
+static size_t g_pairsBufferSize = 0;
+
 uint32_t findMemoryType(VkPhysicalDevice device, uint32_t typeFilter, VkMemoryPropertyFlags properties) {
     VkPhysicalDeviceMemoryProperties memProperties;
     vkGetPhysicalDeviceMemoryProperties(device, &memProperties);
@@ -79,17 +98,140 @@ void copyBuffer(VkDevice device, VkCommandPool commandPool, VkQueue computeQueue
     vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
 }
 
-void pic_gpu_dispatch(int64_t* netPtr, int32_t* activePairsPtr, int32_t numPairs) {
-    printf("[GPU DISPATCH] Launching parallel kernel for %d active pairs\n", numPairs);
+void init_vulkan_context() {
+    VkApplicationInfo appInfo = {};
+    appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    appInfo.pApplicationName = "Lin Compiler GPU Dispatch";
+    appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+    appInfo.pEngineName = "No Engine";
+    appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+    appInfo.apiVersion = VK_API_VERSION_1_0;
+
+    VkInstanceCreateInfo createInfo = {};
+    createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    createInfo.pApplicationInfo = &appInfo;
+    
+    VK_CHECK(vkCreateInstance(&createInfo, NULL, &g_instance));
+
+    uint32_t deviceCount = 0;
+    vkEnumeratePhysicalDevices(g_instance, &deviceCount, NULL);
+    if (deviceCount == 0) {
+        printf("Failed to find GPUs with Vulkan support!\n");
+        abort();
+    }
+    VkPhysicalDevice* devices = (VkPhysicalDevice*)malloc(deviceCount * sizeof(VkPhysicalDevice));
+    vkEnumeratePhysicalDevices(g_instance, &deviceCount, devices);
+    g_physicalDevice = devices[0];
+    free(devices);
+
+    uint32_t queueFamilyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(g_physicalDevice, &queueFamilyCount, NULL);
+    VkQueueFamilyProperties* queueFamilies = (VkQueueFamilyProperties*)malloc(queueFamilyCount * sizeof(VkQueueFamilyProperties));
+    vkGetPhysicalDeviceQueueFamilyProperties(g_physicalDevice, &queueFamilyCount, queueFamilies);
+
+    g_computeFamily = 0xFFFFFFFF;
+    for (uint32_t i = 0; i < queueFamilyCount; i++) {
+        if (queueFamilies[i].queueFlags & VK_QUEUE_COMPUTE_BIT) {
+            g_computeFamily = i;
+            break;
+        }
+    }
+    free(queueFamilies);
+    if (g_computeFamily == 0xFFFFFFFF) {
+        printf("Failed to find compute queue family!\n");
+        abort();
+    }
+
+    float queuePriority = 1.0f;
+    VkDeviceQueueCreateInfo queueCreateInfo = {};
+    queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+    queueCreateInfo.queueFamilyIndex = g_computeFamily;
+    queueCreateInfo.queueCount = 1;
+    queueCreateInfo.pQueuePriorities = &queuePriority;
+
+    VkPhysicalDeviceFeatures deviceFeatures = {};
+    vkGetPhysicalDeviceFeatures(g_physicalDevice, &deviceFeatures);
+
+    VkPhysicalDeviceFeatures enabledFeatures = {};
+    if (deviceFeatures.shaderInt64) {
+        enabledFeatures.shaderInt64 = VK_TRUE;
+        printf("[GPU DISPATCH] Enabling shaderInt64 feature.\n");
+    } else {
+        printf("[GPU DISPATCH] Warning: shaderInt64 feature is not supported on this device!\n");
+    }
+
+    VkDeviceCreateInfo deviceCreateInfo = {};
+    deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    deviceCreateInfo.pQueueCreateInfos = &queueCreateInfo;
+    deviceCreateInfo.queueCreateInfoCount = 1;
+    deviceCreateInfo.pEnabledFeatures = &enabledFeatures;
+
+    VK_CHECK(vkCreateDevice(g_physicalDevice, &deviceCreateInfo, NULL, &g_device));
+
+    vkGetDeviceQueue(g_device, g_computeFamily, 0, &g_computeQueue);
+
+    VkCommandPoolCreateInfo cmdPoolInfo = {};
+    cmdPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    cmdPoolInfo.queueFamilyIndex = g_computeFamily;
+    cmdPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+
+    VK_CHECK(vkCreateCommandPool(g_device, &cmdPoolInfo, NULL, &g_commandPool));
+}
+
+void pic_gpu_cleanup() {
+    if (g_device != VK_NULL_HANDLE) {
+        vkDeviceWaitIdle(g_device);
+        
+        if (g_bufferNet != VK_NULL_HANDLE) vkDestroyBuffer(g_device, g_bufferNet, NULL);
+        if (g_memoryNet != VK_NULL_HANDLE) vkFreeMemory(g_device, g_memoryNet, NULL);
+        if (g_stagingBufferNet != VK_NULL_HANDLE) vkDestroyBuffer(g_device, g_stagingBufferNet, NULL);
+        if (g_stagingMemoryNet != VK_NULL_HANDLE) vkFreeMemory(g_device, g_stagingMemoryNet, NULL);
+        
+        if (g_bufferPairs != VK_NULL_HANDLE) vkDestroyBuffer(g_device, g_bufferPairs, NULL);
+        if (g_memoryPairs != VK_NULL_HANDLE) vkFreeMemory(g_device, g_memoryPairs, NULL);
+        if (g_stagingBufferPairs != VK_NULL_HANDLE) vkDestroyBuffer(g_device, g_stagingBufferPairs, NULL);
+        if (g_stagingMemoryPairs != VK_NULL_HANDLE) vkFreeMemory(g_device, g_stagingMemoryPairs, NULL);
+        
+        if (g_commandPool != VK_NULL_HANDLE) vkDestroyCommandPool(g_device, g_commandPool, NULL);
+        vkDestroyDevice(g_device, NULL);
+    }
+    if (g_instance != VK_NULL_HANDLE) {
+        vkDestroyInstance(g_instance, NULL);
+    }
+    
+    g_instance = VK_NULL_HANDLE;
+    g_physicalDevice = VK_NULL_HANDLE;
+    g_device = VK_NULL_HANDLE;
+    g_computeQueue = VK_NULL_HANDLE;
+    g_computeFamily = 0xFFFFFFFF;
+    g_commandPool = VK_NULL_HANDLE;
+    
+    g_bufferNet = VK_NULL_HANDLE;
+    g_memoryNet = VK_NULL_HANDLE;
+    g_stagingBufferNet = VK_NULL_HANDLE;
+    g_stagingMemoryNet = VK_NULL_HANDLE;
+    g_netBufferSize = 0;
+    
+    g_bufferPairs = VK_NULL_HANDLE;
+    g_memoryPairs = VK_NULL_HANDLE;
+    g_stagingBufferPairs = VK_NULL_HANDLE;
+    g_stagingMemoryPairs = VK_NULL_HANDLE;
+    g_pairsBufferSize = 0;
+    
+    printf("[GPU DISPATCH] Cleaned up Vulkan resources successfully.\n");
+}
+
+void pic_gpu_dispatch(int64_t* netPtr, int32_t* activePairsPtr, int32_t numPairs, int32_t* alPtr, const char* spirvPath) {
+    printf("[GPU DISPATCH] Launching parallel kernel for %d active pairs (SPIR-V: %s)\n", numPairs, spirvPath);
 
     if (numPairs == 0) {
         printf("[GPU DISPATCH] No active pairs to process.\n");
         return;
     }
 
-    FILE *f = fopen("linc_out.spv", "rb");
+    FILE *f = fopen(spirvPath, "rb");
     if (!f) {
-        printf("[GPU DISPATCH] Error: SPIR-V module linc_out.spv not found\n");
+        printf("[GPU DISPATCH] Error: SPIR-V module %s not found\n", spirvPath);
         return;
     }
     fseek(f, 0, SEEK_END);
@@ -104,65 +246,15 @@ void pic_gpu_dispatch(int64_t* netPtr, int32_t* activePairsPtr, int32_t numPairs
     }
     fclose(f);
 
-    VkApplicationInfo appInfo = {};
-    appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = "Lin Compiler GPU Dispatch";
-    appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.pEngineName = "No Engine";
-    appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.apiVersion = VK_API_VERSION_1_0;
-
-    VkInstanceCreateInfo createInfo = {};
-    createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-    createInfo.pApplicationInfo = &appInfo;
-    
-    VkInstance instance;
-    VK_CHECK(vkCreateInstance(&createInfo, NULL, &instance));
-
-    uint32_t deviceCount = 0;
-    vkEnumeratePhysicalDevices(instance, &deviceCount, NULL);
-    if (deviceCount == 0) {
-        printf("Failed to find GPUs with Vulkan support!\n");
-        abort();
-    }
-    VkPhysicalDevice* devices = (VkPhysicalDevice*)malloc(deviceCount * sizeof(VkPhysicalDevice));
-    vkEnumeratePhysicalDevices(instance, &deviceCount, devices);
-    VkPhysicalDevice physicalDevice = devices[0];
-
-    uint32_t queueFamilyCount = 0;
-    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, NULL);
-    VkQueueFamilyProperties* queueFamilies = (VkQueueFamilyProperties*)malloc(queueFamilyCount * sizeof(VkQueueFamilyProperties));
-    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, queueFamilies);
-
-    int computeFamily = -1;
-    for (uint32_t i = 0; i < queueFamilyCount; i++) {
-        if (queueFamilies[i].queueFlags & VK_QUEUE_COMPUTE_BIT) {
-            computeFamily = i;
-            break;
-        }
-    }
-    if (computeFamily == -1) {
-        printf("Failed to find compute queue family!\n");
-        abort();
+    // Initialize Vulkan Context if not already cached
+    if (g_instance == VK_NULL_HANDLE) {
+        init_vulkan_context();
     }
 
-    float queuePriority = 1.0f;
-    VkDeviceQueueCreateInfo queueCreateInfo = {};
-    queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-    queueCreateInfo.queueFamilyIndex = computeFamily;
-    queueCreateInfo.queueCount = 1;
-    queueCreateInfo.pQueuePriorities = &queuePriority;
-
-    VkDeviceCreateInfo deviceCreateInfo = {};
-    deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    deviceCreateInfo.pQueueCreateInfos = &queueCreateInfo;
-    deviceCreateInfo.queueCreateInfoCount = 1;
-
-    VkDevice device;
-    VK_CHECK(vkCreateDevice(physicalDevice, &deviceCreateInfo, NULL, &device));
-
-    VkQueue computeQueue;
-    vkGetDeviceQueue(device, computeFamily, 0, &computeQueue);
+    VkDevice device = g_device;
+    VkPhysicalDevice physicalDevice = g_physicalDevice;
+    VkQueue computeQueue = g_computeQueue;
+    VkCommandPool commandPool = g_commandPool;
 
     VkShaderModuleCreateInfo shaderModuleCreateInfo = {};
     shaderModuleCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -172,38 +264,59 @@ void pic_gpu_dispatch(int64_t* netPtr, int32_t* activePairsPtr, int32_t numPairs
     VkShaderModule computeShaderModule;
     VK_CHECK(vkCreateShaderModule(device, &shaderModuleCreateInfo, NULL, &computeShaderModule));
 
-    VkCommandPoolCreateInfo cmdPoolInfo = {};
-    cmdPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    cmdPoolInfo.queueFamilyIndex = computeFamily;
-
-    VkCommandPool commandPool;
-    VK_CHECK(vkCreateCommandPool(device, &cmdPoolInfo, NULL, &commandPool));
-
-    // Staging buffers
-    VkBuffer stagingBufferNet, stagingBufferPairs, stagingBufferNumPairs;
-    VkDeviceMemory stagingMemoryNet, stagingMemoryPairs, stagingMemoryNumPairs;
-    
-    // Device buffers
-    VkBuffer bufferNet, bufferPairs, bufferNumPairs;
-    VkDeviceMemory memoryNet, memoryPairs, memoryNumPairs;
-    
+    // Staging and Device Net Buffers caching/initialization
     size_t netBufferSize = (1000000 * 4 + 1000000 * 2 + 10) * 8;
-    size_t pairsBufferSize = (numPairs > 0 ? numPairs : 1) * 2 * sizeof(int32_t);
+    if (g_bufferNet == VK_NULL_HANDLE) {
+        g_netBufferSize = netBufferSize;
+        createBuffer(device, physicalDevice, g_netBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &g_stagingBufferNet, &g_stagingMemoryNet);
+        createBuffer(device, physicalDevice, g_netBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &g_bufferNet, &g_memoryNet);
+        printf("[GPU DISPATCH] Initialized persistent net buffers (%zu bytes)\n", g_netBufferSize);
+    }
 
-    createBuffer(device, physicalDevice, netBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &stagingBufferNet, &stagingMemoryNet);
-    createBuffer(device, physicalDevice, pairsBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &stagingBufferPairs, &stagingMemoryPairs);
-    createBuffer(device, physicalDevice, sizeof(int32_t), VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &stagingBufferNumPairs, &stagingMemoryNumPairs);
+    // Staging and Device Active Pairs Buffers caching/resizing
+    size_t requiredPairsBufferSize = (numPairs > 0 ? numPairs : 1) * 2 * sizeof(int32_t);
+    if (g_bufferPairs == VK_NULL_HANDLE || g_pairsBufferSize < requiredPairsBufferSize) {
+        if (g_bufferPairs != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device, g_bufferPairs, NULL);
+            vkFreeMemory(device, g_memoryPairs, NULL);
+            vkDestroyBuffer(device, g_stagingBufferPairs, NULL);
+            vkFreeMemory(device, g_stagingMemoryPairs, NULL);
+        }
+        
+        size_t newCapacity = g_pairsBufferSize;
+        if (newCapacity == 0) newCapacity = 1024 * 2 * sizeof(int32_t);
+        while (newCapacity < requiredPairsBufferSize) {
+            newCapacity *= 2;
+        }
+        g_pairsBufferSize = newCapacity;
+        
+        createBuffer(device, physicalDevice, g_pairsBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &g_stagingBufferPairs, &g_stagingMemoryPairs);
+        createBuffer(device, physicalDevice, g_pairsBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &g_bufferPairs, &g_memoryPairs);
+        printf("[GPU DISPATCH] Allocated/Resized persistent pairs buffers (%zu bytes)\n", g_pairsBufferSize);
+    }
 
-    createBuffer(device, physicalDevice, netBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &bufferNet, &memoryNet);
-    createBuffer(device, physicalDevice, pairsBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &bufferPairs, &memoryPairs);
-    createBuffer(device, physicalDevice, sizeof(int32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &bufferNumPairs, &memoryNumPairs);
+    VkBuffer stagingBufferNet = g_stagingBufferNet;
+    VkDeviceMemory stagingMemoryNet = g_stagingMemoryNet;
+    VkBuffer bufferNet = g_bufferNet;
+    VkDeviceMemory memoryNet = g_memoryNet;
+
+    VkBuffer stagingBufferPairs = g_stagingBufferPairs;
+    VkDeviceMemory stagingMemoryPairs = g_stagingMemoryPairs;
+    VkBuffer bufferPairs = g_bufferPairs;
+    VkDeviceMemory memoryPairs = g_memoryPairs;
+
+    // We still allocate staging and device buffer for numPairs since it's just a single int32_t, but now 2 * sizeof(int32_t) to include allocation pointer
+    VkBuffer stagingBufferNumPairs, bufferNumPairs;
+    VkDeviceMemory stagingMemoryNumPairs, memoryNumPairs;
+    createBuffer(device, physicalDevice, 2 * sizeof(int32_t), VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &stagingBufferNumPairs, &stagingMemoryNumPairs);
+    createBuffer(device, physicalDevice, 2 * sizeof(int32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &bufferNumPairs, &memoryNumPairs);
 
     void* data;
 
     // Copy the active pairs from host
-    vkMapMemory(device, stagingMemoryPairs, 0, pairsBufferSize, 0, &data);
+    vkMapMemory(device, stagingMemoryPairs, 0, requiredPairsBufferSize, 0, &data);
     if (numPairs > 0 && activePairsPtr != NULL) {
-        memcpy(data, activePairsPtr, pairsBufferSize);
+        memcpy(data, activePairsPtr, requiredPairsBufferSize);
     }
     vkUnmapMemory(device, stagingMemoryPairs);
 
@@ -214,13 +327,20 @@ void pic_gpu_dispatch(int64_t* netPtr, int32_t* activePairsPtr, int32_t numPairs
     }
     vkUnmapMemory(device, stagingMemoryNet);
 
-    vkMapMemory(device, stagingMemoryNumPairs, 0, sizeof(int32_t), 0, &data);
-    memcpy(data, &numPairs, sizeof(int32_t));
+    struct {
+        int32_t numPairs;
+        int32_t al;
+    } gpuState;
+    gpuState.numPairs = numPairs;
+    gpuState.al = alPtr ? *alPtr : 0;
+
+    vkMapMemory(device, stagingMemoryNumPairs, 0, 2 * sizeof(int32_t), 0, &data);
+    memcpy(data, &gpuState, 2 * sizeof(int32_t));
     vkUnmapMemory(device, stagingMemoryNumPairs);
 
     copyBuffer(device, commandPool, computeQueue, stagingBufferNet, bufferNet, netBufferSize);
-    copyBuffer(device, commandPool, computeQueue, stagingBufferPairs, bufferPairs, pairsBufferSize);
-    copyBuffer(device, commandPool, computeQueue, stagingBufferNumPairs, bufferNumPairs, sizeof(int32_t));
+    copyBuffer(device, commandPool, computeQueue, stagingBufferPairs, bufferPairs, requiredPairsBufferSize);
+    copyBuffer(device, commandPool, computeQueue, stagingBufferNumPairs, bufferNumPairs, 2 * sizeof(int32_t));
 
     VkDescriptorSetLayoutBinding bindings[3];
     for (int i = 0; i < 3; i++) {
@@ -263,7 +383,7 @@ void pic_gpu_dispatch(int64_t* netPtr, int32_t* activePairsPtr, int32_t numPairs
 
     VkDescriptorBufferInfo bufferInfos[3];
     bufferInfos[0].buffer = bufferNet; bufferInfos[0].offset = 0; bufferInfos[0].range = netBufferSize;
-    bufferInfos[1].buffer = bufferPairs; bufferInfos[1].offset = 0; bufferInfos[1].range = pairsBufferSize;
+    bufferInfos[1].buffer = bufferPairs; bufferInfos[1].offset = 0; bufferInfos[1].range = requiredPairsBufferSize;
     bufferInfos[2].buffer = bufferNumPairs; bufferInfos[2].offset = 0; bufferInfos[2].range = sizeof(int32_t);
 
     VkWriteDescriptorSet descriptorWrites[3];
@@ -331,6 +451,7 @@ void pic_gpu_dispatch(int64_t* netPtr, int32_t* activePairsPtr, int32_t numPairs
 
     // Read results back to host
     copyBuffer(device, commandPool, computeQueue, bufferNet, stagingBufferNet, netBufferSize);
+    copyBuffer(device, commandPool, computeQueue, bufferNumPairs, stagingBufferNumPairs, 2 * sizeof(int32_t));
 
     vkMapMemory(device, stagingMemoryNet, 0, netBufferSize, 0, &data);
     if (netPtr != NULL) {
@@ -338,26 +459,25 @@ void pic_gpu_dispatch(int64_t* netPtr, int32_t* activePairsPtr, int32_t numPairs
     }
     vkUnmapMemory(device, stagingMemoryNet);
 
+    vkMapMemory(device, stagingMemoryNumPairs, 0, 2 * sizeof(int32_t), 0, &data);
+    memcpy(&gpuState, data, 2 * sizeof(int32_t));
+    vkUnmapMemory(device, stagingMemoryNumPairs);
+
+    if (alPtr) {
+        *alPtr = gpuState.al;
+    }
+
     printf("[GPU DISPATCH] Completed successfully.\n");
 
-    vkDestroyCommandPool(device, commandPool, NULL);
+    vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
     vkDestroyPipeline(device, computePipeline, NULL);
     vkDestroyPipelineLayout(device, pipelineLayout, NULL);
     vkDestroyDescriptorPool(device, descriptorPool, NULL);
     vkDestroyDescriptorSetLayout(device, descriptorSetLayout, NULL);
     
-    vkDestroyBuffer(device, bufferNet, NULL); vkFreeMemory(device, memoryNet, NULL);
-    vkDestroyBuffer(device, bufferPairs, NULL); vkFreeMemory(device, memoryPairs, NULL);
     vkDestroyBuffer(device, bufferNumPairs, NULL); vkFreeMemory(device, memoryNumPairs, NULL);
-
-    vkDestroyBuffer(device, stagingBufferNet, NULL); vkFreeMemory(device, stagingMemoryNet, NULL);
-    vkDestroyBuffer(device, stagingBufferPairs, NULL); vkFreeMemory(device, stagingMemoryPairs, NULL);
     vkDestroyBuffer(device, stagingBufferNumPairs, NULL); vkFreeMemory(device, stagingMemoryNumPairs, NULL);
 
     vkDestroyShaderModule(device, computeShaderModule, NULL);
-    vkDestroyDevice(device, NULL);
-    vkDestroyInstance(instance, NULL);
-    free(devices);
-    free(queueFamilies);
     free(shaderCode);
 }

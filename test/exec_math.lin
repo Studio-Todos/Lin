@@ -31,4 +31,4 @@ test_math: func [
     ]
 ]
 
-test_math 0
+(print (test_math 0))

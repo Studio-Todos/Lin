@@ -404,6 +404,54 @@ static int checkstyleAst(AstNode *node) {
     return errors;
 }
 
+static bool hasGpuAnnotation(AstNode *node) {
+    if (!node) return false;
+    switch (node->type) {
+        case AST_FUNC_DECL:
+            if (node->as.func_decl.dispatch && 
+                strncmp(node->as.func_decl.dispatch, "gpu", node->as.func_decl.dispatch_len) == 0) {
+                return true;
+            }
+            return hasGpuAnnotation(node->as.func_decl.body);
+        case AST_MLIR_OP:
+            if (node->as.mlir_op.dispatch && 
+                strncmp(node->as.mlir_op.dispatch, "gpu", node->as.mlir_op.dispatch_len) == 0) {
+                return true;
+            }
+            return false;
+        case AST_BLOCK:
+        case AST_BLOCK_DATA:
+            for (int i = 0; i < node->as.block.count; i++) {
+                if (hasGpuAnnotation(node->as.block.statements[i])) return true;
+            }
+            break;
+        case AST_ASSIGNMENT:
+            return hasGpuAnnotation(node->as.assignment.value);
+        case AST_ASSIGNMENT_MULTI:
+            return hasGpuAnnotation(node->as.assignment_multi.value) || hasGpuAnnotation(node->as.assignment_multi.next);
+        case AST_WHILE:
+            return hasGpuAnnotation(node->as.while_loop.condition) || hasGpuAnnotation(node->as.while_loop.body);
+        case AST_PAIR:
+            return hasGpuAnnotation(node->as.pair.left) || hasGpuAnnotation(node->as.pair.right);
+        case AST_FIELD_ACCESS:
+            return hasGpuAnnotation(node->as.field_access.base);
+        case AST_BINARY:
+            return hasGpuAnnotation(node->as.binary.left) || hasGpuAnnotation(node->as.binary.right);
+        case AST_CALL:
+            for (int i = 0; i < node->as.call.arg_count; i++) {
+                if (hasGpuAnnotation(node->as.call.args[i])) return true;
+            }
+            break;
+        case AST_IMPORT:
+            return hasGpuAnnotation(node->as.import_stmt.module_block);
+        case AST_MODULE:
+            return hasGpuAnnotation(node->as.module.module_block);
+        default:
+            break;
+    }
+    return false;
+}
+
 int main(int argc, char **argv) {
   std::string command = "";
   std::string sourceFile = "";
@@ -602,6 +650,9 @@ int main(int argc, char **argv) {
   std::cout << "PIC dialects registered successfully.\n" << std::endl;
 
   if (ast) {
+      if (hasGpuAnnotation(ast)) {
+          enableGPU = true;
+      }
       // Perform semantic type checking
       std::unordered_set<std::string> declaredTypes;
 
@@ -635,11 +686,16 @@ int main(int argc, char **argv) {
       }
 #endif
 
-      // std::cout << "Generated MLIR (before lowering):\n";
-      // module.print(llvm::outs());
+#ifdef ENABLE_DEBUG_LOGS
+      std::cout << "Generated MLIR (before lowering):\n";
+      module.print(llvm::outs());
+      llvm::outs().flush();
+#endif
       PassManager pm(&context);
       pm.addPass(createPicGraphToReducePass());
-      pm.addPass(createPicRuntimeToLLVMPass(enableGPU));
+      pm.addPass(createPicReduceToRuntimePass(enableGPU, outputBinary + ".spv"));
+      pm.addPass(mlir::createConvertSCFToCFPass());
+      pm.addPass(createPicRuntimeToLLVMPass(enableGPU, outputBinary + ".spv"));
 
       if (enableGPU) {
           pm.addPass(mlir::createGpuKernelOutliningPass());
@@ -761,11 +817,13 @@ int main(int argc, char **argv) {
           for (auto op : gpuModules) op.erase();
       }
 
+#ifdef ENABLE_DEBUG_LOGS
       if (enableGPU) {
           std::cout << "--- MLIR Module before LLVM PassManager ---\n";
           module.print(llvm::outs());
           std::cout << "-------------------------------------------\n";
       }
+#endif
 
       PassManager pm2(&context);
       pm2.addPass(mlir::createConvertSCFToCFPass());
@@ -789,9 +847,11 @@ int main(int argc, char **argv) {
           std::cerr << "Failed to translate MLIR to LLVM IR.\n";
           return 1;
       }
+#ifdef ENABLE_DEBUG_LOGS
       std::cout << "Generated LLVM IR:\n";
       llvmModule->print(llvm::outs(), nullptr);
       llvm::outs() << "\n";
+#endif
 
       std::string error;
       std::string targetTriple = enableWasm ? "wasm32-unknown-unknown" : llvm::sys::getDefaultTargetTriple();
