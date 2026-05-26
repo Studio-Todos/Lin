@@ -498,6 +498,7 @@
         - Carry accuracy metadata through ω agent attributes
         - Lower to LLVM approx passes (PUMPKIN-style) for hardware hints
         - Part of std, not a language primitive
+        - Integrate approxMLIR-pass (https://github.com/Studio-Todos/approxMLIR-pass) to support MLIR-level approximate transformations
 
 [x] 24. Test suite cleanup
           - Moved all test files to `test/` directory ✅
@@ -590,6 +591,10 @@
             Verify: δ sync barrier correctly gates the inverse merge rule under concurrency
         - test/test_invariant4_checker.lin
             Verify: static checker catches ε usage inside a boundary and emits warning
+
+[ ] 35. Standalone superoptimization via Souper 🟢
+        - Integrate souper-pass (https://github.com/Studio-Todos/souper-pass) as a standalone superoptimization LLVM pass
+        - Retains accuracy constraints / specifications during superoptimization and translation
 
 ## ⚠️  Known Failing Tests (as of 2026-05-21)
 
