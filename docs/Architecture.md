@@ -193,7 +193,7 @@ Boundaries that meet fuse into a larger E-class.
 ```
 When everything inside a boundary normalizes to one thing, it disappears.
 
-**B4 — Reversible Boundary Cycle** *(PICR addition)*
+**B4 — Reversible Boundary Cycle**
 ```
 1. Isolate:    Computation executes inside [ A ]. Generates answer wire + local history log.
 2. Exfiltrate: Answer wire crosses boundary interface to outer scope via B1.
@@ -267,7 +267,7 @@ B4 localizes all history entropy *inside* boundaries. Forward reductions outside
 
 ---
 
-## The MLIR Dialect Stack (PICR Extensions)
+## The MLIR Dialect Stack
 
 Three dialects, each lowering into the next:
 
@@ -277,23 +277,87 @@ pic.graph
     agent types: CON(γ⁺/γ⁻), DUP(δ), HIS(H), LOG(L), OP(ω), RVEC(R)
     boundary carries: interface wires, history_log region, origins attribute
 
-pic.reduce
+pic.reduce       ← written ONCE; target-independent (scf + arith + memref only)
     ops: annihilate, duplicate, uncompute, log_state, fire_op,
-         merge_boundary, reverse_vector
-    annihilate now deposits a pic_reduce.log_bond instead of vanishing
-    uncompute: inverts specific node pairs
-    log_state: pushes structural delta to local boundary history log
-    reverse_vector: injects R signal into a subgraph root
+         merge_boundary, reverse_vector, log_bond, reverse_vector
+    - annihilate deposits a log_bond at the splice site (not a vanish)
+    - uncompute: inverts a node pair using its log_bond payload
+    - log_state: pushes a structural delta to the boundary history log
+    - reverse_vector: injects an R signal into a subgraph root
 
-pic.runtime
-    ops: cpu_dispatch, gpu_batch, gpu_batch_reverse,
-         uncompute_sweep, sync_point
-    GPU threads execute two primary kernels:
-      1. Forward Evaluation Pass
-      2. Mirror-Image Backward Cleanup Pass (uncompute_sweep)
+pic.runtime      ← two thin mechanical conversion passes, one per target
+    ops: alloc_node, link, push_redex, pop_redex, sync_point,
+         gpu_batch, gpu_batch_reverse, uncompute_sweep
+    CPU path: PicRuntimeToLLVMPass  → llvm.* + OpenMP
+    GPU path: PicRuntimeToSPIRVPass → spirv.* + gpu.launch
 ```
 
-The `pic.graph → pic.reduce` pass is your interaction net normalizer. It detects active pairs and emits the appropriate reduction op, now including L-bond deposition and R-signal injection. The `pic.reduce → pic.runtime` pass is your CPU/GPU router and also schedules the uncompute sweep after each forward batch completes inside a boundary.
+The `pic.graph → pic.reduce` pass is your interaction net normalizer. It detects active pairs and emits the appropriate reduction op, including L-bond deposition and R-signal injection. **All reduction logic lives here, once.** The `pic.reduce → pic.runtime` conversion passes are mechanical and contain zero reduction logic — they only translate dialect ops.
+
+---
+
+## CPU/GPU Unified Execution Model
+
+For the three-dialect pipeline to lower correctly to both CPU and GPU, three architectural constraints must hold throughout `pic.reduce`. Violating any one of them silently creates a CPU-only path.
+
+### 1. Static Opcode Dispatch — No Indirect Calls on GPU
+
+SPIR-V has no function pointers. A rule table that maps opcode hashes to function addresses is valid on CPU and illegal on GPU.
+
+The canonical model is **static integer dispatch**: the rule table maps `(labelA, labelB)` pairs to an `i32` opcode index. The reduction kernel contains a single `scf` switch over that index with one case per registered rule. On CPU this lowers to a jump table; on GPU to a `spirv.Switch` — both from identical `pic.reduce` IR.
+
+```
+pic.reduce rule table: memref<Nx5xi32>   (typeA, labelA, typeB, labelB, opcode_index)
+
+reduction kernel:
+  opcode = lookup_rule(labelA, labelB)
+  switch opcode {
+    case ANNIHILATE:  pic_reduce.annihilate(...)
+    case DUPLICATE:   pic_reduce.duplicate(...)
+    case FIRE_ADD:    pic_reduce.fire_op "arith.addi" (...)
+    ...               all cases known at compile time
+  }
+```
+
+**Consequence:** `mlir-op` declarations are compiled into a case in the static switch, not into a separate function called through a pointer. The opcode index is assigned at compile time. The rule table is a `memref`, not an LLVM global.
+
+### 2. Host-Allocated Arena — No Allocation Inside the Kernel
+
+Neither SPIR-V nor CUDA device code can call `malloc`. The arena (`net` buffer, redex queue, allocator counter) must be fully pre-allocated on the host and passed into the kernel as a `StorageBuffer`-addressed `memref`.
+
+```
+Host (before kernel launch):
+  arena  = memref.alloc() : memref<Nxi64>   // the node array
+  queue  = memref.alloc() : memref<Mxi64>   // the redex queue
+  alloc  = memref.alloc() : memref<1xi32>   // atomic bump counter
+
+pic.runtime.gpu_batch(arena, queue, alloc, grid_x, grid_y)
+  → spirv.EntryPoint receives arena/queue/alloc as StorageBuffer descriptors
+```
+
+Inside `pic.reduce`, `alloc_node` is expressed as `memref.atomic_rmw(Add, 1, alloc[0])` followed by a write into `arena[idx]`. No `malloc`. This lowers to an atomic increment on CPU (via `llvm.atomicrmw`) and to `spirv.AtomicIAdd` on GPU — from the same source op.
+
+The redex queue head/tail pointers follow the same model: `memref.atomic_rmw` for both push and pop, ensuring MPMC safety under concurrent threads (CPU) and concurrent workitems (GPU).
+
+### 3. ω Node GPU Eligibility — Dialect Restrictions on the Hot Path
+
+When an `ω(+, f) ⋈ ω(-, f)` pair fires, the registered `mlir-op` payload for label `f` executes. On GPU, that payload may only contain ops from SPIR-V-legal dialects: `arith`, `math`, `index`, `vector`, `memref` (StorageBuffer only). Ops from `func`, `llvm`, or any I/O dialect are CPU-only.
+
+The architecture enforces this via a **dialect legality check** at `mlir-op` registration time:
+
+```
+mlir-op add [inputs: [a [i64]] [b [i64]]] → i64 {
+  %res = arith.addi %a, %b : i64    // ✓ GPU-eligible
+}
+
+mlir-op print [inputs: [v [i64]]] → i64 {
+  llvm.call @printf(...)             // ✗ GPU-illegal → forces CPU routing
+}
+```
+
+If a payload contains a GPU-illegal op, the label is marked `cpu_only` in the rule table. The routing check at dispatch time is a single integer comparison on the `flags` field of the rule table entry — no runtime dialect inspection.
+
+**Consequence for `@gpu` / `@cpu` annotations (item 16):** These annotations are now override hints only. The legality check is always performed; an `@gpu` annotation on a CPU-only op is a compile-time error, not a runtime routing hint.
 
 ---
 
@@ -322,7 +386,7 @@ When a wire crosses a boundary, both sides must agree on the wire's polarity. Th
 **3. Confluence**
 Rules 1–4 must be confluent — any order of reduction reaches the same result. This holds for standard IC. You need to verify it holds for your op labels, particularly for ops with side effects, which is why effect tokens or boundary sequencing matter. Confluence is what lets you throw the work at any number of CPU cores and GPU threads without coordination.
 
-**4. Conservation of Topological Information** *(PICR addition)*
+**4. Conservation of Topological Information**
 No graph rewrite may reduce the total information entropy of the graph. Every destructive step must store its structural delta in a local boundary history log, or be explicitly paired with an inverse routing pathway (R signal). This invariant is what enables the Reversible Boundary Cycle (B4) and race-free GC.
 
 ---
@@ -373,7 +437,7 @@ There are no operations "hardcoded" into the compiler's backend logic. When you 
 1. It emits an `omega` agent with a label (e.g., `add`).
 2. It relies on a `registry` entry (provided by the user in the standard library or local code) that defines what happens when two `omega` agents with that label meet.
 3. The `registry` entry contains a raw MLIR payload that is injected into the reduction engine.
-4. *(PICR)* The registry entry may also contain an inverse payload, used by `pic_reduce.uncompute` during the reverse pass.
+4. The registry entry may also contain an inverse payload, used by `pic_reduce.uncompute` during the reverse pass.
 
 ### **The "Scheduler" Perspective**
 In this sense, Lin is closer to a hardware scheduler than a traditional language. It manages the topology of the interaction net, detects active pairs (redexes), dispatches them to appropriate compute resources (CPU threads or GPU cores), and coordinates forward and reverse passes inside boundary regions. What happens *during* that dispatch is entirely defined by the user via `mlir-op` blocks.

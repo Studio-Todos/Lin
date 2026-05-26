@@ -44,6 +44,55 @@
 # This means A1b is the central fix — all other "b" items are cleanup work that
 # becomes natural once the reduction logic lives in the right dialect.
 # Items 31, A4b, 21b, A2b, A3b are all sub-problems of finishing A1b correctly.
+#
+# Three architectural constraints hold throughout pic.reduce for unification:
+#   C1. STATIC OPCODE DISPATCH — no function pointers (SPIR-V has none)
+#   C2. HOST-ALLOCATED ARENA   — no malloc inside kernels (illegal on GPU)
+#   C3. ω GPU ELIGIBILITY      — payloads restricted to SPIR-V-legal dialects
+
+[ ] C1. Replace indirect dispatch with static opcode switch 🔴
+        # Architecture constraint: SPIR-V has no function pointers. The current
+        # `dispatch_user_op` model (hash → function pointer call) is CPU-only and
+        # will silently be dead code on any GPU path.
+        # See Architecture.md "CPU/GPU Unified Execution Model" §1.
+        - Rule table entry: (typeA, labelA, typeB, labelB, opcode_index: i32)
+          opcode_index assigned at compile time from the ordered list of registered rules
+        - Reduction kernel: one scf switch over opcode_index with one case per rule
+          (not a hash lookup through a function pointer)
+        - mlir-op declarations compile into a case in the static switch, not a separate
+          LLVM function reached through dispatch_user_op
+        - On CPU: scf.switch lowers to a jump table (identical performance)
+        - On GPU: scf.switch lowers to spirv.Switch (legal, portable)
+        - Prerequisite: A1b (must live in pic.reduce, not hand-rolled LLVM)
+
+[ ] C2. Formalize host-allocated arena — no malloc inside kernels 🔴
+        # Architecture constraint: GPU device code cannot call malloc/free.
+        # The current main() mallocs 128MB for net/queue at startup (line 1733-1744)
+        # but this is expressed as llvm.call @malloc inside the kernel entry, which
+        # is legal on CPU and silently wrong when the same IR targets a GPU kernel.
+        # See Architecture.md "CPU/GPU Unified Execution Model" §2.
+        - All arena allocations (net, queue, alloc counter) must happen on the HOST
+          before kernel launch, expressed as memref.alloc() in the host wrapper
+        - Inside pic.reduce: alloc_node = memref.atomic_rmw(Add, 1, alloc[0])
+          followed by memref.store into arena[idx] — zero malloc calls
+        - pic.runtime.gpu_batch receives (arena, queue, alloc) as memref args;
+          on GPU these become StorageBuffer descriptors; on CPU they are flat pointers
+        - Prerequisite: A1b, A4b
+
+[ ] C3. ω GPU eligibility check at mlir-op registration time 🟡
+        # Architecture constraint: GPU payloads may only use SPIR-V-legal dialects
+        # (arith, math, index, vector, memref/StorageBuffer). Any payload containing
+        # llvm.*, func.call, or I/O ops must be marked cpu_only.
+        # See Architecture.md "CPU/GPU Unified Execution Model" §3.
+        - At mlir-op registration: walk the payload ops; check each op's dialect against
+          the GPU-legal allowlist (arith, math, index, vector, memref)
+        - If any op is GPU-illegal: set flags bit cpu_only in the rule table entry
+        - Routing check at dispatch time: test cpu_only flag before gpu_batch enqueue
+        - @gpu annotation on a cpu_only op: emit compile-time error (not silent skip)
+        - @cpu annotation on a GPU-eligible op: valid override, routes to CPU
+        - Enables: std library to automatically route `print`, `malloc` etc. to CPU
+          and `add`, `mul`, `sqrt` etc. to GPU without user annotation
+        - Prerequisite: C1 (rule table needs a flags field), A1b
 
 [x] A1. pic.reduce pass: implement reduction rules in target-independent MLIR
         - PicReduceToRuntimePass walks pic.graph functions
