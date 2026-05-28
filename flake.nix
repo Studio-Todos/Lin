@@ -1,6 +1,15 @@
 {
   description = "Lin Programming Language - Multi-paradigm, Interaction Net-based, statically typed language";
 
+  nixConfig = {
+    extra-substituters = [
+      "https://lin-lang.cachix.org"
+    ];
+    extra-trusted-public-keys = [
+      "lin-lang.cachix.org-1:ZFbS6YZqG7rC4Eks9ohYxQpGxo3lj8HEnZ92IahsgUU="
+    ];
+  };
+
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
