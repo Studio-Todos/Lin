@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+# Cancel in-flight runs on the same branch/PR to avoid wasted compute
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Fast sanity gate: evaluate the flake without building ──────────────────
+  flake-check:
+    name: Evaluate Flake
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Check flake evaluation
+        run: nix flake check --no-build --print-build-logs
+
+  # ── Full build + test suite ────────────────────────────────────────────────
+  build-and-test:
+    name: Build & Test (nix flake check)
+    runs-on: ubuntu-latest
+    # This is the required status check — PRs must pass this to merge
+    needs: flake-check
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Set up Cachix (binary cache)
+        uses: cachix/cachix-action@v15
+        with:
+          name: lin-lang
+          # Create a cache at https://app.cachix.org and add CACHIX_AUTH_TOKEN
+          # to your repository secrets to enable pushing new derivations.
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          # If no auth token is present (e.g. forks), reads from the cache only
+          skipPush: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
+
+      - name: Build & run full test suite
+        run: nix flake check --print-build-logs
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: |
+            **/Testing/
+            **/*.log
+          retention-days: 7

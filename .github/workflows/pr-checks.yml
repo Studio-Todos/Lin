@@ -1,0 +1,96 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # Blocks draft PRs from triggering expensive CI
+  is-ready:
+    name: PR is ready for review
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    steps:
+      - run: echo "PR is ready — proceeding with checks"
+
+  lint-commits:
+    name: Lint Commit Messages
+    runs-on: ubuntu-latest
+    needs: is-ready
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check commit message format
+        run: |
+          # Ensure every commit title on this PR is non-empty and < 72 chars
+          git log --pretty=format:"%s" origin/main..HEAD | while IFS= read -r line; do
+            len=${#line}
+            if [ "$len" -eq 0 ]; then
+              echo "ERROR: Empty commit message found"
+              exit 1
+            fi
+            if [ "$len" -gt 72 ]; then
+              echo "WARNING: Commit title exceeds 72 chars: $line"
+            fi
+          done
+
+  flake-eval:
+    name: Flake Evaluates
+    runs-on: ubuntu-latest
+    needs: is-ready
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Evaluate flake (no build)
+        run: nix flake check --no-build
+
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    needs: [is-ready, flake-eval]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Set up Cachix (binary cache)
+        uses: cachix/cachix-action@v15
+        with:
+          name: lin-lang
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: true  # Only main branch CI pushes to the cache
+
+      - name: Build & run test suite
+        run: nix flake check --print-build-logs
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-${{ github.event.pull_request.number }}-test-logs
+          path: |
+            **/Testing/
+            **/*.log
+          retention-days: 3
