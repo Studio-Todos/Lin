@@ -1,4 +1,4 @@
-add_executable(linc main.cpp Parser.c Lowering.c gpu_runtime.c)
+add_executable(linc core/main.cpp core/Semantic.cpp core/Utils.cpp parser/Lexer.c parser/Parser.c mlir/Environment.c mlir/Utils.c mlir/Optimize.c mlir/Lowering.c runtime/gpu_runtime.c)
 
 find_package(Vulkan REQUIRED)
 
