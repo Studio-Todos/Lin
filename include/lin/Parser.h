@@ -4,6 +4,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef enum {
     TOKEN_EOF,
     TOKEN_ERROR,
@@ -147,7 +151,9 @@ typedef struct AstNode {
 } AstNode;
 
 AstNode* parse(const char *source);
-void freeAst(AstNode *node);
-void printAst(AstNode *node, int depth);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // LINALANG_PARSER_H
