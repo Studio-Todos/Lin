@@ -3,6 +3,7 @@
 #include <string.h>
 #include <assert.h>
 #include "lin/Parser.h"
+#include "lin/Ast.h"
 
 void test_number() {
     const char *source = "42";

@@ -4,9 +4,14 @@
 #include "mlir-c/IR.h"
 #include "lin/Parser.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast);
 
-// Future E-Graph optimization placeholder hook
-void optimizeInteractionNetWithEGraphs(MlirModule module);
+#ifdef __cplusplus
+}
+#endif
 
 #endif // LINALANG_LOWERING_H

@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "lin/Parser.h"
+#include "lin/Ast.h"
 
 void test_print_simple() {
     printf("--- Simple Types ---\n");
