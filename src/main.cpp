@@ -321,7 +321,7 @@ int main(int argc, char **argv) {
       }
 #endif
 
-#ifdef ENABLE_DEBUG_LOGS
+#if 1
       std::cout << "Generated MLIR (before lowering):\n";
       module.print(llvm::outs());
       llvm::outs().flush();
@@ -357,20 +357,20 @@ int main(int argc, char **argv) {
 #if __has_include("mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h")
            pm_gpu.addPass(mlir::createGpuSPIRVAttachTarget());
 #if __has_include("mlir/Conversion/MemRefToSPIRV/MemRefToSPIRVPass.h")
-           pm_gpu.addPass(mlir::createMapMemRefStorageClassPass());
-           pm_gpu.addPass(mlir::createConvertMemRefToSPIRVPass());
+           pm_gpu.addNestedPass<mlir::gpu::GPUModuleOp>(mlir::createMapMemRefStorageClassPass());
+           pm_gpu.addNestedPass<mlir::gpu::GPUModuleOp>(mlir::createConvertMemRefToSPIRVPass());
 #endif
 #if __has_include("mlir/Conversion/ArithToSPIRV/ArithToSPIRVPass.h")
-           pm_gpu.addPass(mlir::createConvertArithToSPIRVPass());
+           pm_gpu.addNestedPass<mlir::gpu::GPUModuleOp>(mlir::createConvertArithToSPIRVPass());
 #endif
 #if __has_include("mlir/Conversion/IndexToSPIRV/IndexToSPIRVPass.h")
-           pm_gpu.addPass(mlir::createConvertIndexToSPIRVPass());
+           pm_gpu.addNestedPass<mlir::gpu::GPUModuleOp>(mlir::createConvertIndexToSPIRVPass());
 #endif
 #if __has_include("mlir/Conversion/ControlFlowToSPIRV/ControlFlowToSPIRVPass.h")
-           pm_gpu.addPass(mlir::createConvertControlFlowToSPIRVPass());
+           pm_gpu.addNestedPass<mlir::gpu::GPUModuleOp>(mlir::createConvertControlFlowToSPIRVPass());
 #endif
 // #if __has_include("mlir/Conversion/FuncToSPIRV/FuncToSPIRVPass.h")
-//            pm_gpu.addPass(mlir::createConvertFuncToSPIRVPass());
+//            pm_gpu.addNestedPass<mlir::gpu::GPUModuleOp>(mlir::createConvertFuncToSPIRVPass());
 // #endif
            pm_gpu.addPass(mlir::createConvertGPUToSPIRVPass());
 #if __has_include("mlir/Dialect/SPIRV/Transforms/Passes.h")

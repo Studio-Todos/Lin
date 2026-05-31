@@ -8,6 +8,9 @@
 #include <string.h>
 #include <ctype.h>
 
+static MlirValue createEra(MlirContext ctx, MlirBlock block, MlirLocation loc);
+static void linkToEra(MlirContext ctx, MlirBlock block, MlirLocation loc, MlirValue v);
+
 #ifdef ENABLE_DEBUG_LOGS
 #define LOG_REDEX(...) printf(__VA_ARGS__)
 #define LOG_STDERR(...) fprintf(stderr, __VA_ARGS__)
@@ -46,6 +49,12 @@ static MlirValue createOmegaP0(MlirContext ctx, MlirBlock block, MlirLocation lo
     mlirOperationStateAddResults(&baseState, 3, agentTypes);
     MlirOperation baseOp = mlirOperationCreate(&baseState);
     mlirBlockAppendOwnedOperation(block, baseOp);
+
+    if (strcmp(polarity, "+") == 0) {
+        linkToEra(ctx, block, loc, mlirOperationGetResult(baseOp, 1));
+        linkToEra(ctx, block, loc, mlirOperationGetResult(baseOp, 2));
+    }
+
     return mlirOperationGetResult(baseOp, 0);
 }
 
@@ -162,10 +171,15 @@ static void registerFunction(MlirContext ctx, MlirLocation loc, MlirBlock module
     MlirOperationState regState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.registry"), loc);
     MlirAttribute opNameAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(funcName));
     MlirNamedAttribute opNameNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("op_name")), opNameAttr);
-    MlirAttribute payloadAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(prefixedName));
+    
+    char payloadBuf[2048];
+    snprintf(payloadBuf, sizeof(payloadBuf), "  %%res = func.call @%s(%%env, %%arg, %%state) : (i64, i64, i64) -> i64\n", prefixedName);
+    MlirAttribute payloadAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(payloadBuf));
     MlirNamedAttribute payloadNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("payload")), payloadAttr);
-    MlirAttribute argNamesAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("[env][arg]"));
+    
+    MlirAttribute argNamesAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("[env][arg][state]"));
     MlirNamedAttribute argNamesNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("arg_names")), argNamesAttr);
+    
     MlirNamedAttribute regAttrs[] = {opNameNamed, payloadNamed, argNamesNamed};
     mlirOperationStateAddAttributes(&regState, 3, regAttrs);
     if (!mlirBlockIsNull(moduleBody)) {
@@ -735,6 +749,9 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
 
         MlirOperation op = mlirOperationCreate(&state);
         mlirBlockAppendOwnedOperation(block, op);
+
+        linkToEra(ctx, block, loc, mlirOperationGetResult(op, 1));
+        linkToEra(ctx, block, loc, mlirOperationGetResult(op, 2));
         
         MlirValue result = mlirOperationGetResult(op, 0);
         if (expr->as.mlir_op.name_len > 0) {
@@ -1543,6 +1560,8 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         mlirOperationStateAddResults(&baseState, 3, agentTypes);
         MlirOperation baseOp = mlirOperationCreate(&baseState);
         mlirBlockAppendOwnedOperation(block, baseOp);
+        linkToEra(ctx, block, loc, mlirOperationGetResult(baseOp, 1));
+        linkToEra(ctx, block, loc, mlirOperationGetResult(baseOp, 2));
         MlirValue omegaP0 = mlirOperationGetResult(baseOp, 0);
 
         MlirOperationState eraOuterState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
@@ -1711,8 +1730,26 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
             MlirType agentTypes[] = {portType, portType, portType};
 
             // Apply each argument one by one (currying)
-            for (int i = 0; i < expr->as.call.arg_count; i++) {
-                MlirValue argVal = lowerExpression(ctx, block, loc, expr->as.call.args[i], env);
+            int iterations = expr->as.call.arg_count == 0 ? 1 : expr->as.call.arg_count;
+            for (int i = 0; i < iterations; i++) {
+                MlirValue argVal;
+                if (expr->as.call.arg_count == 0) {
+                    MlirOperationState eraState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+                    MlirAttribute eraType = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("epsilon"));
+                    MlirNamedAttribute eraTypeAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), eraType);
+                    MlirAttribute starPol = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("*"));
+                    MlirNamedAttribute starPolAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), starPol);
+                    MlirAttribute eraLabel = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("era"));
+                    MlirNamedAttribute eraLabelAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), eraLabel);
+                    MlirNamedAttribute eraAttrs[] = {eraTypeAttr, starPolAttr, eraLabelAttr};
+                    mlirOperationStateAddAttributes(&eraState, 3, eraAttrs);
+                    mlirOperationStateAddResults(&eraState, 3, agentTypes);
+                    MlirOperation eraOp = mlirOperationCreate(&eraState);
+                    mlirBlockAppendOwnedOperation(block, eraOp);
+                    argVal = mlirOperationGetResult(eraOp, 0);
+                } else {
+                    argVal = lowerExpression(ctx, block, loc, expr->as.call.args[i], env);
+                }
 
                 // For closure calling:
                 // Unpack closure currentVal into (f, env_bundle)
@@ -1944,12 +1981,12 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
 
     MlirBlock block = {NULL};
     if (ast->type == AST_FUNC_DECL) {
-        MlirOperationState funcState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.func"), loc);
-
-        // We use the function name from the AST
         char funcNameStr[256];
         snprintf(funcNameStr, sizeof(funcNameStr), "%.*s", ast->as.func_decl.name_len, ast->as.func_decl.name);
-        if (strcmp(funcNameStr, "main") == 0) {
+        bool isMain = (strcmp(funcNameStr, "main") == 0);
+
+        MlirOperationState funcState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.func"), loc);
+        if (isMain) {
             snprintf(funcNameStr, sizeof(funcNameStr), "main_inet_entry");
         }
         MlirAttribute nameAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(funcNameStr));
@@ -1957,70 +1994,100 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
         mlirOperationStateAddAttributes(&funcState, 1, &nameNamedAttr);
 
         MlirType portType = getPicPortType(ctx);
-        MlirType i64Type = mlirTypeParseGet(ctx, mlirStringRefCreateFromCString("i64"));
-        MlirType *types = (MlirType *)malloc(sizeof(MlirType) * 3);
-        MlirLocation *locs = (MlirLocation *)malloc(sizeof(MlirLocation) * 3);
-        if (!types || !locs) {
-            fprintf(stderr, "Out of memory\n");
-            exit(1);
-        }
-        types[0] = i64Type; locs[0] = loc;
-        types[1] = i64Type; locs[1] = loc;
-        types[2] = i64Type; locs[2] = loc;
+        if (isMain) {
+            MlirType argTypes[] = {portType};
+            MlirType retTypes[] = {portType};
+            MlirType funcType = mlirFunctionTypeGet(ctx, 1, argTypes, 1, retTypes);
+            MlirAttribute typeAttr = mlirTypeAttrGet(funcType);
+            MlirNamedAttribute typeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("function_type")), typeAttr);
+            mlirOperationStateAddAttributes(&funcState, 1, &typeNamedAttr);
 
-        MlirType retTypes[] = {i64Type};
-        MlirType funcType = mlirFunctionTypeGet(ctx, 3, types, 1, retTypes);
-        LOG_STDERR("Lowering Func: %s with 1 result\n", funcNameStr);
-        MlirAttribute typeAttr = mlirTypeAttrGet(funcType);
-        MlirNamedAttribute typeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("function_type")), typeAttr);
-        mlirOperationStateAddAttributes(&funcState, 1, &typeNamedAttr);
+            MlirRegion region = mlirRegionCreate();
+            block = mlirBlockCreate(1, argTypes, &loc);
+            mlirRegionAppendOwnedBlock(region, block);
+            mlirOperationStateAddOwnedRegions(&funcState, 1, &region);
 
-        MlirRegion region = mlirRegionCreate();
-        block = mlirBlockCreate(3, types, locs);
-        mlirRegionAppendOwnedBlock(region, block);
-        mlirOperationStateAddOwnedRegions(&funcState, 1, &region);
+            MlirOperation funcOp = mlirOperationCreate(&funcState);
+            mlirBlockAppendOwnedOperation(moduleBody, funcOp);
 
-        MlirOperation funcOp = mlirOperationCreate(&funcState);
-        mlirBlockAppendOwnedOperation(moduleBody, funcOp);
+            int lin_arg_count = ast->as.func_decl.arg_count;
+            for (int i = 0; i < lin_arg_count && i < 2; i++) {
+                MlirValue eraVal = createEra(ctx, block, loc);
+                env_add(&env, ast->as.func_decl.args[i].name, ast->as.func_decl.args[i].name_len, eraVal);
+            }
 
-        int lin_arg_count = ast->as.func_decl.arg_count;
-        for (int i = 0; i < lin_arg_count && i < 2; i++) {
-            MlirValue argValue = mlirBlockGetArgument(block, i);
-            env_add(&env, ast->as.func_decl.args[i].name, ast->as.func_decl.args[i].name_len, argValue);
-        }
-        
-        // Handle unused ports (link to ERA)
-        MlirAttribute eraTypeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("epsilon"));
-        MlirNamedAttribute eraTypeNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), eraTypeAttr);
-        MlirAttribute starPolAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("*"));
-        MlirNamedAttribute starPolNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), starPolAttr);
-        MlirAttribute eraLabelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("era"));
-        MlirNamedAttribute eraLabelNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), eraLabelAttr);
-        MlirNamedAttribute eraAttrs[] = {eraTypeNamed, starPolNamed, eraLabelNamed};
+            MlirValue result = lowerExpression(ctx, block, loc, ast->as.func_decl.body, &env);
+            env_free(&env, ctx, block, loc);
 
-        for (int i = lin_arg_count; i < 2; i++) {
-            MlirOperationState eraState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
-            mlirOperationStateAddAttributes(&eraState, 3, eraAttrs);
-            MlirType agentTypes[] = {portType, portType, portType};
-            mlirOperationStateAddResults(&eraState, 3, agentTypes);
-            MlirOperation eraOp = mlirOperationCreate(&eraState);
-            mlirBlockAppendOwnedOperation(block, eraOp);
+            MlirOperationState retState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
+            mlirOperationStateAddOperands(&retState, 1, &result);
+            mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&retState));
+        } else {
+            MlirType i64Type = mlirTypeParseGet(ctx, mlirStringRefCreateFromCString("i64"));
+            MlirType *types = (MlirType *)malloc(sizeof(MlirType) * 3);
+            MlirLocation *locs = (MlirLocation *)malloc(sizeof(MlirLocation) * 3);
+            if (!types || !locs) {
+                fprintf(stderr, "Out of memory\n");
+                exit(1);
+            }
+            types[0] = i64Type; locs[0] = loc;
+            types[1] = i64Type; locs[1] = loc;
+            types[2] = i64Type; locs[2] = loc;
+
+            MlirType retTypes[] = {i64Type};
+            MlirType funcType = mlirFunctionTypeGet(ctx, 3, types, 1, retTypes);
+            LOG_STDERR("Lowering Func: %s with 1 result\n", funcNameStr);
+            MlirAttribute typeAttr = mlirTypeAttrGet(funcType);
+            MlirNamedAttribute typeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("function_type")), typeAttr);
+            mlirOperationStateAddAttributes(&funcState, 1, &typeNamedAttr);
+
+            MlirRegion region = mlirRegionCreate();
+            block = mlirBlockCreate(3, types, locs);
+            mlirRegionAppendOwnedBlock(region, block);
+            mlirOperationStateAddOwnedRegions(&funcState, 1, &region);
+
+            MlirOperation funcOp = mlirOperationCreate(&funcState);
+            mlirBlockAppendOwnedOperation(moduleBody, funcOp);
+
+            int lin_arg_count = ast->as.func_decl.arg_count;
+            for (int i = 0; i < lin_arg_count && i < 2; i++) {
+                MlirValue argValue = mlirBlockGetArgument(block, i);
+                env_add(&env, ast->as.func_decl.args[i].name, ast->as.func_decl.args[i].name_len, argValue);
+            }
             
-            MlirOperationState linkState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-            MlirValue linkOps[] = {mlirOperationGetResult(eraOp, 0), mlirBlockGetArgument(block, i)};
-            mlirOperationStateAddOperands(&linkState, 2, linkOps);
-            mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkState));
+            // Handle unused ports (link to ERA)
+            MlirAttribute eraTypeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("epsilon"));
+            MlirNamedAttribute eraTypeNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), eraTypeAttr);
+            MlirAttribute starPolAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("*"));
+            MlirNamedAttribute starPolNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), starPolAttr);
+            MlirAttribute eraLabelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("era"));
+            MlirNamedAttribute eraLabelNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), eraLabelAttr);
+            MlirNamedAttribute eraAttrs[] = {eraTypeNamed, starPolNamed, eraLabelNamed};
+
+            for (int i = lin_arg_count; i < 2; i++) {
+                MlirOperationState eraState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+                mlirOperationStateAddAttributes(&eraState, 3, eraAttrs);
+                MlirType agentTypes[] = {portType, portType, portType};
+                mlirOperationStateAddResults(&eraState, 3, agentTypes);
+                MlirOperation eraOp = mlirOperationCreate(&eraState);
+                mlirBlockAppendOwnedOperation(block, eraOp);
+                
+                MlirOperationState linkState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
+                MlirValue linkOps[] = {mlirOperationGetResult(eraOp, 0), mlirBlockGetArgument(block, i)};
+                mlirOperationStateAddOperands(&linkState, 2, linkOps);
+                mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkState));
+            }
+
+            MlirValue result = lowerExpression(ctx, block, loc, ast->as.func_decl.body, &env);
+            env_free(&env, ctx, block, loc);
+
+            MlirOperationState retState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
+            mlirOperationStateAddOperands(&retState, 1, &result);
+            mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&retState));
+
+            free(types);
+            free(locs);
         }
-
-        MlirValue result = lowerExpression(ctx, block, loc, ast->as.func_decl.body, &env);
-        env_free(&env, ctx, block, loc);
-
-        MlirOperationState retState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
-        mlirOperationStateAddOperands(&retState, 1, &result);
-        mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&retState));
-
-        free(types);
-        free(locs);
     } else if (ast->type == AST_BLOCK) {
         // Anonymous top-level block — wraps everything in main_inet_entry.
         // We use 0 arguments so that user scripts don't need a phantom arg.

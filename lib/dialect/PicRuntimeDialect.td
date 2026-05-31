@@ -23,7 +23,7 @@ def PicRuntime_PortType : DialectType<PicRuntime_Dialect, CPred<"$_self.isa<::ml
 // Operations for array-based graph manipulation
 def PicRuntime_AllocNodeOp : PicRuntime_Op<"alloc_node"> {
   let summary = "Allocates a node in the 128-bit atomic array";
-  let arguments = (ins I8Attr:$type, I64Attr:$label_or_val, OptionalAttr<I1Attr>:$inside_boundary);
+  let arguments = (ins I8Attr:$type, I64:$label_or_val, OptionalAttr<I1Attr>:$inside_boundary);
   let results = (outs I32:$index);
 }
 
@@ -35,6 +35,12 @@ def PicRuntime_SetPortOp : PicRuntime_Op<"set_port"> {
 def PicRuntime_GetPortOp : PicRuntime_Op<"get_port"> {
   let summary = "Gets a port on a node";
   let arguments = (ins I32:$node_index, I8Attr:$port_index);
+  let results = (outs I64:$port_value);
+}
+
+def PicRuntime_GetPortDynamicOp : PicRuntime_Op<"get_port_dynamic"> {
+  let summary = "Gets a port on a node dynamically";
+  let arguments = (ins I32:$node_index, I8:$port_index);
   let results = (outs I64:$port_value);
 }
 
@@ -73,4 +79,16 @@ def PicRuntime_UncomputeSweepOp : PicRuntime_Op<"uncompute_sweep"> {
   let arguments = (ins I32:$boundary_id);
 }
 
+def PicRuntime_GetHistoryOp : PicRuntime_Op<"get_history"> {
+  let summary = "Gets a history log word";
+  let arguments = (ins I32:$node_index, I8Attr:$word_index);
+  let results = (outs I64:$word_value);
+}
+
+def PicRuntime_SetHistoryOp : PicRuntime_Op<"set_history"> {
+  let summary = "Sets a history log word";
+  let arguments = (ins I32:$node_index, I8Attr:$word_index, I64:$word_value);
+}
+
 #endif // PIC_RUNTIME_DIALECT
+

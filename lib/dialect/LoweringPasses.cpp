@@ -14,7 +14,9 @@
 #include "mlir/Dialect/SPIRV/IR/SPIRVDialect.h"
 #include "mlir/Dialect/SPIRV/IR/SPIRVAttributes.h"
 #endif
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Pass/Pass.h"
+
 #include <set>
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -237,6 +239,10 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
         uint8_t nodeType = NODE_OP; // Default to omega/op
         if (agentType == "constructor") nodeType = NODE_CON;
         else if (agentType == "destructor") nodeType = NODE_DES;
+        else if (agentType == "gamma") {
+            if (polVal == 0) nodeType = NODE_CON;
+            else if (polVal == 1) nodeType = NODE_DES;
+        }
         else if (agentType == "delta") nodeType = NODE_DUP;
         else if (agentType == "epsilon") nodeType = NODE_ERA;
         else if (agentType == "history" || agentType == "H") nodeType = NODE_HIS;
@@ -244,11 +250,17 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
         else if (agentType == "reverse_vector" || agentType == "R") nodeType = NODE_RVEC;
         
         uint8_t allocType = (polVal << 6) | nodeType;
-        auto alloc = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, allocType, val, builder.getBoolAttr(insideBoundary));
+        Value valConst = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(val));
+        auto alloc = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, allocType, valConst, builder.getBoolAttr(insideBoundary));
         Value nodeIdx = alloc.getIndex();
         
-        if (label == "num") {
-            Value litVal = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(op.getValue().value()));
+        if ((label == "num" || label == "i32" || label == "f64" || label == "bool" || label == "str") && (op.getValue() || op.getStrVal())) {
+            Value litVal;
+            if (label == "str") {
+                litVal = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(val));
+            } else {
+                litVal = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(op.getValue().value()));
+            }
             builder.create<pic::runtime::SetPortOp>(loc, nodeIdx, builder.getI8IntegerAttr(1), litVal);
         }
 
@@ -319,7 +331,8 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
              if (funcOp.getSymName() == "main_inet_entry") {
                  Location loc = op.getLoc();
                  builder.setInsertionPoint(op);
-                 auto eraAlloc = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, (2 << 6) | NODE_ERA, 0x979115, IntegerAttr{});
+                 Value eraValConst = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0x979115));
+                 auto eraAlloc = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, (2 << 6) | NODE_ERA, eraValConst, IntegerAttr{});
                  Value eraIdx = eraAlloc.getIndex();
                  auto safeExt = [&](Value v) {
                      return (v.getType() == i64Type) ? v : builder.create<arith::ExtUIOp>(loc, i64Type, v);
@@ -341,7 +354,600 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
   bool enableGPU;
   std::string spirvPath;
   PicReduceToRuntimePass(bool enableGPU, std::string spirvPath) : enableGPU(enableGPU), spirvPath(spirvPath) {}
-  void runOnOperation() override {}
+  void runOnOperation() override {
+    ModuleOp module = getOperation();
+    OpBuilder builder(module.getContext());
+    builder.setInsertionPointToEnd(module.getBody());
+
+    Location loc = module.getLoc();
+    auto i32Type = builder.getI32Type();
+    auto i64Type = builder.getI64Type();
+    auto i1Type = builder.getI1Type();
+    auto i8Type = builder.getI8Type();
+    auto f32Type = builder.getF32Type();
+    auto f64Type = builder.getF64Type();
+
+    auto declFunc = [&](StringRef name, Type ret, ArrayRef<Type> args) {
+        if (!module.lookupSymbol(name)) {
+            auto fType = builder.getFunctionType(args, ret ? TypeRange{ret} : TypeRange{});
+            auto f = builder.create<func::FuncOp>(loc, name, fType);
+            f.setPrivate();
+        }
+    };
+
+    declFunc("lookup_rule", i32Type, {i32Type, i32Type});
+    declFunc("get_num_args", i32Type, {i32Type});
+    declFunc("is_gpu_op", i1Type, {i32Type});
+    declFunc("dispatch_user_op", i64Type, {i32Type, i64Type, i64Type, i64Type, i64Type, i32Type, i32Type, i64Type});
+    declFunc("lin_print_i32", nullptr, {i64Type});
+    declFunc("lin_print_f32", nullptr, {f32Type});
+    declFunc("lin_print_f64", nullptr, {f64Type});
+
+    auto wType = builder.getFunctionType({i64Type}, {i64Type});
+    auto wFunc = builder.create<func::FuncOp>(loc, "worker_thread", wType);
+    Block *wEntry = wFunc.addEntryBlock();
+    Value stateArg = wEntry->getArgument(0);
+
+    Block *lHead = wFunc.addBlock();
+    Block *lBody = wFunc.addBlock();
+    Block *lEnd = wFunc.addBlock();
+
+    builder.setInsertionPointToStart(wEntry);
+    // Helpers
+    Value c0_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0));
+    Value c1_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(1));
+    Value c2_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(2));
+    Value c3_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(3));
+    Value c7_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(7));
+    Value c8_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(8));
+    Value c24_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(24));
+    Value c30_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(30));
+    Value c0xFFFFFF_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0xFFFFFF));
+    Value c0x3F_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0x3F));
+    Value c0x979115_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0x979115));
+
+    Value c0_i64 = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0));
+    Value c1_i64 = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(1));
+    Value c2_i64 = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(2));
+    Value c32_i64 = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(32));
+    Value c0xFFFFFFFF_i64 = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0xFFFFFFFF));
+    Value c0x100000000_i64 = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0x100000000ULL));
+    Value c0xFFFFFFFF00000000_i64 = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0xFFFFFFFF00000000ULL));
+
+    std::vector<uint32_t> literalHashes;
+    for (const auto &lit : {"num", "i1", "i8", "i16", "i32", "i64", "f32", "f64", "bool", "str"}) {
+        literalHashes.push_back(opcodeForLabel(lit));
+    }
+    module.walk([&](pic::graph::RegistryOp op) {
+        StringRef key = op.getOpName();
+        if (key.starts_with("STR_")) {
+            literalHashes.push_back(opcodeForLabel(key));
+        }
+    });
+
+    auto isLiteralLabel = [&](Value label) -> Value {
+        Value isLit = builder.create<arith::ConstantOp>(loc, i1Type, builder.getBoolAttr(false));
+        for (uint32_t hash : literalHashes) {
+            Value hashConst = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(hash));
+            Value cmp = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, label, hashConst);
+            isLit = builder.create<arith::OrIOp>(loc, isLit, cmp);
+        }
+        return isLit;
+    };
+
+    builder.create<cf::BranchOp>(loc, lHead);
+
+    builder.setInsertionPointToStart(lHead);
+    auto popOp = builder.create<pic::runtime::PopRedexOp>(loc, i1Type, i32Type, i32Type);
+    Value valid = popOp.getValid();
+    Value nodeA = popOp.getNodeA();
+    Value nodeB = popOp.getNodeB();
+    builder.create<cf::CondBranchOp>(loc, valid, lBody, ValueRange{nodeA, nodeB}, lEnd, ValueRange{});
+
+    // Body block setup
+    Value bodyNodeA = lBody->addArgument(i32Type, loc);
+    Value bodyNodeB = lBody->addArgument(i32Type, loc);
+    builder.setInsertionPointToStart(lBody);
+
+    auto makePortVal = [&](Value idx, int p) {
+        Value idx64 = builder.create<arith::ExtUIOp>(loc, i64Type, idx);
+        Value sh = builder.create<arith::ShLIOp>(loc, i64Type, idx64, c2_i64);
+        return builder.create<arith::OrIOp>(loc, i64Type, sh, builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(p)));
+    };
+
+    Value metaA = builder.create<pic::runtime::GetPortOp>(loc, i64Type, bodyNodeA, builder.getI8IntegerAttr(3));
+    Value metaB = builder.create<pic::runtime::GetPortOp>(loc, i64Type, bodyNodeB, builder.getI8IntegerAttr(3));
+
+    Value metaA32 = builder.create<arith::TruncIOp>(loc, i32Type, metaA);
+    Value metaB32 = builder.create<arith::TruncIOp>(loc, i32Type, metaB);
+
+    Value polA = builder.create<arith::ShRUIOp>(loc, metaA32, c30_i32);
+    Value polB = builder.create<arith::ShRUIOp>(loc, metaB32, c30_i32);
+
+    Value labelA = builder.create<arith::AndIOp>(loc, metaA32, c0xFFFFFF_i32);
+    Value labelB = builder.create<arith::AndIOp>(loc, metaB32, c0xFFFFFF_i32);
+
+    Value typeValA = builder.create<arith::ShRUIOp>(loc, metaA32, c24_i32);
+    Value typeValB = builder.create<arith::ShRUIOp>(loc, metaB32, c24_i32);
+
+    Value nodeTypeA = builder.create<arith::AndIOp>(loc, typeValA, c0x3F_i32);
+    Value nodeTypeB = builder.create<arith::AndIOp>(loc, typeValB, c0x3F_i32);
+
+    Value isRvecA = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, nodeTypeA, c8_i32);
+    Value isRvecB = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, nodeTypeB, c8_i32);
+    Value hasRvec = builder.create<arith::OrIOp>(loc, isRvecA, isRvecB);
+
+    Block *rvecCase = wFunc.addBlock();
+    Block *nonRvecCase = wFunc.addBlock();
+    builder.create<cf::CondBranchOp>(loc, hasRvec, rvecCase, nonRvecCase);
+
+    // ==========================================
+    // rvecCase
+    // ==========================================
+    builder.setInsertionPointToStart(rvecCase);
+    Value rNode = builder.create<arith::SelectOp>(loc, isRvecA, bodyNodeA, bodyNodeB);
+    Value tNode = builder.create<arith::SelectOp>(loc, isRvecA, bodyNodeB, bodyNodeA);
+    Value tType = builder.create<arith::SelectOp>(loc, isRvecA, nodeTypeB, nodeTypeA);
+    Value tPort = builder.create<arith::ShLIOp>(loc, i32Type, tNode, c2_i32);
+
+    Block *rvecLBlock = wFunc.addBlock();
+    Block *rvecStdBlock = wFunc.addBlock();
+    Value isL = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, tType, c7_i32);
+    builder.create<cf::CondBranchOp>(loc, isL, rvecLBlock, rvecStdBlock);
+
+    builder.setInsertionPointToStart(rvecLBlock);
+    Value recNodeA = builder.create<pic::runtime::GetPortOp>(loc, i64Type, tNode, builder.getI8IntegerAttr(1));
+    Value recNodeB = builder.create<pic::runtime::GetPortOp>(loc, i64Type, tNode, builder.getI8IntegerAttr(2));
+    Value recNodeA_32 = builder.create<arith::TruncIOp>(loc, i32Type, recNodeA);
+    Value recNodeB_32 = builder.create<arith::TruncIOp>(loc, i32Type, recNodeB);
+    Value wordA12 = builder.create<pic::runtime::GetHistoryOp>(loc, i64Type, recNodeA_32, builder.getI8IntegerAttr(1));
+    Value wordB12 = builder.create<pic::runtime::GetHistoryOp>(loc, i64Type, recNodeB_32, builder.getI8IntegerAttr(1));
+    Value neighborA1 = builder.create<arith::ShRUIOp>(loc, wordA12, c32_i64);
+    Value neighborA2 = builder.create<arith::AndIOp>(loc, wordA12, c0xFFFFFFFF_i64);
+    Value neighborB1 = builder.create<arith::ShRUIOp>(loc, wordB12, c32_i64);
+    Value neighborB2 = builder.create<arith::AndIOp>(loc, wordB12, c0xFFFFFFFF_i64);
+    builder.create<pic::runtime::LinkOp>(loc, makePortVal(recNodeA_32, 1), neighborA1);
+    builder.create<pic::runtime::LinkOp>(loc, makePortVal(recNodeA_32, 2), neighborA2);
+    builder.create<pic::runtime::LinkOp>(loc, makePortVal(recNodeB_32, 1), neighborB1);
+    builder.create<pic::runtime::LinkOp>(loc, makePortVal(recNodeB_32, 2), neighborB2);
+    builder.create<pic::runtime::LinkOp>(loc, makePortVal(recNodeA_32, 0), makePortVal(recNodeB_32, 0));
+    builder.create<cf::BranchOp>(loc, lHead);
+
+    builder.setInsertionPointToStart(rvecStdBlock);
+    Value r1 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(136), c0_i64, builder.getBoolAttr(false));
+    Value r2 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(136), c0_i64, builder.getBoolAttr(false));
+    Value auxT1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, tNode, builder.getI8IntegerAttr(1));
+    Value auxT2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, tNode, builder.getI8IntegerAttr(2));
+    builder.create<pic::runtime::LinkOp>(loc, makePortVal(r1, 0), auxT1);
+    builder.create<pic::runtime::LinkOp>(loc, makePortVal(r2, 0), auxT2);
+    builder.create<cf::BranchOp>(loc, lHead);
+
+    // ==========================================
+    // nonRvecCase
+    // ==========================================
+    builder.setInsertionPointToStart(nonRvecCase);
+    Value isEraA = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelA, c0x979115_i32);
+    Value isEraB = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelB, c0x979115_i32);
+    Value hasEra = builder.create<arith::OrIOp>(loc, isEraA, isEraB);
+
+    Block *eraCase = wFunc.addBlock();
+    Block *checkDispatch = wFunc.addBlock();
+    builder.create<cf::CondBranchOp>(loc, hasEra, eraCase, checkDispatch);
+
+    // eraCase
+    builder.setInsertionPointToStart(eraCase);
+    Value eraNode = builder.create<arith::SelectOp>(loc, isEraA, bodyNodeA, bodyNodeB);
+    Value otherNode = builder.create<arith::SelectOp>(loc, isEraA, bodyNodeB, bodyNodeA);
+    Value otherLabel = builder.create<arith::SelectOp>(loc, isEraA, labelB, labelA);
+    Value otherPol = builder.create<arith::SelectOp>(loc, isEraA, polB, polA);
+    Value otherIsEra = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, otherLabel, c0x979115_i32);
+    Value isVal = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, otherPol, c2_i32);
+    Value isAnn = builder.create<arith::OrIOp>(loc, otherIsEra, isVal);
+
+    Block *doEraAnn = wFunc.addBlock();
+    Block *doEraProp = wFunc.addBlock();
+    builder.create<cf::CondBranchOp>(loc, isAnn, doEraAnn, doEraProp);
+
+    builder.setInsertionPointToStart(doEraAnn);
+    builder.create<cf::BranchOp>(loc, lHead);
+
+    builder.setInsertionPointToStart(doEraProp);
+    Value otherIsLit = isLiteralLabel(otherLabel);
+    Block *eraLitCase = wFunc.addBlock();
+    Block *eraNormalProp = wFunc.addBlock();
+    builder.create<cf::CondBranchOp>(loc, otherIsLit, eraLitCase, eraNormalProp);
+
+    builder.setInsertionPointToStart(eraLitCase);
+    builder.create<cf::BranchOp>(loc, lHead);
+
+    builder.setInsertionPointToStart(eraNormalProp);
+    Value era1 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(132), c0_i64, builder.getBoolAttr(false));
+    Value era2 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(132), c0_i64, builder.getBoolAttr(false));
+    Value auxOther1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, otherNode, builder.getI8IntegerAttr(1));
+    Value auxOther2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, otherNode, builder.getI8IntegerAttr(2));
+    builder.create<pic::runtime::LinkOp>(loc, auxOther1, makePortVal(era1, 0));
+    builder.create<pic::runtime::LinkOp>(loc, auxOther2, makePortVal(era2, 0));
+    builder.create<cf::BranchOp>(loc, lHead);
+
+    // checkDispatch
+    builder.setInsertionPointToStart(checkDispatch);
+    Value implA = builder.create<func::CallOp>(loc, i32Type, "lookup_rule", ValueRange{labelA, labelB}).getResult(0);
+    Value implB = builder.create<func::CallOp>(loc, i32Type, "lookup_rule", ValueRange{labelB, labelA}).getResult(0);
+    Value hasRuleA = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, implA, c0_i32);
+    Value hasRuleB = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, implB, c0_i32);
+    Value hasDispatch = builder.create<arith::OrIOp>(loc, hasRuleA, hasRuleB);
+
+    Value opNode = builder.create<arith::SelectOp>(loc, hasRuleA, bodyNodeA, bodyNodeB);
+    Value valNode = builder.create<arith::SelectOp>(loc, hasRuleA, bodyNodeB, bodyNodeA);
+    Value valLabel = builder.create<arith::SelectOp>(loc, hasRuleA, labelB, labelA);
+    Value opLabel = builder.create<arith::SelectOp>(loc, hasRuleA, labelA, labelB);
+    Value impl = builder.create<arith::SelectOp>(loc, hasRuleA, implA, implB);
+
+    Block *dispatchCase = wFunc.addBlock();
+    Block *checkPrint = wFunc.addBlock();
+    builder.create<cf::CondBranchOp>(loc, hasDispatch, dispatchCase, checkPrint);
+
+    // dispatchCase
+    builder.setInsertionPointToStart(dispatchCase);
+
+    Value v0 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, valNode, builder.getI8IntegerAttr(1));
+    Value nArgs = builder.create<func::CallOp>(loc, i32Type, "get_num_args", ValueRange{impl}).getResult(0);
+    Value isUnary = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, nArgs, c1_i32);
+    Value isBinary = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, nArgs, c2_i32);
+
+    Block *doUnary = wFunc.addBlock();
+    Block *checkBinary = wFunc.addBlock();
+    builder.create<cf::CondBranchOp>(loc, isUnary, doUnary, checkBinary);
+
+    builder.setInsertionPointToStart(doUnary);
+    Value isGpu = builder.create<func::CallOp>(loc, i1Type, "is_gpu_op", ValueRange{impl}).getResult(0);
+    Block *gpuBranch = wFunc.addBlock();
+    Block *cpuBranch = wFunc.addBlock();
+    builder.create<cf::CondBranchOp>(loc, isGpu, gpuBranch, cpuBranch);
+
+    builder.setInsertionPointToStart(gpuBranch);
+    builder.create<func::CallOp>(loc, i64Type, "dispatch_user_op", ValueRange{impl, v0, c0_i64, c0_i64, c0_i64, valNode, opNode, stateArg});
+    builder.create<cf::BranchOp>(loc, lHead);
+
+    builder.setInsertionPointToStart(cpuBranch);
+    Value resVal = builder.create<func::CallOp>(loc, i64Type, "dispatch_user_op", ValueRange{impl, v0, c0_i64, c0_i64, c0_i64, valNode, opNode, stateArg}).getResult(0);
+    Value opP_aux2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, opNode, builder.getI8IntegerAttr(2));
+    Value isSame = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, resVal, opP_aux2);
+    Block *skipLink = wFunc.addBlock();
+    Block *doLink = wFunc.addBlock();
+    builder.create<cf::CondBranchOp>(loc, isSame, skipLink, doLink);
+
+    builder.setInsertionPointToStart(doLink);
+    Value valLabel64 = builder.create<arith::ExtUIOp>(loc, i64Type, valLabel);
+    Value resNode = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(133), valLabel64, builder.getBoolAttr(false));
+    builder.create<pic::runtime::SetPortOp>(loc, resNode, builder.getI8IntegerAttr(1), resVal);
+    builder.create<pic::runtime::LinkOp>(loc, opP_aux2, makePortVal(resNode, 0));
+    builder.create<cf::BranchOp>(loc, skipLink);
+
+    builder.setInsertionPointToStart(skipLink);
+    builder.create<cf::BranchOp>(loc, lHead);
+
+    builder.setInsertionPointToStart(checkBinary);
+    Block *doBinary = wFunc.addBlock();
+    Block *doComm = wFunc.addBlock();
+    builder.create<cf::CondBranchOp>(loc, isBinary, doBinary, doComm);
+
+    builder.setInsertionPointToStart(doBinary);
+    Value rPort = builder.create<pic::runtime::GetPortOp>(loc, i64Type, opNode, builder.getI8IntegerAttr(1));
+    Value rPort_32 = builder.create<arith::TruncIOp>(loc, i32Type, rPort);
+    Value rTarget = builder.create<arith::ShRUIOp>(loc, rPort_32, c2_i32);
+    Value rMeta = builder.create<pic::runtime::GetPortOp>(loc, i64Type, rTarget, builder.getI8IntegerAttr(3));
+    Value rMeta_32 = builder.create<arith::TruncIOp>(loc, i32Type, rMeta);
+    Value rLabel = builder.create<arith::AndIOp>(loc, rMeta_32, c0xFFFFFF_i32);
+    Value cCallCode = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("call")));
+    Value isCall = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, valLabel, cCallCode);
+    Value rLabelMatch = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rLabel, valLabel);
+    Value isRVal = builder.create<arith::OrIOp>(loc, rLabelMatch, isCall);
+
+    Block *doFullBinary = wFunc.addBlock();
+    builder.create<cf::CondBranchOp>(loc, isRVal, doFullBinary, doComm);
+
+    builder.setInsertionPointToStart(doFullBinary);
+    Value v1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, rTarget, builder.getI8IntegerAttr(1));
+    Value rTarget_ext = builder.create<arith::ExtUIOp>(loc, i64Type, rTarget);
+    Value firstArg = builder.create<arith::SelectOp>(loc, isCall, rTarget_ext, v1);
+    Value callArg0 = builder.create<arith::SelectOp>(loc, isCall, v0, firstArg);
+    Value valNode_aux2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, valNode, builder.getI8IntegerAttr(2));
+    Value callArg1 = builder.create<arith::SelectOp>(loc, isCall, valNode_aux2, v0);
+
+    Value isGpuBin = builder.create<func::CallOp>(loc, i1Type, "is_gpu_op", ValueRange{impl}).getResult(0);
+    Block *gpuBranchBin = wFunc.addBlock();
+    Block *cpuBranchBin = wFunc.addBlock();
+    builder.create<cf::CondBranchOp>(loc, isGpuBin, gpuBranchBin, cpuBranchBin);
+
+    builder.setInsertionPointToStart(gpuBranchBin);
+    builder.create<func::CallOp>(loc, i64Type, "dispatch_user_op", ValueRange{impl, callArg0, callArg1, c0_i64, c0_i64, valNode, opNode, stateArg});
+    builder.create<cf::BranchOp>(loc, lHead);
+
+    builder.setInsertionPointToStart(cpuBranchBin);
+    Value resValBin = builder.create<func::CallOp>(loc, i64Type, "dispatch_user_op", ValueRange{impl, callArg0, callArg1, c0_i64, c0_i64, valNode, opNode, stateArg}).getResult(0);
+    Value isSameBin = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, resValBin, callArg1);
+    Block *skipLinkBin = wFunc.addBlock();
+    Block *doLinkBin = wFunc.addBlock();
+    builder.create<cf::CondBranchOp>(loc, isSameBin, skipLinkBin, doLinkBin);
+
+    builder.setInsertionPointToStart(doLinkBin);
+    Value valLabelBin64 = builder.create<arith::ExtUIOp>(loc, i64Type, valLabel);
+    Value resNodeBin = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(133), valLabelBin64, builder.getBoolAttr(false));
+    builder.create<pic::runtime::SetPortOp>(loc, resNodeBin, builder.getI8IntegerAttr(1), resValBin);
+    Value opNode_aux2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, opNode, builder.getI8IntegerAttr(2));
+    builder.create<pic::runtime::LinkOp>(loc, opNode_aux2, makePortVal(resNodeBin, 0));
+    builder.create<cf::BranchOp>(loc, skipLinkBin);
+
+    builder.setInsertionPointToStart(skipLinkBin);
+    builder.create<cf::BranchOp>(loc, lHead);
+
+    // doComm
+    builder.setInsertionPointToStart(doComm);
+    Value metaValVal = builder.create<arith::SelectOp>(loc, hasRuleA, metaB, metaA);
+    Value metaValOp = builder.create<arith::SelectOp>(loc, hasRuleA, metaA, metaB);
+    Value valIsLit = isLiteralLabel(valLabel);
+    Block *valLitCase = wFunc.addBlock();
+    Block *checkOpLit = wFunc.addBlock();
+    builder.create<cf::CondBranchOp>(loc, valIsLit, valLitCase, checkOpLit);
+
+    // If valLabel is a literal constant
+    builder.setInsertionPointToStart(valLitCase);
+    Value litValVal = builder.create<pic::runtime::GetPortOp>(loc, i64Type, valNode, builder.getI8IntegerAttr(1));
+    Value valLit1 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(0), c0_i64, builder.getBoolAttr(false));
+    Value valLit2 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(0), c0_i64, builder.getBoolAttr(false));
+    builder.create<pic::runtime::SetPortOp>(loc, valLit1, builder.getI8IntegerAttr(3), metaValVal);
+    builder.create<pic::runtime::SetPortOp>(loc, valLit2, builder.getI8IntegerAttr(3), metaValVal);
+    builder.create<pic::runtime::SetPortOp>(loc, valLit1, builder.getI8IntegerAttr(1), litValVal);
+    builder.create<pic::runtime::SetPortOp>(loc, valLit2, builder.getI8IntegerAttr(1), litValVal);
+    Value auxB1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, opNode, builder.getI8IntegerAttr(1));
+    Value auxB2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, opNode, builder.getI8IntegerAttr(2));
+    builder.create<pic::runtime::LinkOp>(loc, makePortVal(valLit1, 0), auxB1);
+    builder.create<pic::runtime::LinkOp>(loc, makePortVal(valLit2, 0), auxB2);
+    builder.create<cf::BranchOp>(loc, lHead);
+
+    // Check if opLabel is a literal constant
+    builder.setInsertionPointToStart(checkOpLit);
+    Value opIsLit = isLiteralLabel(opLabel);
+    Block *opLitCase = wFunc.addBlock();
+    Block *stdCommCase = wFunc.addBlock();
+    builder.create<cf::CondBranchOp>(loc, opIsLit, opLitCase, stdCommCase);
+
+    // If opLabel is a literal constant
+    builder.setInsertionPointToStart(opLitCase);
+    Value litValOp = builder.create<pic::runtime::GetPortOp>(loc, i64Type, opNode, builder.getI8IntegerAttr(1));
+    Value opLit1 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(0), c0_i64, builder.getBoolAttr(false));
+    Value opLit2 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(0), c0_i64, builder.getBoolAttr(false));
+    builder.create<pic::runtime::SetPortOp>(loc, opLit1, builder.getI8IntegerAttr(3), metaValOp);
+    builder.create<pic::runtime::SetPortOp>(loc, opLit2, builder.getI8IntegerAttr(3), metaValOp);
+    builder.create<pic::runtime::SetPortOp>(loc, opLit1, builder.getI8IntegerAttr(1), litValOp);
+    builder.create<pic::runtime::SetPortOp>(loc, opLit2, builder.getI8IntegerAttr(1), litValOp);
+    Value auxA1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, valNode, builder.getI8IntegerAttr(1));
+    Value auxA2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, valNode, builder.getI8IntegerAttr(2));
+    builder.create<pic::runtime::LinkOp>(loc, makePortVal(opLit1, 0), auxA1);
+    builder.create<pic::runtime::LinkOp>(loc, makePortVal(opLit2, 0), auxA2);
+    builder.create<cf::BranchOp>(loc, lHead);
+
+    // Standard commutation case
+    builder.setInsertionPointToStart(stdCommCase);
+    Value auxA1_std = builder.create<pic::runtime::GetPortOp>(loc, i64Type, valNode, builder.getI8IntegerAttr(1));
+    Value auxA2_std = builder.create<pic::runtime::GetPortOp>(loc, i64Type, valNode, builder.getI8IntegerAttr(2));
+    Value auxB1_std = builder.create<pic::runtime::GetPortOp>(loc, i64Type, opNode, builder.getI8IntegerAttr(1));
+    Value auxB2_std = builder.create<pic::runtime::GetPortOp>(loc, i64Type, opNode, builder.getI8IntegerAttr(2));
+
+    Value polOp = builder.create<arith::SelectOp>(loc, hasRuleA, polA, polB);
+    Value polVal = builder.create<arith::SelectOp>(loc, hasRuleA, polB, polA);
+
+    Value a1 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(0), c0_i64, builder.getBoolAttr(false));
+    Value a2 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(0), c0_i64, builder.getBoolAttr(false));
+    Value b1 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(0), c0_i64, builder.getBoolAttr(false));
+    Value b2 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(0), c0_i64, builder.getBoolAttr(false));
+
+    builder.create<pic::runtime::SetPortOp>(loc, a1, builder.getI8IntegerAttr(3), metaValVal);
+    builder.create<pic::runtime::SetPortOp>(loc, a2, builder.getI8IntegerAttr(3), metaValVal);
+    builder.create<pic::runtime::SetPortOp>(loc, b1, builder.getI8IntegerAttr(3), metaValOp);
+    builder.create<pic::runtime::SetPortOp>(loc, b2, builder.getI8IntegerAttr(3), metaValOp);
+
+    builder.create<pic::runtime::LinkOp>(loc, makePortVal(a1, 1), makePortVal(b1, 1));
+    builder.create<pic::runtime::LinkOp>(loc, makePortVal(a1, 2), makePortVal(b2, 1));
+    builder.create<pic::runtime::LinkOp>(loc, makePortVal(a2, 1), makePortVal(b1, 2));
+    builder.create<pic::runtime::LinkOp>(loc, makePortVal(a2, 2), makePortVal(b2, 2));
+    builder.create<pic::runtime::LinkOp>(loc, makePortVal(a1, 0), auxB1_std);
+    builder.create<pic::runtime::LinkOp>(loc, makePortVal(a2, 0), auxB2_std);
+    builder.create<pic::runtime::LinkOp>(loc, makePortVal(b1, 0), auxA1_std);
+    builder.create<pic::runtime::LinkOp>(loc, makePortVal(b2, 0), auxA2_std);
+    builder.create<cf::BranchOp>(loc, lHead);
+
+    // checkPrint
+    builder.setInsertionPointToStart(checkPrint);
+    Value isPrintA = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelA, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("print"))));
+    Value isPrintB = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelB, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("print"))));
+    Value hasPrint = builder.create<arith::OrIOp>(loc, isPrintA, isPrintB);
+
+    Block *printCase = wFunc.addBlock();
+    Block *checkBranch = wFunc.addBlock();
+    builder.create<cf::CondBranchOp>(loc, hasPrint, printCase, checkBranch);
+
+    // printCase
+    builder.setInsertionPointToStart(printCase);
+    Value printOpNode = builder.create<arith::SelectOp>(loc, isPrintA, bodyNodeA, bodyNodeB);
+    Value printValNode = builder.create<arith::SelectOp>(loc, isPrintA, bodyNodeB, bodyNodeA);
+    Value printValLabel = builder.create<arith::SelectOp>(loc, isPrintA, labelB, labelA);
+    Value nVal = builder.create<pic::runtime::GetPortOp>(loc, i64Type, printValNode, builder.getI8IntegerAttr(1));
+
+    Value cF32Code = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("f32")));
+    Value cF64Code = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("f64")));
+    Value isF32 = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, printValLabel, cF32Code);
+    Value isF64 = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, printValLabel, cF64Code);
+
+    Block *printFloatBlock = wFunc.addBlock();
+    Block *printDoubleBlock = wFunc.addBlock();
+    Block *printIntBlock = wFunc.addBlock();
+    Block *printMergeBlock = wFunc.addBlock();
+
+    builder.create<cf::CondBranchOp>(loc, isF32, printFloatBlock, printDoubleBlock);
+
+    builder.setInsertionPointToStart(printFloatBlock);
+    Value truncVal = builder.create<arith::TruncIOp>(loc, builder.getI32Type(), nVal);
+    Value f32Val = builder.create<arith::BitcastOp>(loc, builder.getF32Type(), truncVal);
+    builder.create<func::CallOp>(loc, TypeRange{}, "lin_print_f32", ValueRange{f32Val});
+    builder.create<cf::BranchOp>(loc, printMergeBlock);
+
+    builder.setInsertionPointToStart(printDoubleBlock);
+    Block *doPrintDouble = wFunc.addBlock();
+    builder.create<cf::CondBranchOp>(loc, isF64, doPrintDouble, printIntBlock);
+
+    builder.setInsertionPointToStart(doPrintDouble);
+    Value f64Val = builder.create<arith::BitcastOp>(loc, builder.getF64Type(), nVal);
+    builder.create<func::CallOp>(loc, TypeRange{}, "lin_print_f64", ValueRange{f64Val});
+    builder.create<cf::BranchOp>(loc, printMergeBlock);
+
+    builder.setInsertionPointToStart(printIntBlock);
+    builder.create<func::CallOp>(loc, TypeRange{}, "lin_print_i32", ValueRange{nVal});
+    builder.create<cf::BranchOp>(loc, printMergeBlock);
+
+    builder.setInsertionPointToStart(printMergeBlock);
+    Value printOpNode_aux2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, printOpNode, builder.getI8IntegerAttr(2));
+    builder.create<pic::runtime::LinkOp>(loc, printOpNode_aux2, makePortVal(printValNode, 0));
+    builder.create<cf::BranchOp>(loc, lHead);
+
+    // checkBranch
+    builder.setInsertionPointToStart(checkBranch);
+    Value isRawBranchA = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelA, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0x873945)));
+    Value isEitherA = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelA, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0x80f214)));
+    Value isBranchA = builder.create<arith::OrIOp>(loc, isRawBranchA, isEitherA);
+    Value isRawBranchB = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelB, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0x873945)));
+    Value isEitherB = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelB, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0x80f214)));
+    Value isBranchB = builder.create<arith::OrIOp>(loc, isRawBranchB, isEitherB);
+    Value hasBranch = builder.create<arith::OrIOp>(loc, isBranchA, isBranchB);
+
+    Block *branchCase = wFunc.addBlock();
+    Block *genericCase = wFunc.addBlock();
+    builder.create<cf::CondBranchOp>(loc, hasBranch, branchCase, genericCase);
+
+    // branchCase
+    builder.setInsertionPointToStart(branchCase);
+    Value branchOpNode = builder.create<arith::SelectOp>(loc, isBranchA, bodyNodeA, bodyNodeB);
+    Value branchValNode = builder.create<arith::SelectOp>(loc, isBranchA, bodyNodeB, bodyNodeA);
+    Value isEither = builder.create<arith::SelectOp>(loc, isBranchA, isEitherA, isEitherB);
+
+    Value nValBr = builder.create<pic::runtime::GetPortOp>(loc, i64Type, branchValNode, builder.getI8IntegerAttr(1));
+    Value condBr = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, nValBr, c0_i64);
+
+    Value eitherPairP = builder.create<pic::runtime::GetPortOp>(loc, i64Type, branchOpNode, builder.getI8IntegerAttr(1));
+    Value eitherPairP_32 = builder.create<arith::TruncIOp>(loc, i32Type, eitherPairP);
+    Value eitherPairNode = builder.create<arith::ShRUIOp>(loc, eitherPairP_32, c2_i32);
+
+    Value eitherBranch1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, eitherPairNode, builder.getI8IntegerAttr(1));
+    Value eitherBranch2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, eitherPairNode, builder.getI8IntegerAttr(2));
+    Value branch1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, branchOpNode, builder.getI8IntegerAttr(1));
+    Value branch2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, branchOpNode, builder.getI8IntegerAttr(2));
+
+    Value trueBranch = builder.create<arith::SelectOp>(loc, isEither, eitherBranch1, branch1);
+    Value falseBranch = builder.create<arith::SelectOp>(loc, isEither, eitherBranch2, branch2);
+    Value taken = builder.create<arith::SelectOp>(loc, condBr, trueBranch, falseBranch);
+    Value untaken = builder.create<arith::SelectOp>(loc, condBr, falseBranch, trueBranch);
+
+    Value eitherCont = builder.create<pic::runtime::GetPortOp>(loc, i64Type, branchOpNode, builder.getI8IntegerAttr(2));
+    Value branchCont = makePortVal(branchOpNode, 0);
+    Value target = builder.create<arith::SelectOp>(loc, isEither, eitherCont, branchCont);
+
+    Value eraBr = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(132), c0_i64, builder.getBoolAttr(false));
+    builder.create<pic::runtime::LinkOp>(loc, untaken, makePortVal(eraBr, 0));
+    builder.create<pic::runtime::LinkOp>(loc, taken, target);
+    builder.create<cf::BranchOp>(loc, lHead);
+
+    // genericCase
+    builder.setInsertionPointToStart(genericCase);
+    Value labelsMatch = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelA, labelB);
+    Value polsDiff = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, polA, polB);
+    Value isAnn_gen = builder.create<arith::AndIOp>(loc, labelsMatch, polsDiff);
+
+    Block *annPath = wFunc.addBlock();
+    builder.create<cf::CondBranchOp>(loc, isAnn_gen, annPath, doComm);
+
+    // annPath
+    builder.setInsertionPointToStart(annPath);
+    Value hWord0A = builder.create<pic::runtime::GetHistoryOp>(loc, i64Type, bodyNodeA, builder.getI8IntegerAttr(0));
+    Value inBoundaryA = builder.create<arith::AndIOp>(loc, hWord0A, c0x100000000_i64);
+    Value isBoundaryA = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, inBoundaryA, c0_i64);
+
+    Block *depLBlock = wFunc.addBlock();
+    Block *skipLBlock = wFunc.addBlock();
+    builder.create<cf::CondBranchOp>(loc, isBoundaryA, depLBlock, skipLBlock);
+
+    builder.setInsertionPointToStart(depLBlock);
+    Value lIdx = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(128 + 7), c0_i64, builder.getBoolAttr(false));
+    Value lIdx64 = builder.create<arith::ExtUIOp>(loc, i64Type, lIdx);
+    
+    Value bodyNodeA64 = builder.create<arith::ExtUIOp>(loc, i64Type, bodyNodeA);
+    Value bodyNodeB64 = builder.create<arith::ExtUIOp>(loc, i64Type, bodyNodeB);
+    builder.create<pic::runtime::SetPortOp>(loc, lIdx, builder.getI8IntegerAttr(1), bodyNodeA64);
+    builder.create<pic::runtime::SetPortOp>(loc, lIdx, builder.getI8IntegerAttr(2), bodyNodeB64);
+    
+    builder.create<pic::runtime::SetPortOp>(loc, lIdx, builder.getI8IntegerAttr(3), builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(2214592512ULL)));
+
+    Value logPtrA = builder.create<arith::AndIOp>(loc, hWord0A, c0xFFFFFFFF_i64);
+    Value valWord0 = builder.create<arith::OrIOp>(loc, c0x100000000_i64, logPtrA);
+    builder.create<pic::runtime::SetHistoryOp>(loc, lIdx, builder.getI8IntegerAttr(0), valWord0);
+
+    Value ann_auxA1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, bodyNodeA, builder.getI8IntegerAttr(1));
+    Value ann_auxA2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, bodyNodeA, builder.getI8IntegerAttr(2));
+    Value ann_auxB1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, bodyNodeB, builder.getI8IntegerAttr(1));
+    Value ann_auxB2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, bodyNodeB, builder.getI8IntegerAttr(2));
+
+    auto getNeighborPortVal = [&](Value auxPort) {
+        Value auxPort_32 = builder.create<arith::TruncIOp>(loc, i32Type, auxPort);
+        Value nNode = builder.create<arith::ShRUIOp>(loc, auxPort_32, c2_i32);
+        Value nPort = builder.create<arith::AndIOp>(loc, auxPort_32, c3_i32);
+        Value nPort8 = builder.create<arith::TruncIOp>(loc, i8Type, nPort);
+        return builder.create<pic::runtime::GetPortDynamicOp>(loc, i64Type, nNode, nPort8);
+    };
+
+    Value neighborA1_ann = getNeighborPortVal(ann_auxA1);
+    Value neighborA2_ann = getNeighborPortVal(ann_auxA2);
+    Value neighborB1_ann = getNeighborPortVal(ann_auxB1);
+    Value neighborB2_ann = getNeighborPortVal(ann_auxB2);
+
+    Value wordA12_ann = builder.create<arith::OrIOp>(loc, builder.create<arith::ShLIOp>(loc, i64Type, neighborA1_ann, c32_i64), neighborA2_ann);
+    Value wordB12_ann = builder.create<arith::OrIOp>(loc, builder.create<arith::ShLIOp>(loc, i64Type, neighborB1_ann, c32_i64), neighborB2_ann);
+
+    builder.create<pic::runtime::SetHistoryOp>(loc, bodyNodeA, builder.getI8IntegerAttr(1), wordA12_ann);
+    builder.create<pic::runtime::SetHistoryOp>(loc, bodyNodeB, builder.getI8IntegerAttr(1), wordB12_ann);
+    builder.create<pic::runtime::SetHistoryOp>(loc, lIdx, builder.getI8IntegerAttr(1), c0_i64);
+
+    auto updateNeighborHistory = [&](Value auxPort) {
+        Value auxPort_32 = builder.create<arith::TruncIOp>(loc, i32Type, auxPort);
+        Value nNode = builder.create<arith::ShRUIOp>(loc, auxPort_32, c2_i32);
+        Value hWord0N = builder.create<pic::runtime::GetHistoryOp>(loc, i64Type, nNode, builder.getI8IntegerAttr(0));
+        Value flagsN = builder.create<arith::AndIOp>(loc, hWord0N, c0xFFFFFFFF00000000_i64);
+        Value newWord0N = builder.create<arith::OrIOp>(loc, flagsN, lIdx64);
+        builder.create<pic::runtime::SetHistoryOp>(loc, nNode, builder.getI8IntegerAttr(0), newWord0N);
+    };
+
+    updateNeighborHistory(ann_auxA1);
+    updateNeighborHistory(ann_auxA2);
+    updateNeighborHistory(ann_auxB1);
+    updateNeighborHistory(ann_auxB2);
+
+    builder.create<cf::BranchOp>(loc, skipLBlock);
+
+    builder.setInsertionPointToStart(skipLBlock);
+    Value final_auxA1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, bodyNodeA, builder.getI8IntegerAttr(1));
+    Value final_auxA2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, bodyNodeA, builder.getI8IntegerAttr(2));
+    Value final_auxB1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, bodyNodeB, builder.getI8IntegerAttr(1));
+    Value final_auxB2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, bodyNodeB, builder.getI8IntegerAttr(2));
+
+    builder.create<pic::runtime::LinkOp>(loc, final_auxA1, final_auxB1);
+    builder.create<pic::runtime::LinkOp>(loc, final_auxA2, final_auxB2);
+    builder.create<cf::BranchOp>(loc, lHead);
+
+    // ==========================================
+    // lEnd
+    // ==========================================
+    builder.setInsertionPointToStart(lEnd);
+    builder.create<func::ReturnOp>(loc, ValueRange{c0_i64});
+  }
 };
 
 struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, OperationPass<ModuleOp>> {
@@ -353,6 +959,37 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
   void runOnOperation() override {
     ModuleOp module = getOperation();
     OpBuilder builder(module.getContext());
+    
+    // First, convert all func.call to runtime helper functions to LLVM calls
+    module.walk([&](func::CallOp callOp) {
+        StringRef callee = callOp.getCallee();
+        if (callee == "lookup_rule" || callee == "dispatch_user_op" ||
+            callee == "is_gpu_op" || callee == "get_num_args" ||
+            callee == "lin_print_i32" || callee == "lin_print_f32" ||
+            callee == "lin_print_f64") {
+            
+            OpBuilder b(callOp);
+            SmallVector<Value> operands;
+            for (auto op : callOp.getOperands()) {
+                operands.push_back(op);
+            }
+            SmallVector<Type, 1> retTypes;
+            if (callOp.getNumResults() > 0) {
+                retTypes.push_back(callOp.getResult(0).getType());
+            }
+            auto llvmCall = b.create<LLVM::CallOp>(callOp.getLoc(), retTypes, callee, operands);
+            if (callOp.getNumResults() > 0) {
+                callOp.getResult(0).replaceAllUsesWith(llvmCall.getResult());
+            }
+            callOp.erase();
+        }
+    });
+
+    for (StringRef name : {"lookup_rule", "dispatch_user_op", "is_gpu_op", "get_num_args", "lin_print_i32", "lin_print_f32", "lin_print_f64"}) {
+        if (auto funcOp = module.lookupSymbol<func::FuncOp>(name)) {
+            funcOp.erase();
+        }
+    }
     builder.setInsertionPointToStart(module.getBody());
 
     auto i32Type = builder.getI32Type();
@@ -372,12 +1009,12 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         if (!module.lookupSymbol<LLVM::LLVMFuncOp>(n)) 
             builder.create<LLVM::LLVMFuncOp>(module.getLoc(), n, LLVM::LLVMFunctionType::get(r, a, var)); 
     };
-    decl("malloc", ptrType, {i64Type}); decl("free", voidType, {ptrType});
+    decl("malloc", ptrType, {i64Type}); decl("calloc", ptrType, {i64Type, i64Type}); decl("free", voidType, {ptrType});
     decl("pthread_create", i32Type, {ptrType, ptrType, ptrType, ptrType}); decl("pthread_join", i32Type, {i64Type, ptrType});
     decl("printf", i32Type, {ptrType}, true);
 
     module.walk([&](func::FuncOp f) {
-        if (f.getSymName() == "worker_thread" || f.empty()) return;
+        if (f.empty()) return;
         OpBuilder b(&f.getBody().front(), f.getBody().front().begin());
         Value stateArg;
         if (f.getSymName() == "worker_thread") {
@@ -394,12 +1031,19 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             stateArg = f.getArgument(f.getNumArguments() - 1);
         }
         
-        SmallVector<Operation*> nodes, setPorts, links, uncomputeSweeps;
+        SmallVector<Operation*> nodes, setPorts, getPorts, getPortsDynamic, links, pushRedexs, popRedexs, getHistorys, setHistorys, uncomputeSweeps;
         f.walk([&](Operation *o) {
-            if (o->getName().getStringRef() == "pic_runtime.alloc_node") nodes.push_back(o);
-            else if (o->getName().getStringRef() == "pic_runtime.set_port") setPorts.push_back(o);
-            else if (o->getName().getStringRef() == "pic_runtime.link") links.push_back(o);
-            else if (o->getName().getStringRef() == "pic_runtime.uncompute_sweep") uncomputeSweeps.push_back(o);
+            StringRef opName = o->getName().getStringRef();
+            if (opName == "pic_runtime.alloc_node") nodes.push_back(o);
+            else if (opName == "pic_runtime.set_port") setPorts.push_back(o);
+            else if (opName == "pic_runtime.get_port") getPorts.push_back(o);
+            else if (opName == "pic_runtime.get_port_dynamic") getPortsDynamic.push_back(o);
+            else if (opName == "pic_runtime.link") links.push_back(o);
+            else if (opName == "pic_runtime.push_redex") pushRedexs.push_back(o);
+            else if (opName == "pic_runtime.pop_redex") popRedexs.push_back(o);
+            else if (opName == "pic_runtime.get_history") getHistorys.push_back(o);
+            else if (opName == "pic_runtime.set_history") setHistorys.push_back(o);
+            else if (opName == "pic_runtime.uncompute_sweep") uncomputeSweeps.push_back(o);
         });
 
         for (auto* o : nodes) {
@@ -426,10 +1070,15 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             };
             
             uint8_t typeVal = allocOp.getType();
-            uint64_t labelOrVal = allocOp.getLabelOrVal();
-            uint32_t metaValue = ((uint32_t)typeVal << 24) | (labelOrVal & 0xFFFFFF);
+            Value labelOrVal = allocOp.getLabelOrVal();
             
-            store(0, makePort(0)); store(1, makePort(1)); store(2, makePort(2)); store(3, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(metaValue)));
+            Value typeValConst = ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr((uint64_t)typeVal << 24));
+            Value labelOrVal64 = safeZExt(ob, o->getLoc(), i64Type, labelOrVal);
+            Value maskConst = ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(0xFFFFFF));
+            Value labelMasked = ob.create<LLVM::AndOp>(o->getLoc(), labelOrVal64, maskConst);
+            Value metaValueVal = ob.create<LLVM::OrOp>(o->getLoc(), typeValConst, labelMasked);
+            
+            store(0, makePort(0)); store(1, makePort(1)); store(2, makePort(2)); store(3, metaValueVal);
 
             bool isInsideBoundary = allocOp.getInsideBoundary().value_or(false);
             if (isInsideBoundary) {
@@ -550,6 +1199,121 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             linkPortsLLVM(rPort0, boundaryId);
             o->erase();
         }
+        for (auto* o : getPorts) {
+            OpBuilder ob(o);
+            Value nIdx = o->getOperand(0);
+            int pIdx = o->getAttrOfType<IntegerAttr>("port_index").getInt();
+            Value as = ob.create<LLVM::IntToPtrOp>(o->getLoc(), ptrType, stateArg);
+            Value net = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(0))}));
+            Value nIdx64 = safeZExt(ob, o->getLoc(), i64Type, nIdx);
+            Value offset = ob.create<LLVM::AddOp>(o->getLoc(), i64Type, ob.create<LLVM::ShlOp>(o->getLoc(), i64Type, nIdx64, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(2))), ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(pIdx)));
+            Value val64 = ob.create<LLVM::LoadOp>(o->getLoc(), i64Type, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, net, ValueRange{offset}));
+            o->getResult(0).replaceAllUsesWith(val64);
+            o->erase();
+        }
+        for (auto* o : getPortsDynamic) {
+            OpBuilder ob(o);
+            Value nIdx = o->getOperand(0);
+            Value pIdx = o->getOperand(1);
+            Value as = ob.create<LLVM::IntToPtrOp>(o->getLoc(), ptrType, stateArg);
+            Value net = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(0))}));
+            Value nIdx64 = safeZExt(ob, o->getLoc(), i64Type, nIdx);
+            Value pIdx64 = safeZExt(ob, o->getLoc(), i64Type, pIdx);
+            Value offset = ob.create<LLVM::AddOp>(o->getLoc(), i64Type, ob.create<LLVM::ShlOp>(o->getLoc(), i64Type, nIdx64, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(2))), pIdx64);
+            Value val64 = ob.create<LLVM::LoadOp>(o->getLoc(), i64Type, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, net, ValueRange{offset}));
+            o->getResult(0).replaceAllUsesWith(val64);
+            o->erase();
+        }
+        for (auto* o : pushRedexs) {
+            OpBuilder ob(o);
+            Value nA = o->getOperand(0);
+            Value nB = o->getOperand(1);
+            Value as = ob.create<LLVM::IntToPtrOp>(o->getLoc(), ptrType, stateArg);
+            Value q = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(1))}));
+            Value tlPtr = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(3))}));
+            
+            Value curT = ob.create<LLVM::AtomicRMWOp>(o->getLoc(), LLVM::AtomicBinOp::add, tlPtr, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(1)), LLVM::AtomicOrdering::seq_cst);
+            Value inBounds = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::ult, curT, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(16000000)));
+            
+            Block *curr = ob.getBlock();
+            Block *doStore = curr->splitBlock(o);
+            Block *cont = doStore->splitBlock(doStore->begin());
+            
+            ob.setInsertionPointToEnd(curr);
+            ob.create<LLVM::CondBrOp>(o->getLoc(), inBounds, doStore, cont);
+            
+            ob.setInsertionPointToStart(doStore);
+            Value r = ob.create<LLVM::OrOp>(o->getLoc(), i64Type, safeZExt(ob, o->getLoc(), i64Type, nA), ob.create<LLVM::ShlOp>(o->getLoc(), i64Type, safeZExt(ob, o->getLoc(), i64Type, nB), ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(32))));
+            ob.create<LLVM::StoreOp>(o->getLoc(), r, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, q, ValueRange{curT}));
+            ob.create<LLVM::BrOp>(o->getLoc(), cont);
+            
+            ob.setInsertionPointToStart(cont);
+            o->erase();
+        }
+        for (auto* o : popRedexs) {
+            OpBuilder ob(o);
+            Value as = ob.create<LLVM::IntToPtrOp>(o->getLoc(), ptrType, stateArg);
+            Value q = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(1))}));
+            Value hdPtr = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(2))}));
+            Value tlPtr = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(3))}));
+            
+            Value curH = ob.create<LLVM::AtomicRMWOp>(o->getLoc(), LLVM::AtomicBinOp::add, hdPtr, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(1)), LLVM::AtomicOrdering::seq_cst);
+            Value curT = ob.create<LLVM::LoadOp>(o->getLoc(), i64Type, tlPtr);
+            Value inBounds = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::ult, curH, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(16000000)));
+            Value hasElement = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::ult, curH, curT);
+            Value isValid = ob.create<LLVM::AndOp>(o->getLoc(), inBounds, hasElement);
+            
+            Block *curr = ob.getBlock();
+            Block *doLoad = curr->splitBlock(o);
+            Block *cont = doLoad->splitBlock(doLoad->begin());
+            
+            Value finalA = cont->addArgument(i32Type, o->getLoc());
+            Value finalB = cont->addArgument(i32Type, o->getLoc());
+            
+            ob.setInsertionPointToEnd(curr);
+            Value c0_i32 = ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, ob.getI32IntegerAttr(0));
+            ob.create<LLVM::CondBrOp>(o->getLoc(), isValid, doLoad, ValueRange{}, cont, ValueRange{c0_i32, c0_i32});
+            
+            ob.setInsertionPointToStart(doLoad);
+            Value val = ob.create<LLVM::LoadOp>(o->getLoc(), i64Type, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, q, ValueRange{curH}));
+            Value pA = ob.create<LLVM::TruncOp>(o->getLoc(), i32Type, val);
+            Value pB = ob.create<LLVM::TruncOp>(o->getLoc(), i32Type, ob.create<LLVM::LShrOp>(o->getLoc(), i64Type, val, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(32))));
+            Value c2 = ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(2));
+            Value nA = ob.create<LLVM::LShrOp>(o->getLoc(), i32Type, pA, c2);
+            Value nB = ob.create<LLVM::LShrOp>(o->getLoc(), i32Type, pB, c2);
+            ob.create<LLVM::BrOp>(o->getLoc(), ValueRange{nA, nB}, cont);
+            
+            ob.setInsertionPointToStart(cont);
+            
+            o->getResult(0).replaceAllUsesWith(isValid);
+            o->getResult(1).replaceAllUsesWith(finalA);
+            o->getResult(2).replaceAllUsesWith(finalB);
+            o->erase();
+        }
+        for (auto* o : getHistorys) {
+            OpBuilder ob(o);
+            Value nIdx = o->getOperand(0);
+            int wIdx = o->getAttrOfType<IntegerAttr>("word_index").getInt();
+            Value as = ob.create<LLVM::IntToPtrOp>(o->getLoc(), ptrType, stateArg);
+            Value historyNet = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(5))}));
+            Value nIdx64 = safeZExt(ob, o->getLoc(), i64Type, nIdx);
+            Value offset = ob.create<LLVM::AddOp>(o->getLoc(), i64Type, ob.create<LLVM::ShlOp>(o->getLoc(), i64Type, nIdx64, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(1))), ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(wIdx)));
+            Value val = ob.create<LLVM::LoadOp>(o->getLoc(), i64Type, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, historyNet, ValueRange{offset}));
+            o->getResult(0).replaceAllUsesWith(val);
+            o->erase();
+        }
+        for (auto* o : setHistorys) {
+            OpBuilder ob(o);
+            Value nIdx = o->getOperand(0);
+            int wIdx = o->getAttrOfType<IntegerAttr>("word_index").getInt();
+            Value val = o->getOperand(1);
+            Value as = ob.create<LLVM::IntToPtrOp>(o->getLoc(), ptrType, stateArg);
+            Value historyNet = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(5))}));
+            Value nIdx64 = safeZExt(ob, o->getLoc(), i64Type, nIdx);
+            Value offset = ob.create<LLVM::AddOp>(o->getLoc(), i64Type, ob.create<LLVM::ShlOp>(o->getLoc(), i64Type, nIdx64, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(1))), ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(wIdx)));
+            ob.create<LLVM::StoreOp>(o->getLoc(), val, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, historyNet, ValueRange{offset}));
+            o->erase();
+        }
     });
 
     module.walk([&](pic::graph::RegistryOp op) {
@@ -585,26 +1349,87 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
     SmallVector<std::string> existingDecls;
     for (auto func : module.getOps<func::FuncOp>()) {
-        std::string s;
-        llvm::raw_string_ostream os(s);
-        func.print(os);
-        auto pos = s.find("{");
-        if (pos != std::string::npos) s = s.substr(0, pos);
-        // Trim trailing whitespace
-        s.erase(s.find_last_not_of(" \n\r\t") + 1);
-        
+        std::string name = func.getSymName().str();
+        auto fType = func.getFunctionType();
+        std::string s = "func.func private @" + name + "(";
+        for (unsigned i = 0; i < fType.getNumInputs(); ++i) {
+            std::string typeStr;
+            llvm::raw_string_ostream typeStream(typeStr);
+            fType.getInput(i).print(typeStream);
+            typeStream.flush();
+            s += typeStr;
+            if (i < fType.getNumInputs() - 1) s += ", ";
+        }
+        s += ") -> ";
+        if (fType.getNumResults() == 0) {
+            // no results
+        } else if (fType.getNumResults() == 1) {
+            std::string typeStr;
+            llvm::raw_string_ostream typeStream(typeStr);
+            fType.getResult(0).print(typeStream);
+            typeStream.flush();
+            s += typeStr;
+        } else {
+            s += "(";
+            for (unsigned i = 0; i < fType.getNumResults(); ++i) {
+                std::string typeStr;
+                llvm::raw_string_ostream typeStream(typeStr);
+                fType.getResult(i).print(typeStream);
+                typeStream.flush();
+                s += typeStr;
+                if (i < fType.getNumResults() - 1) s += ", ";
+            }
+            s += ")";
+        }
 #ifdef ENABLE_DEBUG_LOGS
         llvm::errs() << "Captured Decl (func): [" << s << "]\n";
 #endif
         existingDecls.push_back(s);
     }
     for (auto func : module.getOps<LLVM::LLVMFuncOp>()) {
-        std::string decl;
-        llvm::raw_string_ostream os(decl);
-        func.print(os);
-        std::string s = os.str();
-        auto pos = s.find("{");
-        if (pos != std::string::npos) s = s.substr(0, pos);
+        std::string name = func.getSymName().str();
+        auto fType = func.getFunctionType();
+        std::string s;
+        if (name.rfind("lin_", 0) == 0) {
+            s = "func.func private @" + name + "(";
+            for (unsigned i = 0; i < fType.getNumParams(); ++i) {
+                std::string typeStr;
+                llvm::raw_string_ostream typeStream(typeStr);
+                fType.getParamType(i).print(typeStream);
+                typeStream.flush();
+                s += typeStr;
+                if (i < fType.getNumParams() - 1) s += ", ";
+            }
+            s += ") -> ";
+            Type retType = fType.getReturnType();
+            if (!retType.isa<LLVM::LLVMVoidType>()) {
+                std::string typeStr;
+                llvm::raw_string_ostream typeStream(typeStr);
+                retType.print(typeStream);
+                typeStream.flush();
+                s += typeStr;
+            }
+        } else {
+            s = "llvm.func private @" + name + "(";
+            for (unsigned i = 0; i < fType.getNumParams(); ++i) {
+                std::string typeStr;
+                llvm::raw_string_ostream typeStream(typeStr);
+                fType.getParamType(i).print(typeStream);
+                typeStream.flush();
+                s += typeStr;
+                if (i < fType.getNumParams() - 1) s += ", ";
+            }
+            if (fType.isVarArg()) {
+                if (fType.getNumParams() > 0) s += ", ";
+                s += "...";
+            }
+            s += ") -> ";
+            std::string typeStr;
+            llvm::raw_string_ostream typeStream(typeStr);
+            fType.getReturnType().print(typeStream);
+            typeStream.flush();
+            s += typeStr;
+        }
 #ifdef ENABLE_DEBUG_LOGS
         llvm::errs() << "Captured Decl (llvm): [" << s << "]\n";
 #endif
@@ -920,45 +1745,45 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                                      // into an LLVM::LLVMFuncOp body. Convert the referenced
                                      // func::FuncOp callee to LLVM on-the-spot so llvm.call
                                      // can find it, then emit llvm.call.
-                                     if (auto callOp = dyn_cast<func::CallOp>(op)) {
-                                         StringRef callee = callOp.getCallee();
-                                         SmallVector<Value> callArgs;
-                                         for (auto operand : callOp.getOperands())
-                                             callArgs.push_back(mapper.lookupOrDefault(operand));
-                                         Type retTy = i64Type;
-                                         if (callOp.getNumResults() > 0)
-                                             retTy = callOp.getResult(0).getType();
-                                         // If callee is a func::FuncOp, convert it to LLVM in-place
-                                         if (auto calleeFuncOp = module.lookupSymbol<func::FuncOp>(callee)) {
-                                             if (!module.lookupSymbol<LLVM::LLVMFuncOp>(callee)) {
-                                                 // Build equivalent LLVM func
-                                                 SmallVector<Type> llvmArgTys(calleeFuncOp.getNumArguments(), i64Type);
-                                                 OpBuilder llvmB(module.getBodyRegion());
-                                                 auto llvmFty = LLVM::LLVMFunctionType::get(i64Type, llvmArgTys);
-                                                 auto llvmF = llvmB.create<LLVM::LLVMFuncOp>(
-                                                     module.getLoc(), callee, llvmFty);
-                                                 // Move all blocks from the func::FuncOp into the LLVM func
-                                                 llvmF.getBody().takeBody(calleeFuncOp.getBody());
-                                                 // Fix terminators: func::ReturnOp → LLVM::ReturnOp
-                                                 llvmF.walk([&](func::ReturnOp retOp) {
+                                      if (auto callOp = dyn_cast<func::CallOp>(op)) {
+                                          StringRef callee = callOp.getCallee();
+                                          SmallVector<Value> callArgs;
+                                          for (auto operand : callOp.getOperands())
+                                              callArgs.push_back(mapper.lookupOrDefault(operand));
+                                          Type retTy = i64Type;
+                                          if (callOp.getNumResults() > 0)
+                                              retTy = callOp.getResult(0).getType();
+                                          // If callee is a func::FuncOp, convert it to LLVM in-place
+                                          if (auto calleeFuncOp = module.lookupSymbol<func::FuncOp>(callee)) {
+                                              if (!module.lookupSymbol<LLVM::LLVMFuncOp>(callee)) {
+                                                  // Build equivalent LLVM func
+                                                  SmallVector<Type> llvmArgTys(calleeFuncOp.getNumArguments(), i64Type);
+                                                  OpBuilder llvmB(module.getBodyRegion());
+                                                  auto llvmFty = LLVM::LLVMFunctionType::get(i64Type, llvmArgTys);
+                                                  auto llvmF = llvmB.create<LLVM::LLVMFuncOp>(
+                                                      module.getLoc(), callee, llvmFty);
+                                                  // Move all blocks from the func::FuncOp into the LLVM func
+                                                  llvmF.getBody().takeBody(calleeFuncOp.getBody());
+                                                  // Fix terminators: func::ReturnOp → LLVM::ReturnOp
+                                                  llvmF.walk([&](func::ReturnOp retOp) {
                                                      OpBuilder rb(retOp);
                                                      if (retOp.getNumOperands() > 0)
                                                          rb.create<LLVM::ReturnOp>(module.getLoc(), retOp.getOperand(0));
                                                      else
                                                          rb.create<LLVM::ReturnOp>(module.getLoc(), ValueRange{});
                                                      retOp.erase();
-                                                 });
-                                                 calleeFuncOp.erase();
-                                             }
-                                         }
-                                         auto llvmCall = bBody.create<LLVM::CallOp>(
-                                             module.getLoc(), retTy, callee, callArgs);
-                                         if (callOp.getNumResults() > 0) {
-                                             mapper.map(callOp.getResult(0), llvmCall.getResult());
-                                             finalRetVal = llvmCall.getResult();
-                                         }
-                                         continue;
-                                     }
+                                                  });
+                                                  calleeFuncOp.erase();
+                                              }
+                                          }
+                                          auto llvmCall = bBody.create<LLVM::CallOp>(
+                                              module.getLoc(), retTy, callee, callArgs);
+                                          if (callOp.getNumResults() > 0) {
+                                              mapper.map(callOp.getResult(0), llvmCall.getResult());
+                                              finalRetVal = llvmCall.getResult();
+                                          }
+                                          continue;
+                                      }
                                      Operation *cloned = bBody.clone(op, mapper);
                                      if (op.getNumResults() > 0) {
                                          finalRetVal = mapper.lookupOrDefault(op.getResult(0));
@@ -1102,7 +1927,63 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             fb.create<LLVM::ReturnOp>(loc, ValueRange{zero});
         };
         genLookupRule();
+        
+        auto genLinPrintI32 = [&]() {
+            OpBuilder b(module.getBodyRegion());
+            auto fType = LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(module.getContext()), {i64Type});
+            auto f = b.create<LLVM::LLVMFuncOp>(module.getLoc(), "lin_print_i32", fType);
+            Block *entry = f.addEntryBlock();
+            OpBuilder ob(entry, entry->end());
+            
+            Value val = entry->getArgument(0);
+            Value fmtVal = ob.create<LLVM::ConstantOp>(module.getLoc(), builder.getI64Type(), ob.getI64IntegerAttr(174353445LL));
+            Value eight = ob.create<LLVM::ConstantOp>(module.getLoc(), builder.getI32Type(), ob.getI32IntegerAttr(8));
+            Value fmtBuf = ob.create<LLVM::AllocaOp>(module.getLoc(), ptrType, builder.getI32Type(), eight);
+            ob.create<LLVM::StoreOp>(module.getLoc(), fmtVal, fmtBuf);
+            
+            ob.create<LLVM::CallOp>(module.getLoc(), builder.getI32Type(), "printf", ValueRange{fmtBuf, val});
+            ob.create<LLVM::ReturnOp>(module.getLoc(), ValueRange{});
+        };
+        genLinPrintI32();
+
+        auto genLinPrintF32 = [&]() {
+            OpBuilder b(module.getBodyRegion());
+            auto fType = LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(module.getContext()), {builder.getF32Type()});
+            auto f = b.create<LLVM::LLVMFuncOp>(module.getLoc(), "lin_print_f32", fType);
+            Block *entry = f.addEntryBlock();
+            OpBuilder ob(entry, entry->end());
+            
+            Value val = entry->getArgument(0);
+            Value valExt = ob.create<LLVM::FPExtOp>(module.getLoc(), builder.getF64Type(), val);
+            Value fmtVal = ob.create<LLVM::ConstantOp>(module.getLoc(), builder.getI64Type(), ob.getI64IntegerAttr(681509LL));
+            Value eight = ob.create<LLVM::ConstantOp>(module.getLoc(), builder.getI32Type(), ob.getI32IntegerAttr(8));
+            Value fmtBuf = ob.create<LLVM::AllocaOp>(module.getLoc(), ptrType, builder.getI32Type(), eight);
+            ob.create<LLVM::StoreOp>(module.getLoc(), fmtVal, fmtBuf);
+            
+            ob.create<LLVM::CallOp>(module.getLoc(), builder.getI32Type(), "printf", ValueRange{fmtBuf, valExt});
+            ob.create<LLVM::ReturnOp>(module.getLoc(), ValueRange{});
+        };
+        genLinPrintF32();
+
+        auto genLinPrintF64 = [&]() {
+            OpBuilder b(module.getBodyRegion());
+            auto fType = LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(module.getContext()), {builder.getF64Type()});
+            auto f = b.create<LLVM::LLVMFuncOp>(module.getLoc(), "lin_print_f64", fType);
+            Block *entry = f.addEntryBlock();
+            OpBuilder ob(entry, entry->end());
+            
+            Value val = entry->getArgument(0);
+            Value fmtVal = ob.create<LLVM::ConstantOp>(module.getLoc(), builder.getI64Type(), ob.getI64IntegerAttr(681509LL));
+            Value eight = ob.create<LLVM::ConstantOp>(module.getLoc(), builder.getI32Type(), ob.getI32IntegerAttr(8));
+            Value fmtBuf = ob.create<LLVM::AllocaOp>(module.getLoc(), ptrType, builder.getI32Type(), eight);
+            ob.create<LLVM::StoreOp>(module.getLoc(), fmtVal, fmtBuf);
+            
+            ob.create<LLVM::CallOp>(module.getLoc(), builder.getI32Type(), "printf", ValueRange{fmtBuf, val});
+            ob.create<LLVM::ReturnOp>(module.getLoc(), ValueRange{});
+        };
+        genLinPrintF64();
     }
+    /*
     auto wType = LLVM::LLVMFunctionType::get(ptrType, {ptrType});
     auto wFunc = builder.create<LLVM::LLVMFuncOp>(module.getLoc(), "worker_thread", wType);
     Block *wEntry = wFunc.addEntryBlock(); builder.setInsertionPointToStart(wEntry);
@@ -1112,10 +1993,11 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         return builder.create<LLVM::LoadOp>(module.getLoc(), ptrType, builder.create<LLVM::GEPOp>(module.getLoc(), ptrType, ptrType, as, ValueRange{o}));
     };
     Value wNet = getArg(wState, 0); Value wQueue = getArg(wState, 1); Value wHead = getArg(wState, 2); Value wTail = getArg(wState, 3); Value al = getArg(wState, 4); Value wHistoryNet = getArg(wState, 5);
+    */
 
     auto genDispatcher = [&]() {
         OpBuilder b(module.getBodyRegion());
-        auto fType = LLVM::LLVMFunctionType::get(i64Type, {i32Type, i64Type, i64Type, i64Type, i64Type, i32Type, i32Type, ptrType});
+        auto fType = LLVM::LLVMFunctionType::get(i64Type, {i32Type, i64Type, i64Type, i64Type, i64Type, i32Type, i32Type, i64Type});
         auto f = b.create<LLVM::LLVMFuncOp>(module.getLoc(), "dispatch_user_op", fType);
         Block *entry = f.addEntryBlock();
         Value hash = entry->getArgument(0);
@@ -1127,7 +2009,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         Value nodeB = entry->getArgument(6);
         Value dState = entry->getArgument(7);
         OpBuilder eb(entry, entry->end());
-        Value wState = eb.create<LLVM::PtrToIntOp>(module.getLoc(), i64Type, dState);
+        Value wState = dState;
 
         Block *defaultBlock = f.addBlock();
         {
@@ -1159,7 +2041,8 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 ob.create<LLVM::StoreOp>(module.getLoc(), nodeB, ptr1);
 
                 Value oZero = ob.create<LLVM::ConstantOp>(module.getLoc(), i32Type, ob.getI32IntegerAttr(0));
-                Value gepNet = ob.create<LLVM::GEPOp>(module.getLoc(), ptrType, ptrType, dState, ValueRange{oZero});
+                Value dStatePtr = ob.create<LLVM::IntToPtrOp>(module.getLoc(), ptrType, dState);
+                Value gepNet = ob.create<LLVM::GEPOp>(module.getLoc(), ptrType, ptrType, dStatePtr, ValueRange{oZero});
                 Value dNet = ob.create<LLVM::LoadOp>(module.getLoc(), ptrType, gepNet);
 
                 auto gpuDispatchFty = LLVM::LLVMFunctionType::get(
@@ -1174,7 +2057,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 
                 Value one32 = ob.create<LLVM::ConstantOp>(module.getLoc(), i32Type, ob.getI32IntegerAttr(1));
                 Value oFour = ob.create<LLVM::ConstantOp>(module.getLoc(), i32Type, ob.getI32IntegerAttr(4));
-                Value gepAl = ob.create<LLVM::GEPOp>(module.getLoc(), ptrType, ptrType, dState, ValueRange{oFour});
+                Value gepAl = ob.create<LLVM::GEPOp>(module.getLoc(), ptrType, ptrType, dStatePtr, ValueRange{oFour});
                 Value alPtrVal = ob.create<LLVM::LoadOp>(module.getLoc(), ptrType, gepAl);
                 Value pathPtr = ob.create<LLVM::AddressOfOp>(module.getLoc(), ptrType, "GPU_SPIRV_PATH");
                 ob.create<LLVM::CallOp>(module.getLoc(), TypeRange{}, "pic_gpu_dispatch", ValueRange{dNet, pairBuf, one32, alPtrVal, pathPtr});
@@ -1272,6 +2155,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
     };
     genGetNumArgs();
 
+    /*
     Block *lHead = wFunc.addBlock(), *lBody = wFunc.addBlock(), *lEnd = wFunc.addBlock();
     builder.create<LLVM::BrOp>(module.getLoc(), lHead);
     builder.setInsertionPointToStart(lHead);
@@ -1950,6 +2834,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
     builder.setInsertionPointToStart(lEnd);
     builder.create<LLVM::ReturnOp>(module.getLoc(), ValueRange{builder.create<LLVM::IntToPtrOp>(module.getLoc(), ptrType, builder.create<LLVM::ConstantOp>(module.getLoc(), i64Type, builder.getI64IntegerAttr(0)))});
+    */
 
     func::FuncOp entry = module.lookupSymbol<func::FuncOp>("main_inet_entry");
     if (entry) {
@@ -1996,7 +2881,8 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         Value tl = builder.create<LLVM::CallOp>(entry.getLoc(), ptrType, "malloc", ValueRange{builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(8))}).getResult();
         Value alL = builder.create<LLVM::CallOp>(entry.getLoc(), ptrType, "malloc", ValueRange{builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(8))}).getResult();
         Value nSHistory = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(64000000));
-        Value history_net = builder.create<LLVM::CallOp>(entry.getLoc(), ptrType, "malloc", ValueRange{nSHistory}).getResult();
+        Value oneConst = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(1));
+        Value history_net = builder.create<LLVM::CallOp>(entry.getLoc(), ptrType, "calloc", ValueRange{oneConst, nSHistory}).getResult();
         Value zero64 = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(0));
         builder.create<LLVM::StoreOp>(entry.getLoc(), zero64, hd); builder.create<LLVM::StoreOp>(entry.getLoc(), zero64, tl);
         builder.create<LLVM::StoreOp>(entry.getLoc(), builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(0)), alL);
@@ -2004,7 +2890,8 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         auto sA = [&](int i, Value v) { builder.create<LLVM::StoreOp>(entry.getLoc(), v, builder.create<LLVM::GEPOp>(entry.getLoc(), ptrType, ptrType, as, ValueRange{builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(i))})); };
         sA(0, net); sA(1, q); sA(2, hd); sA(3, tl); sA(4, alL); sA(5, history_net);
         builder.create<func::CallOp>(entry.getLoc(), TypeRange{}, entry.getSymName(), ValueRange{builder.create<LLVM::PtrToIntOp>(entry.getLoc(), i64Type, as)});
-        builder.create<LLVM::CallOp>(entry.getLoc(), ptrType, "worker_thread", ValueRange{as});
+        Value asInt = builder.create<LLVM::PtrToIntOp>(entry.getLoc(), i64Type, as);
+        builder.create<func::CallOp>(entry.getLoc(), TypeRange{i64Type}, "worker_thread", ValueRange{asInt});
         if (enableGPU) {
             auto cleanupFty = LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(module.getContext()), {});
             auto cleanupFunc = module.lookupSymbol<LLVM::LLVMFuncOp>("pic_gpu_cleanup");
