@@ -26,7 +26,7 @@ test_casts: func [
     // Check i64 to f64 and back
     f64_val_2: (i64-to-f64 123)
     back_i64: (f64-to-i64 f64_val_2)
-    test4: (neq64 back_i64 123)
+    test4: (ne64 back_i64 123)
 
     either test1 [
         1

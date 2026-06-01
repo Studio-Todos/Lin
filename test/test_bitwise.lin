@@ -56,19 +56,19 @@ test_bitwise: func [
                     either (neq t5 2) [
                         5
                     ][
-                        either (neq64 t6 1) [
+                        either (ne64 t6 1) [
                             6
                         ][
-                            either (neq64 t7 7) [
+                            either (ne64 t7 7) [
                                 7
                             ][
-                                either (neq64 t8 6) [
+                                either (ne64 t8 6) [
                                     8
                                 ][
-                                    either (neq64 t9 10) [
+                                    either (ne64 t9 10) [
                                         9
                                     ][
-                                        either (neq64 t10 2) [
+                                        either (ne64 t10 2) [
                                             10
                                         ][
                                             0

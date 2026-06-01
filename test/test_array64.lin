@@ -36,7 +36,7 @@ test_arrays: func [
     sum: (add64 val1 val2)
 
     // Expected: 42 + 99 = 141
-    either (neq64 sum 141) [
+    either (ne64 sum 141) [
         1 // Fail
     ][
         0 // Pass
