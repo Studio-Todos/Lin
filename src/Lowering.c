@@ -532,7 +532,7 @@ static void linkToEra(MlirContext ctx, MlirBlock block, MlirLocation loc, MlirVa
 }
 
 
-static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation loc, AstNode *expr, Environment *env) {
+static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation loc, AstNode *expr, Environment *env, bool is_top_level) {
     if (!expr) {
         MlirValue nullVal = {NULL};
         return nullVal;
@@ -761,14 +761,14 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
     }
 
     if (expr->type == AST_ASSIGNMENT) {
-        MlirValue rhs = lowerExpression(ctx, block, loc, expr->as.assignment.value, env);
+        MlirValue rhs = lowerExpression(ctx, block, loc, expr->as.assignment.value, env, false);
         env_add(env, expr->as.assignment.name, expr->as.assignment.name_len, rhs);
         return rhs;
     }
 
     if (expr->type == AST_PAIR) {
-        MlirValue left = lowerExpression(ctx, block, loc, expr->as.pair.left, env);
-        MlirValue right = lowerExpression(ctx, block, loc, expr->as.pair.right, env);
+        MlirValue left = lowerExpression(ctx, block, loc, expr->as.pair.left, env, false);
+        MlirValue right = lowerExpression(ctx, block, loc, expr->as.pair.right, env, false);
 
         MlirOperationState pairState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
 
@@ -807,7 +807,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
     }
 
     if (expr->type == AST_FIELD_ACCESS) {
-        MlirValue base_val = lowerExpression(ctx, block, loc, expr->as.field_access.base, env);
+        MlirValue base_val = lowerExpression(ctx, block, loc, expr->as.field_access.base, env, false);
         
         MlirOperationState selState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
         
@@ -850,7 +850,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
             // Skip import and mlir_op since they have no runtime code
             if (!stmt) continue;
             if (stmt->type == AST_IMPORT) continue;
-            lastVal = lowerExpression(ctx, block, loc, stmt, env);
+            lastVal = lowerExpression(ctx, block, loc, stmt, env, false);
         }
 
         if (mlirValueIsNull(lastVal)) {
@@ -1028,7 +1028,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
             }
             linkToEra(ctx, bodyBlock, loc, bodyCurrentBundle);
 
-            MlirValue body_res = lowerExpression(ctx, bodyBlock, loc, expr->as.while_loop.body, &bodyEnv);
+            MlirValue body_res = lowerExpression(ctx, bodyBlock, loc, expr->as.while_loop.body, &bodyEnv, true);
 
             MlirValue *next_vals = malloc(sizeof(MlirValue) * active_count);
             for (int i = 0; i < active_count; i++) {
@@ -1150,7 +1150,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
             }
             linkToEra(ctx, macroBlock, loc, macroCurrentBundle);
 
-            MlirValue cond = lowerExpression(ctx, macroBlock, loc, expr->as.while_loop.condition, &macroEnv);
+            MlirValue cond = lowerExpression(ctx, macroBlock, loc, expr->as.while_loop.condition, &macroEnv, true);
 
             MlirValue *v_trues = malloc(sizeof(MlirValue) * active_count);
             MlirValue *v_falses = malloc(sizeof(MlirValue) * active_count);
@@ -1254,9 +1254,9 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
             MlirValue eitherP0, eitherP1, eitherP2;
             createOmega(ctx, macroBlock, loc, "either", "-", &eitherP0, &eitherP1, &eitherP2);
 
-            linkValues(macroBlock, loc, eitherP0, cond);
-            linkValues(macroBlock, loc, eitherP1, branches_pair);
-            linkValues(macroBlock, loc, eitherP2, macroResultPort);
+            linkValues(macroBlock, loc, eitherP1, cond);
+            linkValues(macroBlock, loc, eitherP2, branches_pair);
+            linkValues(macroBlock, loc, eitherP0, macroResultPort);
 
             MlirOperationState macroRetState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
             MlirType macroI64Type = mlirTypeParseGet(ctx, mlirStringRefCreateFromCString("i64"));
@@ -1493,7 +1493,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
             mlirBlockAppendOwnedOperation(innerBlock, mlirOperationCreate(&linkEraArgState));
         }
 
-        MlirValue bodyResult = lowerExpression(ctx, innerBlock, loc, expr->as.func_decl.body, &innerEnv);
+        MlirValue bodyResult = lowerExpression(ctx, innerBlock, loc, expr->as.func_decl.body, &innerEnv, true);
         env_free(&innerEnv, ctx, innerBlock, loc);
 
         MlirOperationState linkBodyState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
@@ -1638,8 +1638,8 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
 
     if (expr->type == AST_CALL) {
         if (expr->as.call.callee_len == 6 && strncmp(expr->as.call.callee, "either", 6) == 0) {
-            MlirValue cond = lowerExpression(ctx, block, loc, expr->as.call.args[0], env);
-            MlirValue pair = lowerExpression(ctx, block, loc, expr->as.call.args[1], env);
+            MlirValue cond = lowerExpression(ctx, block, loc, expr->as.call.args[0], env, false);
+            MlirValue pair = lowerExpression(ctx, block, loc, expr->as.call.args[1], env, false);
 
             MlirOperationState state = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
 
@@ -1661,21 +1661,21 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
             MlirOperation op = mlirOperationCreate(&state);
             mlirBlockAppendOwnedOperation(block, op);
 
-            MlirValue p0 = mlirOperationGetResult(op, 0); // cond
-            MlirValue p1 = mlirOperationGetResult(op, 1); // pair
-            MlirValue p2 = mlirOperationGetResult(op, 2); // result
+            MlirValue p0 = mlirOperationGetResult(op, 0); // result
+            MlirValue p1 = mlirOperationGetResult(op, 1); // cond
+            MlirValue p2 = mlirOperationGetResult(op, 2); // pair
 
             MlirOperationState linkCondState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-            MlirValue condOps[] = {p0, cond};
+            MlirValue condOps[] = {p1, cond};
             mlirOperationStateAddOperands(&linkCondState, 2, condOps);
             mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkCondState));
 
             MlirOperationState linkPairState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-            MlirValue pairOps[] = {p1, pair};
+            MlirValue pairOps[] = {p2, pair};
             mlirOperationStateAddOperands(&linkPairState, 2, pairOps);
             mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkPairState));
 
-            return p2;
+            return p0;
         }
         // Use resolved_callee (type-directed rewrite) if set, else fall back to callee.
         // resolved_callee is set by the type checker for binary ops (e.g. add→fadd for f32).
@@ -1748,7 +1748,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
                     mlirBlockAppendOwnedOperation(block, eraOp);
                     argVal = mlirOperationGetResult(eraOp, 0);
                 } else {
-                    argVal = lowerExpression(ctx, block, loc, expr->as.call.args[i], env);
+                    argVal = lowerExpression(ctx, block, loc, expr->as.call.args[i], env, false);
                 }
 
                 // For closure calling:
@@ -1844,8 +1844,8 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
 
         // Built-in / unknown callee: lower as omega agent (existing behaviour)
         if (expr->as.call.arg_count == 2) {
-            MlirValue left = lowerExpression(ctx, block, loc, expr->as.call.args[0], env);
-            MlirValue right = lowerExpression(ctx, block, loc, expr->as.call.args[1], env);
+            MlirValue left = lowerExpression(ctx, block, loc, expr->as.call.args[0], env, false);
+            MlirValue right = lowerExpression(ctx, block, loc, expr->as.call.args[1], env, false);
 
             MlirOperationState state = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
 
@@ -1886,7 +1886,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
 
             return result;
         } else if (expr->as.call.arg_count == 1) {
-            MlirValue arg = lowerExpression(ctx, block, loc, expr->as.call.args[0], env);
+            MlirValue arg = lowerExpression(ctx, block, loc, expr->as.call.args[0], env, false);
 
             MlirOperationState state = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
 
@@ -2016,7 +2016,7 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
                 env_add(&env, ast->as.func_decl.args[i].name, ast->as.func_decl.args[i].name_len, eraVal);
             }
 
-            MlirValue result = lowerExpression(ctx, block, loc, ast->as.func_decl.body, &env);
+            MlirValue result = lowerExpression(ctx, block, loc, ast->as.func_decl.body, &env, true);
             env_free(&env, ctx, block, loc);
 
             MlirOperationState retState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
@@ -2078,7 +2078,7 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
                 mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkState));
             }
 
-            MlirValue result = lowerExpression(ctx, block, loc, ast->as.func_decl.body, &env);
+            MlirValue result = lowerExpression(ctx, block, loc, ast->as.func_decl.body, &env, true);
             env_free(&env, ctx, block, loc);
 
             MlirOperationState retState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
@@ -2117,7 +2117,7 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
 
         // lowerExpression(AST_BLOCK) iterates all statements, handles nested func decls,
         // and returns the last expression's port value.
-        MlirValue result = lowerExpression(ctx, block, loc, ast, &env);
+        MlirValue result = lowerExpression(ctx, block, loc, ast, &env, true);
 
         // Erase any remaining live variables before the return
         env_free(&env, ctx, block, loc);

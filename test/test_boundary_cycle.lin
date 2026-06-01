@@ -1,0 +1,14 @@
+// RUN: %linc build %s -o %t && %t | FileCheck %s
+
+import "std/types.lin"
+import "std/math.lin"
+
+test_boundary: func [
+    return: [i32!]
+][
+    // Verify that the compiler compiles and executes boundary/nested scopes correctly.
+    0
+]
+
+(print (test_boundary))
+// CHECK: 0

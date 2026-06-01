@@ -155,6 +155,14 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
       auto i64Type = builder.getI64Type();
       DenseMap<Value, Value> valueToPort;
 
+      auto getInsertPoint = [&](Operation *o) -> Operation* {
+          Operation *curr = o;
+          while (auto parent = curr->getParentOfType<pic::graph::BoundaryOp>()) {
+              curr = parent;
+          }
+          return curr;
+      };
+
       // Update signature to i64 if needed and track arguments
       for (auto arg : funcOp.getArguments()) {
           if (!arg.getType().isInteger(64)) {
@@ -199,7 +207,7 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
 
       funcOp.walk([&](pic::graph::AgentOp op) {
         Location loc = op.getLoc();
-        builder.setInsertionPoint(op);
+        builder.setInsertionPoint(getInsertPoint(op));
         StringRef agentType = op.getAgentType();
         StringRef label = op.getLabel();
         StringRef polarity = op.getPolarity();
@@ -271,15 +279,16 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
         };
 
         if (agentType == "omega") {
-            bool isUserOp = (label == "call");
+            bool isUserOp = (label == "call" || label == "print");
             for (const auto &uLabel : userOpLabels) {
                 if (label == uLabel) {
                     isUserOp = true;
                     break;
                 }
             }
-            if (isUserOp) {
-                valueToPort[op.getP0()] = makePort(0); // Callee/Function -> Port 0 (Principal)
+            bool isLit = (label == "num" || label == "i1" || label == "i8" || label == "i16" || label == "i32" || label == "i64" || label == "f32" || label == "f64" || label == "bool" || label == "str" || label.starts_with("STR_"));
+            if (isUserOp || isLit) {
+                valueToPort[op.getP0()] = makePort(0); // Callee/Function/Literal -> Port 0 (Principal)
                 valueToPort[op.getP1()] = makePort(1); // Arg/Bundle      -> Port 1
                 valueToPort[op.getP2()] = makePort(2); // Result          -> Port 2
             } else {
@@ -300,50 +309,64 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
           }
       });
 
-      DenseMap<Value, Value> portToPort;
+      auto resolvePort = [&](Value v) -> Value {
+          while (valueToPort.count(v)) {
+              Value next = valueToPort[v];
+              if (next == v) break;
+              v = next;
+          }
+          return v;
+      };
+
       funcOp.walk([&](pic::graph::LinkOp op) {
-        if (valueToPort.count(op.getA()) && valueToPort.count(op.getB())) {
-            Value pA = valueToPort[op.getA()];
-            Value pB = valueToPort[op.getB()];
-            builder.setInsertionPoint(op);
-            auto safeExt = [&](Value v) {
-                return (v.getType() == i64Type) ? v : builder.create<arith::ExtUIOp>(op.getLoc(), i64Type, v);
-            };
-            builder.create<pic::runtime::LinkOp>(op.getLoc(), safeExt(pA), safeExt(pB));
-        }
+          Value pA = resolvePort(op.getA());
+          Value pB = resolvePort(op.getB());
+          if (pA.getType().isa<IntegerType>() && pB.getType().isa<IntegerType>()) {
+              builder.setInsertionPoint(getInsertPoint(op));
+              auto safeExt = [&](Value v) {
+                  return (v.getType() == i64Type) ? v : builder.create<arith::ExtUIOp>(op.getLoc(), i64Type, v);
+              };
+              builder.create<pic::runtime::LinkOp>(op.getLoc(), safeExt(pA), safeExt(pB));
+          }
       });
 
       SmallVector<Operation*> toErase;
-      funcOp.walk([&](pic::graph::LinkOp op) { toErase.push_back(op); });
-      funcOp.walk([&](pic::graph::AgentOp op) { toErase.push_back(op); });
+      funcOp.walk([&](pic::graph::LinkOp op) {
+          if (!op->getParentOfType<pic::graph::BoundaryOp>()) {
+              toErase.push_back(op);
+          }
+      });
+      funcOp.walk([&](pic::graph::AgentOp op) {
+          if (!op->getParentOfType<pic::graph::BoundaryOp>()) {
+              toErase.push_back(op);
+          }
+      });
       funcOp.walk([&](pic::graph::BoundaryOp op) {
-          toErase.push_back(op);
-          if (!op.getBody().empty()) {
-              if (auto terminator = op.getBody().front().getTerminator()) {
-                  toErase.push_back(terminator);
-              }
+          if (!op->getParentOfType<pic::graph::BoundaryOp>()) {
+              toErase.push_back(op);
           }
       });
 
       funcOp.walk([&](func::ReturnOp op) {
-         if (op.getNumOperands() > 0 && valueToPort.count(op.getOperand(0))) {
-             Value resPort = valueToPort[op.getOperand(0)];
-             if (funcOp.getSymName() == "main_inet_entry") {
-                 Location loc = op.getLoc();
-                 builder.setInsertionPoint(op);
-                 Value eraValConst = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0x979115));
-                 auto eraAlloc = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, (2 << 6) | NODE_ERA, eraValConst, IntegerAttr{});
-                 Value eraIdx = eraAlloc.getIndex();
-                 auto safeExt = [&](Value v) {
-                     return (v.getType() == i64Type) ? v : builder.create<arith::ExtUIOp>(loc, i64Type, v);
-                 };
-                 Value eraPort = builder.create<arith::OrIOp>(loc, i64Type, builder.create<arith::ShLIOp>(loc, i64Type, safeExt(eraIdx), builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(2))), builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(1)));
-                 builder.create<pic::runtime::LinkOp>(loc, safeExt(resPort), eraPort);
+         if (op->getBlock() == &funcOp.getBody().front() && op.getNumOperands() > 0) {
+             Value resPort = resolvePort(op.getOperand(0));
+             if (resPort.getType().isa<IntegerType>()) {
+                 if (funcOp.getSymName() == "main_inet_entry") {
+                     Location loc = op.getLoc();
+                     builder.setInsertionPoint(op);
+                     Value eraValConst = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0x979115));
+                     auto eraAlloc = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, (2 << 6) | NODE_ERA, eraValConst, IntegerAttr{});
+                     Value eraIdx = eraAlloc.getIndex();
+                     auto safeExt = [&](Value v) {
+                         return (v.getType() == i64Type) ? v : builder.create<arith::ExtUIOp>(loc, i64Type, v);
+                     };
+                     Value eraPort = builder.create<arith::OrIOp>(loc, i64Type, builder.create<arith::ShLIOp>(loc, i64Type, safeExt(eraIdx), builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(2))), builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(1)));
+                     builder.create<pic::runtime::LinkOp>(loc, safeExt(resPort), eraPort);
+                 }
+                 op.setOperand(0, resPort);
              }
-             op.setOperand(0, resPort);
          }
       });
-
       for (auto *op : toErase) op->erase();
     });
   }
@@ -642,7 +665,11 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     Value cCallCode = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("call")));
     Value isCall = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, valLabel, cCallCode);
     Value rLabelMatch = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rLabel, valLabel);
+    Value isRCall = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rLabel, cCallCode);
+    Value rIsLit = isLiteralLabel(rLabel);
     Value isRVal = builder.create<arith::OrIOp>(loc, rLabelMatch, isCall);
+    isRVal = builder.create<arith::OrIOp>(loc, isRVal, isRCall);
+    isRVal = builder.create<arith::OrIOp>(loc, isRVal, rIsLit);
 
     Block *doFullBinary = wFunc.addBlock();
     builder.create<cf::CondBranchOp>(loc, isRVal, doFullBinary, doComm);
@@ -807,7 +834,7 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     builder.create<cf::BranchOp>(loc, printMergeBlock);
 
     builder.setInsertionPointToStart(printMergeBlock);
-    Value printOpNode_aux2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, printOpNode, builder.getI8IntegerAttr(2));
+    Value printOpNode_aux2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, printOpNode, builder.getI8IntegerAttr(1));
     builder.create<pic::runtime::LinkOp>(loc, printOpNode_aux2, makePortVal(printValNode, 0));
     builder.create<cf::BranchOp>(loc, lHead);
 
@@ -1918,6 +1945,10 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 
                 if (!opName.empty() && !typeName.empty()) {
                     addRuleMatch(opcodeForLabel(opName), opcodeForLabel(typeName), opcodeForLabel(op.label));
+                    addRuleMatch(opcodeForLabel(op.label), opcodeForLabel(typeName), opcodeForLabel(op.label));
+                    if (typeName == "i64") {
+                        addRuleMatch(opcodeForLabel(op.label), opcodeForLabel("i32"), opcodeForLabel(op.label));
+                    }
                 }
                 addRuleMatch(opcodeForLabel(op.label), opcodeForLabel("call"), opcodeForLabel(op.label));
             }

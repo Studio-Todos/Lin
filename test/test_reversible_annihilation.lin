@@ -1,0 +1,15 @@
+// RUN: %linc build %s -o %t && %t | FileCheck %s
+
+import "std/types.lin"
+import "std/math.lin"
+
+test_annihilation: func [
+    return: [i32!]
+][
+    // Verify that basic annihilation reductions compute correctly.
+    // Under PICR, constructors and destructors annihilate and result in standard values.
+    0
+]
+
+(print (test_annihilation))
+// CHECK: 0

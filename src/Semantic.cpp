@@ -168,12 +168,12 @@ static const std::unordered_map<std::string, std::array<const char*, 4>> kBinVar
     {"sub", {"sub","sub64","fsub","fsub64"}},
     {"mul", {"mul","mul64","fmul","fmul64"}},
     {"div", {"div","div64","fdiv","fdiv64"}},
-    {"lt",  {"lt", "lt64", "flt", "flt64"}},
-    {"gt",  {"gt", "gt64", "fgt", "fgt64"}},
-    {"le",  {"le", "le64", "fle", "fle64"}},
-    {"ge",  {"ge", "ge64", "fge", "fge64"}},
+    {"lt",  {"lt", "slt64", "flt", "flt64"}},
+    {"gt",  {"gt", "sgt64", "fgt", "fgt64"}},
+    {"le",  {"le", "sle64", "fle", "fle64"}},
+    {"ge",  {"ge", "sge64", "fge", "fge64"}},
     {"eq",  {"eq", "eq64", "feq", "feq64"}},
-    {"ne",  {"ne", "neq64","fneq","fneq64"}},
+    {"ne",  {"ne", "ne64","fneq","fneq64"}},
 };
 
 // Walk AST and rewrite resolved_callee for typed binary ops.

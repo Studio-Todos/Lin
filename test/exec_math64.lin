@@ -7,19 +7,19 @@ test_math64: func [
     argc [i32!]
     return: [i32!]
 ][
-    either (neq64 (add64 10 5) 15) [
+    either (ne64 (add64 10 5) 15) [
         1
     ][
-        either (neq64 (sub64 10 5) 5) [
+        either (ne64 (sub64 10 5) 5) [
             2
         ][
-            either (neq64 (mul64 10 5) 50) [
+            either (ne64 (mul64 10 5) 50) [
                 3
             ][
-                either (neq64 (div64 10 5) 2) [
+                either (ne64 (div64 10 5) 2) [
                     4
                 ][
-                    either (neq64 (rem64 10 3) 1) [
+                    either (ne64 (rem64 10 3) 1) [
                         5
                     ][
                         0
