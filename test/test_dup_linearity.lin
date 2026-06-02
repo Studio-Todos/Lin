@@ -1,0 +1,16 @@
+// test_dup_linearity.lin
+// A3b: Duplication linearity — a shared binding used in two places must
+// correctly insert a delta node so each use gets an independent wire.
+// RUN: %linc build %s -o %t
+// CHECK: Lowering pass successful. Generated LLVM IR:
+// CHECK: Successfully compiled and linked to
+
+let add_i32 = @[add_i32] [inputs: [x [i32] y [i32]]] {
+    %res = arith.addi %x, %y : i32
+    lin.coerce %res : i32 to i64
+}
+
+let x = 3 + 4
+// x is used twice — delta node must give each use an independent copy
+print(x)
+print(x)

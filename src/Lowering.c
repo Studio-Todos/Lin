@@ -363,10 +363,10 @@ static void findFreeVars(AstNode *node, FreeVars *fv, const char **bound, int bo
                     break;
                 }
             }
-            // Built-in operations are not free variables
-            bool is_builtin = (node->as.call.callee_len == 3 && strncmp(node->as.call.callee, "add", 3) == 0) ||
-                             (node->as.call.callee_len == 6 && strncmp(node->as.call.callee, "either", 6) == 0);
-            if (!is_bound && !is_builtin) addFreeVar(fv, node->as.call.callee, node->as.call.callee_len);
+            // Item 4c: do NOT special-case any callee as a builtin here.
+            // If a name like "add" or "either" is not in scope it will fail at use time,
+            // which is correct per the spec's explicit-import philosophy.
+            if (!is_bound) addFreeVar(fv, node->as.call.callee, node->as.call.callee_len);
             
             for (int i = 0; i < node->as.call.arg_count; i++) {
                 findFreeVars(node->as.call.args[i], fv, bound, bound_count);
@@ -839,6 +839,10 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         MlirValue linkOps[] = {p1, base_val};
         mlirOperationStateAddOperands(&linkState, 2, linkOps);
         mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkState));
+        
+        // Item 4d: p2 is unused when only one field is accessed; attach an eraser so no
+        // port is left dangling (a dangling principal port causes the reduction to stall).
+        linkToEra(ctx, block, loc, p2);
         
         return p0;
     }
