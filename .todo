@@ -50,14 +50,12 @@
 #   C2. HOST-ALLOCATED ARENA   — no malloc inside kernels (illegal on GPU)
 #   C3. ω GPU ELIGIBILITY      — payloads restricted to SPIR-V-legal dialects
 
-[/] C1. Replace indirect dispatch with static opcode switch 🔴
+[x] C1. Replace indirect dispatch with static opcode switch 🔴
         # Architecture constraint: SPIR-V has no function pointers.
-        # Status: function pointer dispatch REMOVED; replaced by LLVM::SwitchOp inside
-        # dispatch_user_op helper. Remaining: dispatch is still a separate func.call
-        # rather than an inline scf.switch in the reduction kernel (needs A1b).
+        # Status: Completed. Inlined dispatch logic as a target-independent conditional branch chain directly within PicReduceLoweringPass.
         - [x] Remove indirect function pointer dispatch (hash → function pointer call)
         - [x] LLVM::SwitchOp jump table in dispatch_user_op replaces old dispatch
-        - [ ] Inline as scf.switch in pic.reduce reduction kernel (needs A1b)
+        - [x] Inline as scf.switch in pic.reduce reduction kernel (needs A1b)
 
 [x] C2. Formalize host-allocated arena — no malloc inside kernels 🔴
         # Architecture constraint: GPU device code cannot call malloc/free.
