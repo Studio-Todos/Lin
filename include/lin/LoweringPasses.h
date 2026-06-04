@@ -8,6 +8,7 @@
 
 std::unique_ptr<mlir::Pass> createPicGraphToReducePass();
 std::unique_ptr<mlir::Pass> createPicReduceToRuntimePass(bool enableGPU, std::string spirvPath);
+std::unique_ptr<mlir::Pass> createPicReduceLoweringPass();
 std::unique_ptr<mlir::Pass> createPicRuntimeToLLVMPass(bool enableGPU, std::string spirvPath);
 
 #endif // LINALANG_LOWERING_PASSES_H

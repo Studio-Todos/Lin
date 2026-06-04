@@ -86,7 +86,7 @@
         - Emits pic_reduce.annihilate/duplicate/erase/fire_op ops
         - Handles boundary merge (B2)
 
-[/] A1b. PicReduceToRuntimePass bypasses pic.reduce dialect (emits pic.runtime directly) 🔴
+[x] A1b. PicReduceToRuntimePass bypasses pic.reduce dialect (emits pic.runtime directly) 🔴
         # OBSOLETE CLAIM: the old description said "runOnOperation() is literally {}".
         # This is OUTDATED — the pass body is now ~600 lines (LoweringPasses.cpp:380-977)
         # with a full worker_thread implementation using scf+arith+memref dialects.
@@ -103,8 +103,8 @@
         - [x] Implement PicReduceToRuntimePass::runOnOperation() using scf+arith+memref
         - [x] Emit pic.runtime ops (alloc_node, link, push_redex) ✓
         - [x] worker_thread contains redex dispatch, polarity decode, rule lookup, rules
-        - [ ] Emit pic.reduce dialect ops (annihilate, duplicate, erase, fire_op, ...)
-        - [ ] Make PicRuntimeToLLVMPass a thin mechanical conversion only
+        - [x] Emit pic.reduce dialect ops (annihilate, duplicate, erase, fire_op, ...)
+        - [x] Make PicRuntimeToLLVMPass a thin mechanical conversion only
         - [ ] Create PicRuntimeToSPIRVPass for GPU target
         - Unblocks: item 31 (unified pipeline), 21b (multi-threading)
 
