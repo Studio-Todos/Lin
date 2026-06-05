@@ -808,6 +808,154 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             else if (opName == "pic_runtime.uncompute_sweep") uncomputeSweeps.push_back(o);
         });
 
+        auto nonBarrierLink = [&](OpBuilder &ob, Location loc, Value p1, Value p2, Value as) {
+            Value net = ob.create<LLVM::LoadOp>(loc, ptrType, ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0))}));
+            Value q = ob.create<LLVM::LoadOp>(loc, ptrType, ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(1))}));
+            
+            auto setT = [&](Value v1, Value v2) {
+                Value nIdx = ob.create<LLVM::LShrOp>(loc, i32Type, v1, ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(2)));
+                Value pNum = ob.create<LLVM::AndOp>(loc, i32Type, v1, ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(3)));
+                Value offset = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, safeZExt(ob, loc, i64Type, nIdx), ob.create<LLVM::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(2))), safeZExt(ob, loc, i64Type, pNum));
+                ob.create<LLVM::StoreOp>(loc, v2, ob.create<LLVM::GEPOp>(loc, ptrType, i32Type, net, ValueRange{offset}));
+            };
+            setT(p1, p2); setT(p2, p1);
+            
+            Value isP1 = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, ob.create<LLVM::AndOp>(loc, i32Type, p1, ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(3))), ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0)));
+            Value isP2 = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, ob.create<LLVM::AndOp>(loc, i32Type, p2, ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(3))), ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0)));
+            Value isR = ob.create<LLVM::AndOp>(loc, builder.getI1Type(), isP1, isP2);
+            
+            Block *curr = ob.getBlock();
+            Block *push = f.addBlock();
+            Block *cont = f.addBlock();
+            
+            ob.setInsertionPointToEnd(curr);
+            ob.create<LLVM::CondBrOp>(loc, isR, push, cont);
+            
+            ob.setInsertionPointToStart(push);
+            Value tlPtrPtr = ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(3))});
+            Value tlPtr = ob.create<LLVM::LoadOp>(loc, ptrType, tlPtrPtr);
+            Value curT = ob.create<LLVM::AtomicRMWOp>(loc, LLVM::AtomicBinOp::add, tlPtr, ob.create<LLVM::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(1)), LLVM::AtomicOrdering::seq_cst);
+            Value inBounds = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ult, curT, ob.create<LLVM::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(16000000)));
+            
+            Block *doStore = f.addBlock();
+            Block *contPush = f.addBlock();
+            
+            ob.setInsertionPointToEnd(push);
+            ob.create<LLVM::CondBrOp>(loc, inBounds, doStore, contPush);
+            
+            ob.setInsertionPointToStart(doStore);
+            Value r = ob.create<LLVM::OrOp>(loc, i64Type, safeZExt(ob, loc, i64Type, p1), ob.create<LLVM::ShlOp>(loc, i64Type, safeZExt(ob, loc, i64Type, p2), ob.create<LLVM::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(32))));
+            ob.create<LLVM::StoreOp>(loc, r, ob.create<LLVM::GEPOp>(loc, ptrType, i64Type, q, ValueRange{curT}));
+            ob.create<LLVM::BrOp>(loc, contPush);
+            
+            ob.setInsertionPointToStart(contPush);
+            ob.create<LLVM::BrOp>(loc, cont);
+            
+            ob.setInsertionPointToStart(cont);
+        };
+
+        auto allocateRvecNode = [&](OpBuilder &ob, Location loc, Value as) -> Value {
+            Value alPtr = ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(4))});
+            Value alL = ob.create<LLVM::LoadOp>(loc, ptrType, alPtr);
+            Value nIdx = ob.create<LLVM::AtomicRMWOp>(loc, LLVM::AtomicBinOp::add, alL, ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(1)), LLVM::AtomicOrdering::seq_cst);
+            
+            Value net = ob.create<LLVM::LoadOp>(loc, ptrType, ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0))}));
+            Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
+            Value base = ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(2)));
+            
+            Value metaVal = ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0x88000000));
+            Value off3 = ob.create<LLVM::AddOp>(loc, i64Type, base, ob.create<LLVM::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(3)));
+            ob.create<LLVM::StoreOp>(loc, metaVal, ob.create<LLVM::GEPOp>(loc, ptrType, i32Type, net, ValueRange{off3}));
+            
+            Value port0Val = ob.create<LLVM::OrOp>(loc, i32Type, ob.create<LLVM::ShlOp>(loc, i32Type, nIdx, ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(2))), ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0)));
+            return port0Val;
+        };
+
+        auto genLinkPorts = [&](OpBuilder &ob, Location loc, Value p1, Value p2, Value as) {
+            Value net = ob.create<LLVM::LoadOp>(loc, ptrType, ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0))}));
+            Value historyNet = ob.create<LLVM::LoadOp>(loc, ptrType, ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(5))}));
+            
+            Value p1_32 = safeZExt(ob, loc, i32Type, p1);
+            Value p2_32 = safeZExt(ob, loc, i32Type, p2);
+            
+            Value nIdx1 = ob.create<LLVM::LShrOp>(loc, i32Type, p1_32, ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(2)));
+            Value pNum1 = ob.create<LLVM::AndOp>(loc, i32Type, p1_32, ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(3)));
+            
+            Value nIdx2 = ob.create<LLVM::LShrOp>(loc, i32Type, p2_32, ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(2)));
+            Value pNum2 = ob.create<LLVM::AndOp>(loc, i32Type, p2_32, ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(3)));
+            
+            Value offsetMeta1 = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, safeZExt(ob, loc, i64Type, nIdx1), ob.create<LLVM::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(2))), ob.create<LLVM::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(3)));
+            Value meta1 = ob.create<LLVM::LoadOp>(loc, i32Type, ob.create<LLVM::GEPOp>(loc, ptrType, i32Type, net, ValueRange{offsetMeta1}));
+            
+            Value offsetMeta2 = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, safeZExt(ob, loc, i64Type, nIdx2), ob.create<LLVM::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(2))), ob.create<LLVM::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(3)));
+            Value meta2 = ob.create<LLVM::LoadOp>(loc, i32Type, ob.create<LLVM::GEPOp>(loc, ptrType, i32Type, net, ValueRange{offsetMeta2}));
+            
+            Value typeVal1 = ob.create<LLVM::LShrOp>(loc, i32Type, meta1, ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(24)));
+            Value type1 = ob.create<LLVM::AndOp>(loc, i32Type, typeVal1, ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0x3F)));
+            
+            Value typeVal2 = ob.create<LLVM::LShrOp>(loc, i32Type, meta2, ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(24)));
+            Value type2 = ob.create<LLVM::AndOp>(loc, i32Type, typeVal2, ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0x3F)));
+            
+            Value isRvec1 = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, type1, ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(NODE_RVEC)));
+            Value isPNum1_0 = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, pNum1, ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0)));
+            Value isDup2 = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, type2, ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(NODE_DUP)));
+            Value isPNum2_gt0 = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ugt, pNum2, ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0)));
+            
+            Value condA = ob.create<LLVM::AndOp>(loc, ob.create<LLVM::AndOp>(loc, isRvec1, isPNum1_0), ob.create<LLVM::AndOp>(loc, isDup2, isPNum2_gt0));
+            
+            Value isRvec2 = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, type2, ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(NODE_RVEC)));
+            Value isPNum2_0 = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, pNum2, ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0)));
+            Value isDup1 = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, type1, ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(NODE_DUP)));
+            Value isPNum1_gt0 = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ugt, pNum1, ob.create<LLVM::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0)));
+            
+            Value condB = ob.create<LLVM::AndOp>(loc, ob.create<LLVM::AndOp>(loc, isRvec2, isPNum2_0), ob.create<LLVM::AndOp>(loc, isDup1, isPNum1_gt0));
+            
+            Value isBarrier = ob.create<LLVM::OrOp>(loc, condA, condB);
+            
+            Value dupNodeIdx = ob.create<LLVM::SelectOp>(loc, condA, nIdx2, nIdx1);
+            Value dupNodeIdx64 = safeZExt(ob, loc, i64Type, dupNodeIdx);
+            
+            Block *curr = ob.getBlock();
+            Block *cont = curr->splitBlock(ob.getInsertionPoint());
+            
+            Block *barrierBlock = f.addBlock();
+            Block *mergeBlock = f.addBlock();
+            Block *exitBarrier = f.addBlock();
+            Block *standardLink = f.addBlock();
+            
+            ob.setInsertionPointToEnd(curr);
+            ob.create<LLVM::CondBrOp>(loc, isBarrier, barrierBlock, standardLink);
+            
+            // barrierBlock
+            ob.setInsertionPointToStart(barrierBlock);
+            Value counterOffset = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, dupNodeIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(1))), ob.create<LLVM::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(1)));
+            Value counterPtr = ob.create<LLVM::GEPOp>(loc, ptrType, i64Type, historyNet, ValueRange{counterOffset});
+            Value decVal = ob.create<LLVM::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(1));
+            Value prevCount = ob.create<LLVM::AtomicRMWOp>(loc, LLVM::AtomicBinOp::sub, counterPtr, decVal, LLVM::AtomicOrdering::seq_cst);
+            Value nextCount = ob.create<LLVM::SubOp>(loc, i64Type, prevCount, decVal);
+            Value isZero = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, nextCount, ob.create<LLVM::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0)));
+            ob.create<LLVM::CondBrOp>(loc, isZero, mergeBlock, exitBarrier);
+            
+            // mergeBlock
+            ob.setInsertionPointToStart(mergeBlock);
+            Value offsetW0 = ob.create<LLVM::ShlOp>(loc, i64Type, dupNodeIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(2)));
+            Value w0 = ob.create<LLVM::LoadOp>(loc, i32Type, ob.create<LLVM::GEPOp>(loc, ptrType, i32Type, net, ValueRange{offsetW0}));
+            Value r_out = allocateRvecNode(ob, loc, as);
+            nonBarrierLink(ob, loc, r_out, w0, as);
+            ob.create<LLVM::BrOp>(loc, exitBarrier);
+            
+            // standardLink
+            ob.setInsertionPointToStart(standardLink);
+            nonBarrierLink(ob, loc, p1, p2, as);
+            ob.create<LLVM::BrOp>(loc, exitBarrier);
+            
+            // exitBarrier
+            ob.setInsertionPointToStart(exitBarrier);
+            ob.create<LLVM::BrOp>(loc, cont);
+            
+            ob.setInsertionPointToStart(cont);
+        };
+
         for (auto* o : nodes) {
             OpBuilder ob(o);
             auto allocOp = cast<pic::runtime::AllocNodeOp>(o);
@@ -842,23 +990,26 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             store(0, makePort(0)); store(1, makePort(1)); store(2, makePort(2)); store(3, metaValueVal);
 
             bool isInsideBoundary = allocOp.getInsideBoundary().value_or(false);
-            if (isInsideBoundary) {
+            if (isInsideBoundary || typeVal == NODE_DUP) {
                 Value historyNet = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(5))}));
                 Value hBase = ob.create<LLVM::ShlOp>(o->getLoc(), i64Type, nIdx64, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(1)));
                 Value valWord0 = ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(1ULL << 32)); // bit 0 = inside_boundary is set
-                Value valWord1 = ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(0));
                 
                 Value gep0 = ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, historyNet, ValueRange{hBase});
                 ob.create<LLVM::StoreOp>(o->getLoc(), valWord0, gep0);
                 
                 Value hBasePlus1 = ob.create<LLVM::AddOp>(o->getLoc(), hBase, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(1)));
                 Value gep1 = ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, historyNet, ValueRange{hBasePlus1});
+                
+                // If it is a DUP node, initialize the counter to 2.
+                Value valWord1 = ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(typeVal == NODE_DUP ? 2 : 0));
                 ob.create<LLVM::StoreOp>(o->getLoc(), valWord1, gep1);
             }
 
             o->getResult(0).replaceAllUsesWith(nIdx);
             o->erase();
         }
+
         for (auto* o : setPorts) {
             OpBuilder ob(o);
             Value nIdx = o->getOperand(0);
@@ -870,48 +1021,16 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             ob.create<LLVM::StoreOp>(o->getLoc(), val, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i32Type, net, ValueRange{offset}));
             o->erase();
         }
+
         for (auto* o : links) {
             OpBuilder ob(o);
             Value p1 = o->getOperand(0);
             Value p2 = o->getOperand(1);
             Value as = ob.create<LLVM::IntToPtrOp>(o->getLoc(), ptrType, stateArg);
-            Value net = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(0))}));
-            auto setT = [&](Value v1, Value v2) {
-                Value nIdx = ob.create<LLVM::LShrOp>(o->getLoc(), i32Type, v1, ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(2)));
-                Value pNum = ob.create<LLVM::AndOp>(o->getLoc(), i32Type, v1, ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(3)));
-                Value offset = ob.create<LLVM::AddOp>(o->getLoc(), i64Type, ob.create<LLVM::ShlOp>(o->getLoc(), i64Type, safeZExt(ob, o->getLoc(), i64Type, nIdx), ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(2))), safeZExt(ob, o->getLoc(), i64Type, pNum));
-                ob.create<LLVM::StoreOp>(o->getLoc(), v2, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i32Type, net, ValueRange{offset}));
-            };
-            setT(p1, p2); setT(p2, p1);
-            Value isP1 = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::eq, ob.create<LLVM::AndOp>(o->getLoc(), i32Type, p1, ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(3))), ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(0)));
-            Value isP2 = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::eq, ob.create<LLVM::AndOp>(o->getLoc(), i32Type, p2, ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(3))), ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(0)));
-            Value isR = ob.create<LLVM::AndOp>(o->getLoc(), builder.getI1Type(), isP1, isP2);
-            Block *curr = ob.getBlock();
-            Block *push = curr->splitBlock(o);
-            Block *cont = push->splitBlock(push->begin());
-            ob.setInsertionPointToEnd(curr);
-            ob.create<LLVM::CondBrOp>(o->getLoc(), isR, push, cont);
-            ob.setInsertionPointToStart(push);
-            Value q = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(1))}));
-            Value tlPtrPtr = ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(3))});
-            Value tlPtr = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, tlPtrPtr);
-            // A4b: atomic fetch-add to claim a queue slot — safe for MPMC
-            Value curT = ob.create<LLVM::AtomicRMWOp>(o->getLoc(), LLVM::AtomicBinOp::add, tlPtr, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(1)), LLVM::AtomicOrdering::seq_cst);
-            Value inBounds = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::ult, curT, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(16000000)));
-            Block *currLink = ob.getBlock();
-            Block *doStoreLink = currLink->splitBlock(ob.getInsertionPoint());
-            Block *contLink = doStoreLink->splitBlock(doStoreLink->begin());
-            ob.setInsertionPointToEnd(currLink);
-            ob.create<LLVM::CondBrOp>(o->getLoc(), inBounds, doStoreLink, contLink);
-            ob.setInsertionPointToStart(doStoreLink);
-            Value r = ob.create<LLVM::OrOp>(o->getLoc(), i64Type, safeZExt(ob, o->getLoc(), i64Type, p1), ob.create<LLVM::ShlOp>(o->getLoc(), i64Type, safeZExt(ob, o->getLoc(), i64Type, p2), ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(32))));
-            ob.create<LLVM::StoreOp>(o->getLoc(), r, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, q, ValueRange{curT}));
-            ob.create<LLVM::BrOp>(o->getLoc(), contLink);
-            ob.setInsertionPointToStart(contLink);
-            ob.create<LLVM::BrOp>(o->getLoc(), cont);
-            ob.setInsertionPointToStart(cont);
+            genLinkPorts(ob, o->getLoc(), p1, p2, as);
             o->erase();
         }
+
         for (auto* o : uncomputeSweeps) {
             OpBuilder ob(o);
             Value boundaryId = o->getOperand(0);
@@ -934,43 +1053,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             Value off3 = ob.create<LLVM::AddOp>(o->getLoc(), i64Type, base, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(3)));
             ob.create<LLVM::StoreOp>(o->getLoc(), metaVal, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i32Type, net, ValueRange{off3}));
             
-            auto linkPortsLLVM = [&](Value p1, Value p2) {
-                auto setT = [&](Value v1, Value v2) {
-                    Value nIdx = ob.create<LLVM::LShrOp>(o->getLoc(), i32Type, v1, ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(2)));
-                    Value pNum = ob.create<LLVM::AndOp>(o->getLoc(), i32Type, v1, ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(3)));
-                    Value offset = ob.create<LLVM::AddOp>(o->getLoc(), i64Type, ob.create<LLVM::ShlOp>(o->getLoc(), i64Type, safeZExt(ob, o->getLoc(), i64Type, nIdx), ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(2))), safeZExt(ob, o->getLoc(), i64Type, pNum));
-                    ob.create<LLVM::StoreOp>(o->getLoc(), v2, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i32Type, net, ValueRange{offset}));
-                };
-                setT(p1, p2); setT(p2, p1);
-                Value isP1 = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::eq, ob.create<LLVM::AndOp>(o->getLoc(), i32Type, p1, ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(3))), ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(0)));
-                Value isP2 = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::eq, ob.create<LLVM::AndOp>(o->getLoc(), i32Type, p2, ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(3))), ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(0)));
-                Value isR = ob.create<LLVM::AndOp>(o->getLoc(), builder.getI1Type(), isP1, isP2);
-                Block *curr = ob.getBlock();
-                Block *push = curr->splitBlock(o);
-                Block *cont = push->splitBlock(push->begin());
-                ob.setInsertionPointToEnd(curr);
-                ob.create<LLVM::CondBrOp>(o->getLoc(), isR, push, cont);
-                ob.setInsertionPointToStart(push);
-                Value q = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(1))}));
-                Value tlPtrPtr = ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(3))});
-                Value tlPtr = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, tlPtrPtr);
-                // A4b: atomic fetch-add for MPMC safety in uncompute_sweep link push
-                Value curT = ob.create<LLVM::AtomicRMWOp>(o->getLoc(), LLVM::AtomicBinOp::add, tlPtr, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(1)), LLVM::AtomicOrdering::seq_cst);
-                Value inBoundsUS = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::ult, curT, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(16000000)));
-                Block *currUS = ob.getBlock();
-                Block *doStoreUS = currUS->splitBlock(ob.getInsertionPoint());
-                Block *contUS = doStoreUS->splitBlock(doStoreUS->begin());
-                ob.setInsertionPointToEnd(currUS);
-                ob.create<LLVM::CondBrOp>(o->getLoc(), inBoundsUS, doStoreUS, contUS);
-                ob.setInsertionPointToStart(doStoreUS);
-                Value r = ob.create<LLVM::OrOp>(o->getLoc(), i64Type, safeZExt(ob, o->getLoc(), i64Type, p1), ob.create<LLVM::ShlOp>(o->getLoc(), i64Type, safeZExt(ob, o->getLoc(), i64Type, p2), ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(32))));
-                ob.create<LLVM::StoreOp>(o->getLoc(), r, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, q, ValueRange{curT}));
-                ob.create<LLVM::BrOp>(o->getLoc(), contUS);
-                ob.setInsertionPointToStart(contUS);
-                ob.create<LLVM::BrOp>(o->getLoc(), cont);
-                ob.setInsertionPointToStart(cont);
-            };
-            linkPortsLLVM(rPort0, boundaryId);
+            genLinkPorts(ob, o->getLoc(), rPort0, boundaryId, as);
             o->erase();
         }
         for (auto* o : getPorts) {
@@ -1030,36 +1113,103 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             Value q = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(1))}));
             Value hdPtr = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(2))}));
             Value tlPtr = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(3))}));
+            Value activePtr = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(6))}));
+            Value lockPtr = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(7))}));
             
-            Value curH = ob.create<LLVM::AtomicRMWOp>(o->getLoc(), LLVM::AtomicBinOp::add, hdPtr, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(1)), LLVM::AtomicOrdering::seq_cst);
-            Value curT = ob.create<LLVM::LoadOp>(o->getLoc(), i64Type, tlPtr);
-            Value inBounds = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::ult, curH, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(16000000)));
-            Value hasElement = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::ult, curH, curT);
-            Value isValid = ob.create<LLVM::AndOp>(o->getLoc(), inBounds, hasElement);
+            Value oneVal = ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(1));
+            Value zeroVal = ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(0));
             
             Block *curr = ob.getBlock();
-            Block *doLoad = curr->splitBlock(o);
-            Block *cont = doLoad->splitBlock(doLoad->begin());
+            Block *cont = curr->splitBlock(o);
             
+            Block *spinStart = f.addBlock();
+            Block *lockedCase = f.addBlock();
+            Block *doPop = f.addBlock();
+            Block *doWait = f.addBlock();
+            Block *waitStart = f.addBlock();
+            Block *terminate = f.addBlock();
+            Block *checkQueue = f.addBlock();
+            Block *wakeUp = f.addBlock();
+            Block *keepWaiting = f.addBlock();
+            Block *doLoad = f.addBlock();
+            
+            Value finalValid = cont->addArgument(i1Type, o->getLoc());
             Value finalA = cont->addArgument(i32Type, o->getLoc());
             Value finalB = cont->addArgument(i32Type, o->getLoc());
             
+            // curr: branch to spinStart
             ob.setInsertionPointToEnd(curr);
-            Value c0_i32 = ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, ob.getI32IntegerAttr(0));
-            ob.create<LLVM::CondBrOp>(o->getLoc(), isValid, doLoad, ValueRange{}, cont, ValueRange{c0_i32, c0_i32});
+            ob.create<LLVM::BrOp>(o->getLoc(), spinStart);
             
+            // spinStart: try to acquire spinlock
+            ob.setInsertionPointToStart(spinStart);
+            Value prevLock = ob.create<LLVM::AtomicRMWOp>(o->getLoc(), LLVM::AtomicBinOp::xchg, lockPtr, oneVal, LLVM::AtomicOrdering::seq_cst);
+            Value isLocked = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::eq, prevLock, oneVal);
+            ob.create<LLVM::CondBrOp>(o->getLoc(), isLocked, spinStart, lockedCase);
+            
+            // lockedCase: check queue under lock
+            ob.setInsertionPointToStart(lockedCase);
+            Value curH = ob.create<LLVM::LoadOp>(o->getLoc(), i64Type, hdPtr);
+            Value curT = ob.create<LLVM::LoadOp>(o->getLoc(), i64Type, tlPtr);
+            Value hasElement = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::ult, curH, curT);
+            ob.create<LLVM::CondBrOp>(o->getLoc(), hasElement, doPop, doWait);
+            
+            // doPop: claim index, release lock, branch to doLoad
+            ob.setInsertionPointToStart(doPop);
+            Value nextH = ob.create<LLVM::AddOp>(o->getLoc(), i64Type, curH, oneVal);
+            ob.create<LLVM::StoreOp>(o->getLoc(), nextH, hdPtr);
+            ob.create<LLVM::StoreOp>(o->getLoc(), zeroVal, lockPtr);
+            ob.create<LLVM::BrOp>(o->getLoc(), ValueRange{curH}, doLoad);
+            
+            // doWait: release lock, decrement active_count, branch to waitStart
+            ob.setInsertionPointToStart(doWait);
+            ob.create<LLVM::StoreOp>(o->getLoc(), zeroVal, lockPtr);
+            ob.create<LLVM::AtomicRMWOp>(o->getLoc(), LLVM::AtomicBinOp::sub, activePtr, oneVal, LLVM::AtomicOrdering::seq_cst);
+            ob.create<LLVM::BrOp>(o->getLoc(), waitStart);
+            
+            // waitStart: loop and wait
+            ob.setInsertionPointToStart(waitStart);
+            Value act = ob.create<LLVM::LoadOp>(o->getLoc(), i64Type, activePtr);
+            Value isZero = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::eq, act, zeroVal);
+            ob.create<LLVM::CondBrOp>(o->getLoc(), isZero, terminate, checkQueue);
+            
+            // terminate: all threads are idle and queue is empty -> return valid=false
+            ob.setInsertionPointToStart(terminate);
+            Value falseVal = ob.create<LLVM::ConstantOp>(o->getLoc(), i1Type, builder.getBoolAttr(false));
+            Value zero32 = ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(0));
+            ob.create<LLVM::BrOp>(o->getLoc(), ValueRange{falseVal, zero32, zero32}, cont);
+            
+            // checkQueue: check if work is available
+            ob.setInsertionPointToStart(checkQueue);
+            Value checkH = ob.create<LLVM::LoadOp>(o->getLoc(), i64Type, hdPtr);
+            Value checkT = ob.create<LLVM::LoadOp>(o->getLoc(), i64Type, tlPtr);
+            Value checkHas = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::ult, checkH, checkT);
+            ob.create<LLVM::CondBrOp>(o->getLoc(), checkHas, wakeUp, keepWaiting);
+            
+            // wakeUp: increment active count and return to spinStart to try to pop
+            ob.setInsertionPointToStart(wakeUp);
+            ob.create<LLVM::AtomicRMWOp>(o->getLoc(), LLVM::AtomicBinOp::add, activePtr, oneVal, LLVM::AtomicOrdering::seq_cst);
+            ob.create<LLVM::BrOp>(o->getLoc(), spinStart);
+            
+            // keepWaiting: spin/loop back to waitStart
+            ob.setInsertionPointToStart(keepWaiting);
+            ob.create<LLVM::BrOp>(o->getLoc(), waitStart);
+            
+            // doLoad: load values from queue and return valid=true
+            Value popIdx = doLoad->addArgument(i64Type, o->getLoc());
             ob.setInsertionPointToStart(doLoad);
-            Value val = ob.create<LLVM::LoadOp>(o->getLoc(), i64Type, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, q, ValueRange{curH}));
+            Value val = ob.create<LLVM::LoadOp>(o->getLoc(), i64Type, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, q, ValueRange{popIdx}));
             Value pA = ob.create<LLVM::TruncOp>(o->getLoc(), i32Type, val);
             Value pB = ob.create<LLVM::TruncOp>(o->getLoc(), i32Type, ob.create<LLVM::LShrOp>(o->getLoc(), i64Type, val, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(32))));
             Value c2 = ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(2));
             Value nA = ob.create<LLVM::LShrOp>(o->getLoc(), i32Type, pA, c2);
             Value nB = ob.create<LLVM::LShrOp>(o->getLoc(), i32Type, pB, c2);
-            ob.create<LLVM::BrOp>(o->getLoc(), ValueRange{nA, nB}, cont);
+            Value trueVal = ob.create<LLVM::ConstantOp>(o->getLoc(), i1Type, builder.getBoolAttr(true));
+            ob.create<LLVM::BrOp>(o->getLoc(), ValueRange{trueVal, nA, nB}, cont);
             
+            // cont: replace results
             ob.setInsertionPointToStart(cont);
-            
-            o->getResult(0).replaceAllUsesWith(isValid);
+            o->getResult(0).replaceAllUsesWith(finalValid);
             o->getResult(1).replaceAllUsesWith(finalA);
             o->getResult(2).replaceAllUsesWith(finalB);
             o->erase();
@@ -2232,12 +2382,39 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         Value zero64 = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(0));
         builder.create<LLVM::StoreOp>(entry.getLoc(), zero64, hd); builder.create<LLVM::StoreOp>(entry.getLoc(), zero64, tl);
         builder.create<LLVM::StoreOp>(entry.getLoc(), builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(0)), alL);
-        Value as = builder.create<LLVM::CallOp>(entry.getLoc(), ptrType, "malloc", ValueRange{builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(48))}).getResult();
+        Value as = builder.create<LLVM::CallOp>(entry.getLoc(), ptrType, "malloc", ValueRange{builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(64))}).getResult();
         auto sA = [&](int i, Value v) { builder.create<LLVM::StoreOp>(entry.getLoc(), v, builder.create<LLVM::GEPOp>(entry.getLoc(), ptrType, ptrType, as, ValueRange{builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(i))})); };
-        sA(0, net); sA(1, q); sA(2, hd); sA(3, tl); sA(4, alL); sA(5, history_net);
+        
+        Value activePtr = builder.create<LLVM::CallOp>(entry.getLoc(), ptrType, "malloc", ValueRange{builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(8))}).getResult();
+        Value numThreadsConst = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(4));
+        builder.create<LLVM::StoreOp>(entry.getLoc(), numThreadsConst, activePtr);
+        
+        Value lockPtr = builder.create<LLVM::CallOp>(entry.getLoc(), ptrType, "malloc", ValueRange{builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(8))}).getResult();
+        builder.create<LLVM::StoreOp>(entry.getLoc(), zero64, lockPtr);
+        
+        sA(0, net); sA(1, q); sA(2, hd); sA(3, tl); sA(4, alL); sA(5, history_net); sA(6, activePtr); sA(7, lockPtr);
         builder.create<func::CallOp>(entry.getLoc(), TypeRange{}, entry.getSymName(), ValueRange{builder.create<LLVM::PtrToIntOp>(entry.getLoc(), i64Type, as)});
-        Value asInt = builder.create<LLVM::PtrToIntOp>(entry.getLoc(), i64Type, as);
-        builder.create<func::CallOp>(entry.getLoc(), TypeRange{i64Type}, "worker_thread", ValueRange{asInt});
+        
+        Value four = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(4));
+        Value threads = builder.create<LLVM::AllocaOp>(entry.getLoc(), ptrType, i64Type, four);
+        Value threadAttr = builder.create<LLVM::ZeroOp>(entry.getLoc(), ptrType);
+        auto wFuncType = builder.getFunctionType({i64Type}, {i64Type});
+        auto wFuncConst = builder.create<func::ConstantOp>(entry.getLoc(), wFuncType, FlatSymbolRefAttr::get(builder.getContext(), "worker_thread"));
+        Value wAddr = builder.create<UnrealizedConversionCastOp>(entry.getLoc(), TypeRange{ptrType}, ValueRange(static_cast<Value>(wFuncConst.getResult()))).getResult(0);
+        
+        for (int i = 0; i < 4; ++i) {
+            Value idx = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(i));
+            Value tPtr = builder.create<LLVM::GEPOp>(entry.getLoc(), ptrType, i64Type, threads, ValueRange{idx});
+            builder.create<LLVM::CallOp>(entry.getLoc(), i32Type, "pthread_create", ValueRange{tPtr, threadAttr, wAddr, as});
+        }
+        
+        Value retValPtr = builder.create<LLVM::ZeroOp>(entry.getLoc(), ptrType);
+        for (int i = 0; i < 4; ++i) {
+            Value idx = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(i));
+            Value tPtr = builder.create<LLVM::GEPOp>(entry.getLoc(), ptrType, i64Type, threads, ValueRange{idx});
+            Value tVal = builder.create<LLVM::LoadOp>(entry.getLoc(), i64Type, tPtr);
+            builder.create<LLVM::CallOp>(entry.getLoc(), i32Type, "pthread_join", ValueRange{tVal, retValPtr});
+        }
         if (enableGPU) {
             auto cleanupFty = LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(module.getContext()), {});
             auto cleanupFunc = module.lookupSymbol<LLVM::LLVMFuncOp>("pic_gpu_cleanup");
@@ -2281,8 +2458,10 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
     SmallVector<Operation*> castsToErase;
     module.walk([&](UnrealizedConversionCastOp op) {
-        op.getResult(0).replaceAllUsesWith(op.getOperand(0));
-        castsToErase.push_back(op);
+        if (op.getOperand(0).getType() == op.getResult(0).getType()) {
+            op.getResult(0).replaceAllUsesWith(op.getOperand(0));
+            castsToErase.push_back(op);
+        }
     });
     for (auto* op : castsToErase) op->erase();
   }

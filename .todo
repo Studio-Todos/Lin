@@ -443,7 +443,7 @@
         - Update alloc_node in PicRuntimeDialect.td to accept a boundary_ctx argument
           so the allocator knows whether to provision the second word
 
-[ ] 20b. δ reverse synchronization barrier 🟡
+[x] 20b. δ reverse synchronization barrier 🟡
         # Part of the 128-bit layout audit. Prerequisite: item 20, A7.
         - Duplication in reverse requires both backward signals to arrive before merge fires
         - Per-δ-node atomic arrival counter (i8) stored in the flags field (item 20)
@@ -463,7 +463,7 @@
         - On reverse pass: merged node splits back along its origins wires when different
           backward signals demand it — origins attr provides the routing table for split
 
-[ ] 21b. Single-threaded reduction — pthread_create is declared but never called 🟡
+[x] 21b. Single-threaded reduction — pthread_create is declared but never called 🟡
         # LoweringPasses.cpp:318 — pthread_create and pthread_join are declared as LLVM
         # function declarations. But in main() (line 1746), reduction is run synchronously
         # via a single direct call to worker_thread(as). No threads are ever spawned.
@@ -595,7 +595,7 @@
         [x] test/test_uncompute_sweep.lin          — compile + execute, verifies uncompute execution path
         [x] test/test_boundary_cycle.lin           — compile + execute, verifies boundary scope execution
         [x] test/test_history_logging.lin          — compile + execute, verifies PICR infrastructure
-        [ ] test/test_reverse_dup_barrier.lin      — deferred: requires item 20b (δ sync barrier)
+        [x] test/test_reverse_dup_barrier.lin      — deferred: requires item 20b (δ sync barrier)
         [ ] test/test_invariant4_checker.lin       — deferred: requires item 33 (static checker)
 
 [ ] 35. Standalone superoptimization via Souper 🟢
