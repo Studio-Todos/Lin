@@ -419,7 +419,7 @@
         - [ ] Dedicated PicRuntimeToSPIRVPass as thin mechanical conversion
         - Target: CPU (std LLVM), general GPU (Vulkan/SPIR-V), shader GPU (perf)
 
-[ ] 20. 128-bit node layout audit + PICR history extension 🔴
+[x] 20. 128-bit node layout audit + PICR history extension 🔴
         # Classic audit (was item 20) now merged with PICR layout requirement.
         # Prerequisite for A5–A8, items 21, R6.
         #
@@ -430,8 +430,8 @@
         # spec size and uses a different field order. See item 20c to reconcile.
         # PICR extension second-word IS implemented (LoweringPasses.cpp:1110-1123).
         - [x] Second word for boundary nodes (history net) implemented
-        - [ ] Shrink node from 256-bit (4×i64) to 128-bit per spec
-        - [ ] Reorder fields to match spec: [type|label|port0|port1] packing
+        - [x] Shrink node from 256-bit (4×i64) to 128-bit per spec
+        - [x] Reorder fields to match spec: [type|label|port0|port1] packing
         - Verify: polarity encoded in port value (atomic bit-field), not separate field
         - Lock-free redex detection via single atomic CAS on principal port
         # PICR extension:
@@ -506,7 +506,7 @@
           - Added bitcasting layer to bridge generic `i32` ports with snippet types (`f32`, `i1`, `i64`) ✅
           - Deduplicated RegistryOps to prevent switch-case collisions in dispatcher ✅
 
-[ ] 27. Runtime 64-bit Support 🔴
+[x] 27. Runtime 64-bit Support 🔴
           - The `dispatch_user_op` currently truncates `f64`/`i64` to 32 bits.
           - Need to implement 64-bit "words" or a boxing mechanism for the interaction net nodes.
           - Unblocks: `test_math64.lin`, `test_fmath64.lin`.

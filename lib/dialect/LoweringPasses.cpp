@@ -273,20 +273,25 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
         auto alloc = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, allocType, valConst, builder.getBoolAttr(insideBoundary));
         Value nodeIdx = alloc.getIndex();
         
-        if ((label == "num" || label == "i32" || label == "f64" || label == "bool" || label == "str") && (op.getValue() || op.getStrVal())) {
-            Value litVal;
+        if ((label == "num" || label == "i32" || label == "i64" || label == "f64" || label == "bool" || label == "str") && (op.getValue() || op.getStrVal())) {
             if (label == "str") {
-                litVal = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(val));
+                Value litVal = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(val));
+                builder.create<pic::runtime::SetPortOp>(loc, nodeIdx, builder.getI8IntegerAttr(1), litVal);
             } else {
-                litVal = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(op.getValue().value()));
+                uint64_t fullVal = op.getValue().value();
+                Value lowVal = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(fullVal & 0xFFFFFFFF));
+                builder.create<pic::runtime::SetPortOp>(loc, nodeIdx, builder.getI8IntegerAttr(1), lowVal);
+                if (label == "f64" || label == "i64" || label == "num") {
+                    Value highVal = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(fullVal >> 32));
+                    builder.create<pic::runtime::SetPortOp>(loc, nodeIdx, builder.getI8IntegerAttr(2), highVal);
+                }
             }
-            builder.create<pic::runtime::SetPortOp>(loc, nodeIdx, builder.getI8IntegerAttr(1), litVal);
         }
 
         auto makePort = [&](int i) {
-            Value nodeIdx64 = (nodeIdx.getType() == i64Type) ? nodeIdx : builder.create<arith::ExtUIOp>(loc, i64Type, nodeIdx);
-            Value shifted = builder.create<arith::ShLIOp>(loc, i64Type, nodeIdx64, builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(2)));
-            return builder.create<arith::OrIOp>(loc, i64Type, shifted, builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(i)));
+            Value nodeIdx32 = (nodeIdx.getType() == i32Type) ? nodeIdx : builder.create<arith::TruncIOp>(loc, i32Type, nodeIdx);
+            Value shifted = builder.create<arith::ShLIOp>(loc, i32Type, nodeIdx32, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(2)));
+            return builder.create<arith::OrIOp>(loc, i32Type, shifted, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(i)));
         };
 
         if (agentType == "omega") {
@@ -334,10 +339,10 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
           Value pB = resolvePort(op.getB());
           if (pA.getType().isa<IntegerType>() && pB.getType().isa<IntegerType>()) {
               builder.setInsertionPoint(getInsertPoint(op));
-              auto safeExt = [&](Value v) {
-                  return (v.getType() == i64Type) ? v : builder.create<arith::ExtUIOp>(op.getLoc(), i64Type, v);
+              auto safeTrunc = [&](Value v) {
+                  return (v.getType() == i32Type) ? v : builder.create<arith::TruncIOp>(op.getLoc(), i32Type, v);
               };
-              builder.create<pic::runtime::LinkOp>(op.getLoc(), safeExt(pA), safeExt(pB));
+              builder.create<pic::runtime::LinkOp>(op.getLoc(), safeTrunc(pA), safeTrunc(pB));
           }
       });
 
@@ -368,13 +373,16 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
                      Value eraValConst = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0x979115));
                      auto eraAlloc = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, (2 << 6) | NODE_ERA, eraValConst, IntegerAttr{});
                      Value eraIdx = eraAlloc.getIndex();
-                     auto safeExt = [&](Value v) {
-                         return (v.getType() == i64Type) ? v : builder.create<arith::ExtUIOp>(loc, i64Type, v);
+                     Value eraPort = builder.create<arith::OrIOp>(loc, i32Type, builder.create<arith::ShLIOp>(loc, i32Type, eraIdx, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(2))), builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(1)));
+                     auto safeTrunc = [&](Value v) {
+                         return (v.getType() == i32Type) ? v : builder.create<arith::TruncIOp>(loc, i32Type, v);
                      };
-                     Value eraPort = builder.create<arith::OrIOp>(loc, i64Type, builder.create<arith::ShLIOp>(loc, i64Type, safeExt(eraIdx), builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(2))), builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(1)));
-                     builder.create<pic::runtime::LinkOp>(loc, safeExt(resPort), eraPort);
+                     builder.create<pic::runtime::LinkOp>(loc, safeTrunc(resPort), eraPort);
                  }
-                 op.setOperand(0, resPort);
+                 auto safeExtReturn = [&](Value v) {
+                     return (v.getType() == i64Type) ? v : builder.create<arith::ExtUIOp>(op.getLoc(), i64Type, v);
+                 };
+                 op.setOperand(0, safeExtReturn(resPort));
              }
          }
       });
@@ -484,25 +492,21 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     builder.setInsertionPointToStart(lBody);
 
     auto makePortVal = [&](Value idx, int p) {
-        Value idx64 = builder.create<arith::ExtUIOp>(loc, i64Type, idx);
-        Value sh = builder.create<arith::ShLIOp>(loc, i64Type, idx64, c2_i64);
-        return builder.create<arith::OrIOp>(loc, i64Type, sh, builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(p)));
+        Value sh = builder.create<arith::ShLIOp>(loc, i32Type, idx, c2_i32);
+        return builder.create<arith::OrIOp>(loc, i32Type, sh, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(p)));
     };
 
-    Value metaA = builder.create<pic::runtime::GetPortOp>(loc, i64Type, bodyNodeA, builder.getI8IntegerAttr(3));
-    Value metaB = builder.create<pic::runtime::GetPortOp>(loc, i64Type, bodyNodeB, builder.getI8IntegerAttr(3));
+    Value metaA = builder.create<pic::runtime::GetPortOp>(loc, i32Type, bodyNodeA, builder.getI8IntegerAttr(3));
+    Value metaB = builder.create<pic::runtime::GetPortOp>(loc, i32Type, bodyNodeB, builder.getI8IntegerAttr(3));
 
-    Value metaA32 = builder.create<arith::TruncIOp>(loc, i32Type, metaA);
-    Value metaB32 = builder.create<arith::TruncIOp>(loc, i32Type, metaB);
+    Value polA = builder.create<arith::ShRUIOp>(loc, metaA, c30_i32);
+    Value polB = builder.create<arith::ShRUIOp>(loc, metaB, c30_i32);
 
-    Value polA = builder.create<arith::ShRUIOp>(loc, metaA32, c30_i32);
-    Value polB = builder.create<arith::ShRUIOp>(loc, metaB32, c30_i32);
+    Value labelA = builder.create<arith::AndIOp>(loc, metaA, c0xFFFFFF_i32);
+    Value labelB = builder.create<arith::AndIOp>(loc, metaB, c0xFFFFFF_i32);
 
-    Value labelA = builder.create<arith::AndIOp>(loc, metaA32, c0xFFFFFF_i32);
-    Value labelB = builder.create<arith::AndIOp>(loc, metaB32, c0xFFFFFF_i32);
-
-    Value typeValA = builder.create<arith::ShRUIOp>(loc, metaA32, c24_i32);
-    Value typeValB = builder.create<arith::ShRUIOp>(loc, metaB32, c24_i32);
+    Value typeValA = builder.create<arith::ShRUIOp>(loc, metaA, c24_i32);
+    Value typeValB = builder.create<arith::ShRUIOp>(loc, metaB, c24_i32);
 
     Value nodeTypeA = builder.create<arith::AndIOp>(loc, typeValA, c0x3F_i32);
     Value nodeTypeB = builder.create<arith::AndIOp>(loc, typeValB, c0x3F_i32);
@@ -577,7 +581,13 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     Value printOpNode = builder.create<arith::SelectOp>(loc, isPrintA, bodyNodeA, bodyNodeB);
     Value printValNode = builder.create<arith::SelectOp>(loc, isPrintA, bodyNodeB, bodyNodeA);
     Value printValLabel = builder.create<arith::SelectOp>(loc, isPrintA, labelB, labelA);
-    Value nVal = builder.create<pic::runtime::GetPortOp>(loc, i64Type, printValNode, builder.getI8IntegerAttr(1));
+    Value nVal = builder.create<pic::runtime::GetPortOp>(loc, i32Type, printValNode, builder.getI8IntegerAttr(1));
+    Value nValHigh = builder.create<pic::runtime::GetPortOp>(loc, i32Type, printValNode, builder.getI8IntegerAttr(2));
+
+    Value low64 = builder.create<arith::ExtUIOp>(loc, i64Type, nVal);
+    Value high64 = builder.create<arith::ExtUIOp>(loc, i64Type, nValHigh);
+    Value shiftHigh = builder.create<arith::ShLIOp>(loc, i64Type, high64, c32_i64);
+    Value combined64 = builder.create<arith::OrIOp>(loc, i64Type, low64, shiftHigh);
 
     Value cF32Code = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("f32")));
     Value cF64Code = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("f64")));
@@ -592,8 +602,7 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     builder.create<cf::CondBranchOp>(loc, isF32, printFloatBlock, printDoubleBlock);
 
     builder.setInsertionPointToStart(printFloatBlock);
-    Value truncVal = builder.create<arith::TruncIOp>(loc, builder.getI32Type(), nVal);
-    Value f32Val = builder.create<arith::BitcastOp>(loc, builder.getF32Type(), truncVal);
+    Value f32Val = builder.create<arith::BitcastOp>(loc, builder.getF32Type(), nVal);
     builder.create<func::CallOp>(loc, TypeRange{}, "lin_print_f32", ValueRange{f32Val});
     builder.create<cf::BranchOp>(loc, printMergeBlock);
 
@@ -602,16 +611,23 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     builder.create<cf::CondBranchOp>(loc, isF64, doPrintDouble, printIntBlock);
 
     builder.setInsertionPointToStart(doPrintDouble);
-    Value f64Val = builder.create<arith::BitcastOp>(loc, builder.getF64Type(), nVal);
+    Value f64Val = builder.create<arith::BitcastOp>(loc, builder.getF64Type(), combined64);
     builder.create<func::CallOp>(loc, TypeRange{}, "lin_print_f64", ValueRange{f64Val});
     builder.create<cf::BranchOp>(loc, printMergeBlock);
 
     builder.setInsertionPointToStart(printIntBlock);
-    builder.create<func::CallOp>(loc, TypeRange{}, "lin_print_i32", ValueRange{nVal});
+    Value isI64Code = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("i64")));
+    Value isNumCode = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("num")));
+    Value isI64 = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, printValLabel, isI64Code);
+    Value isNum = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, printValLabel, isNumCode);
+    Value is64BitInt = builder.create<arith::OrIOp>(loc, isI64, isNum);
+    Value low64_signed = builder.create<arith::ExtSIOp>(loc, i64Type, nVal);
+    Value intVal64 = builder.create<arith::SelectOp>(loc, is64BitInt, combined64, low64_signed);
+    builder.create<func::CallOp>(loc, TypeRange{}, "lin_print_i32", ValueRange{intVal64});
     builder.create<cf::BranchOp>(loc, printMergeBlock);
 
     builder.setInsertionPointToStart(printMergeBlock);
-    Value printOpNode_aux2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, printOpNode, builder.getI8IntegerAttr(1));
+    Value printOpNode_aux2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, printOpNode, builder.getI8IntegerAttr(1));
     builder.create<pic::runtime::LinkOp>(loc, printOpNode_aux2, makePortVal(printValNode, 0));
     builder.create<cf::BranchOp>(loc, lHead);
 
@@ -635,24 +651,23 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     Value branchValNode = builder.create<arith::SelectOp>(loc, isBranchA, bodyNodeB, bodyNodeA);
     Value isEither = builder.create<arith::SelectOp>(loc, isBranchA, isEitherA, isEitherB);
 
-    Value nValBr = builder.create<pic::runtime::GetPortOp>(loc, i64Type, branchValNode, builder.getI8IntegerAttr(1));
-    Value condBr = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, nValBr, c0_i64);
+    Value nValBr = builder.create<pic::runtime::GetPortOp>(loc, i32Type, branchValNode, builder.getI8IntegerAttr(1));
+    Value condBr = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, nValBr, c0_i32);
 
-    Value eitherPairP = builder.create<pic::runtime::GetPortOp>(loc, i64Type, branchOpNode, builder.getI8IntegerAttr(1));
-    Value eitherPairP_32 = builder.create<arith::TruncIOp>(loc, i32Type, eitherPairP);
-    Value eitherPairNode = builder.create<arith::ShRUIOp>(loc, eitherPairP_32, c2_i32);
+    Value eitherPairP = builder.create<pic::runtime::GetPortOp>(loc, i32Type, branchOpNode, builder.getI8IntegerAttr(1));
+    Value eitherPairNode = builder.create<arith::ShRUIOp>(loc, eitherPairP, c2_i32);
 
-    Value eitherBranch1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, eitherPairNode, builder.getI8IntegerAttr(1));
-    Value eitherBranch2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, eitherPairNode, builder.getI8IntegerAttr(2));
-    Value branch1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, branchOpNode, builder.getI8IntegerAttr(1));
-    Value branch2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, branchOpNode, builder.getI8IntegerAttr(2));
+    Value eitherBranch1 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, eitherPairNode, builder.getI8IntegerAttr(1));
+    Value eitherBranch2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, eitherPairNode, builder.getI8IntegerAttr(2));
+    Value branch1 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, branchOpNode, builder.getI8IntegerAttr(1));
+    Value branch2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, branchOpNode, builder.getI8IntegerAttr(2));
 
     Value trueBranch = builder.create<arith::SelectOp>(loc, isEither, eitherBranch1, branch1);
     Value falseBranch = builder.create<arith::SelectOp>(loc, isEither, eitherBranch2, branch2);
     Value taken = builder.create<arith::SelectOp>(loc, condBr, trueBranch, falseBranch);
     Value untaken = builder.create<arith::SelectOp>(loc, condBr, falseBranch, trueBranch);
 
-    Value eitherCont = builder.create<pic::runtime::GetPortOp>(loc, i64Type, branchOpNode, builder.getI8IntegerAttr(2));
+    Value eitherCont = builder.create<pic::runtime::GetPortOp>(loc, i32Type, branchOpNode, builder.getI8IntegerAttr(2));
     Value branchCont = makePortVal(branchOpNode, 0);
     Value target = builder.create<arith::SelectOp>(loc, isEither, eitherCont, branchCont);
 
@@ -807,22 +822,21 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             
             auto store = [&](int i, Value v) {
                 Value off = ob.create<LLVM::AddOp>(o->getLoc(), i64Type, base, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(i)));
-                Value v64 = safeZExt(ob, o->getLoc(), i64Type, v);
-                ob.create<LLVM::StoreOp>(o->getLoc(), v64, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, net, ValueRange{off}));
+                Value v32 = (v.getType() == i32Type) ? v : ob.create<LLVM::TruncOp>(o->getLoc(), i32Type, v);
+                ob.create<LLVM::StoreOp>(o->getLoc(), v32, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i32Type, net, ValueRange{off}));
             };
             
             auto makePort = [&](int p) {
-                Value nIdx64 = safeZExt(ob, o->getLoc(), i64Type, nIdx);
-                return ob.create<LLVM::OrOp>(o->getLoc(), i64Type, ob.create<LLVM::ShlOp>(o->getLoc(), i64Type, nIdx64, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(2))), ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(p)));
+                return ob.create<LLVM::OrOp>(o->getLoc(), i32Type, ob.create<LLVM::ShlOp>(o->getLoc(), i32Type, nIdx, ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(2))), ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(p)));
             };
             
             uint8_t typeVal = allocOp.getType();
             Value labelOrVal = allocOp.getLabelOrVal();
             
-            Value typeValConst = ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr((uint64_t)typeVal << 24));
-            Value labelOrVal64 = safeZExt(ob, o->getLoc(), i64Type, labelOrVal);
-            Value maskConst = ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(0xFFFFFF));
-            Value labelMasked = ob.create<LLVM::AndOp>(o->getLoc(), labelOrVal64, maskConst);
+            Value typeValConst = ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr((uint32_t)typeVal << 24));
+            Value labelOrVal32 = ob.create<LLVM::TruncOp>(o->getLoc(), i32Type, labelOrVal);
+            Value maskConst = ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(0xFFFFFF));
+            Value labelMasked = ob.create<LLVM::AndOp>(o->getLoc(), labelOrVal32, maskConst);
             Value metaValueVal = ob.create<LLVM::OrOp>(o->getLoc(), typeValConst, labelMasked);
             
             store(0, makePort(0)); store(1, makePort(1)); store(2, makePort(2)); store(3, metaValueVal);
@@ -850,30 +864,27 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             Value nIdx = o->getOperand(0);
             int pIdx = o->getAttrOfType<IntegerAttr>("port_index").getInt();
             Value val = o->getOperand(1);
-            Value val64 = safeZExt(ob, o->getLoc(), i64Type, val);
             Value net = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, ob.create<LLVM::IntToPtrOp>(o->getLoc(), ptrType, stateArg), ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(0))}));
             Value nIdx64 = safeZExt(ob, o->getLoc(), i64Type, nIdx);
             Value offset = ob.create<LLVM::AddOp>(o->getLoc(), i64Type, ob.create<LLVM::ShlOp>(o->getLoc(), i64Type, nIdx64, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(2))), ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(pIdx)));
-            ob.create<LLVM::StoreOp>(o->getLoc(), val64, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, net, ValueRange{offset}));
+            ob.create<LLVM::StoreOp>(o->getLoc(), val, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i32Type, net, ValueRange{offset}));
             o->erase();
         }
         for (auto* o : links) {
             OpBuilder ob(o);
-            Value p1 = ob.create<LLVM::TruncOp>(o->getLoc(), i32Type, o->getOperand(0));
-            Value p2 = ob.create<LLVM::TruncOp>(o->getLoc(), i32Type, o->getOperand(1));
+            Value p1 = o->getOperand(0);
+            Value p2 = o->getOperand(1);
             Value as = ob.create<LLVM::IntToPtrOp>(o->getLoc(), ptrType, stateArg);
             Value net = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(0))}));
             auto setT = [&](Value v1, Value v2) {
-                Value v1_32 = safeZExt(ob, o->getLoc(), i32Type, v1);
-                Value nIdx = ob.create<LLVM::LShrOp>(o->getLoc(), i32Type, v1_32, ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(2)));
-                Value pNum = ob.create<LLVM::AndOp>(o->getLoc(), i32Type, v1_32, ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(3)));
+                Value nIdx = ob.create<LLVM::LShrOp>(o->getLoc(), i32Type, v1, ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(2)));
+                Value pNum = ob.create<LLVM::AndOp>(o->getLoc(), i32Type, v1, ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(3)));
                 Value offset = ob.create<LLVM::AddOp>(o->getLoc(), i64Type, ob.create<LLVM::ShlOp>(o->getLoc(), i64Type, safeZExt(ob, o->getLoc(), i64Type, nIdx), ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(2))), safeZExt(ob, o->getLoc(), i64Type, pNum));
-                Value v2_64 = safeZExt(ob, o->getLoc(), i64Type, v2);
-                ob.create<LLVM::StoreOp>(o->getLoc(), v2_64, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, net, ValueRange{offset}));
+                ob.create<LLVM::StoreOp>(o->getLoc(), v2, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i32Type, net, ValueRange{offset}));
             };
             setT(p1, p2); setT(p2, p1);
-            Value isP1 = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::eq, ob.create<LLVM::AndOp>(o->getLoc(), i32Type, safeZExt(ob, o->getLoc(), i32Type, p1), ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(3))), ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(0)));
-            Value isP2 = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::eq, ob.create<LLVM::AndOp>(o->getLoc(), i32Type, safeZExt(ob, o->getLoc(), i32Type, p2), ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(3))), ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(0)));
+            Value isP1 = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::eq, ob.create<LLVM::AndOp>(o->getLoc(), i32Type, p1, ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(3))), ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(0)));
+            Value isP2 = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::eq, ob.create<LLVM::AndOp>(o->getLoc(), i32Type, p2, ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(3))), ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(0)));
             Value isR = ob.create<LLVM::AndOp>(o->getLoc(), builder.getI1Type(), isP1, isP2);
             Block *curr = ob.getBlock();
             Block *push = curr->splitBlock(o);
@@ -918,23 +929,21 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             };
             
             Value rPort0 = makePort(rIdx, 0);
-            ob.create<LLVM::StoreOp>(o->getLoc(), safeZExt(ob, o->getLoc(), i64Type, rPort0), ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, net, ValueRange{base}));
-            Value metaVal = ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr((2ULL << 30) | (8ULL << 24)));
+            ob.create<LLVM::StoreOp>(o->getLoc(), rPort0, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i32Type, net, ValueRange{base}));
+            Value metaVal = ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr((2U << 30) | (8U << 24)));
             Value off3 = ob.create<LLVM::AddOp>(o->getLoc(), i64Type, base, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(3)));
-            ob.create<LLVM::StoreOp>(o->getLoc(), metaVal, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, net, ValueRange{off3}));
+            ob.create<LLVM::StoreOp>(o->getLoc(), metaVal, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i32Type, net, ValueRange{off3}));
             
             auto linkPortsLLVM = [&](Value p1, Value p2) {
                 auto setT = [&](Value v1, Value v2) {
-                    Value v1_32 = safeZExt(ob, o->getLoc(), i32Type, v1);
-                    Value nIdx = ob.create<LLVM::LShrOp>(o->getLoc(), i32Type, v1_32, ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(2)));
-                    Value pNum = ob.create<LLVM::AndOp>(o->getLoc(), i32Type, v1_32, ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(3)));
+                    Value nIdx = ob.create<LLVM::LShrOp>(o->getLoc(), i32Type, v1, ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(2)));
+                    Value pNum = ob.create<LLVM::AndOp>(o->getLoc(), i32Type, v1, ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(3)));
                     Value offset = ob.create<LLVM::AddOp>(o->getLoc(), i64Type, ob.create<LLVM::ShlOp>(o->getLoc(), i64Type, safeZExt(ob, o->getLoc(), i64Type, nIdx), ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(2))), safeZExt(ob, o->getLoc(), i64Type, pNum));
-                    Value v2_64 = safeZExt(ob, o->getLoc(), i64Type, v2);
-                    ob.create<LLVM::StoreOp>(o->getLoc(), v2_64, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, net, ValueRange{offset}));
+                    ob.create<LLVM::StoreOp>(o->getLoc(), v2, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i32Type, net, ValueRange{offset}));
                 };
                 setT(p1, p2); setT(p2, p1);
-                Value isP1 = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::eq, ob.create<LLVM::AndOp>(o->getLoc(), i32Type, safeZExt(ob, o->getLoc(), i32Type, p1), ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(3))), ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(0)));
-                Value isP2 = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::eq, ob.create<LLVM::AndOp>(o->getLoc(), i32Type, safeZExt(ob, o->getLoc(), i32Type, p2), ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(3))), ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(0)));
+                Value isP1 = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::eq, ob.create<LLVM::AndOp>(o->getLoc(), i32Type, p1, ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(3))), ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(0)));
+                Value isP2 = ob.create<LLVM::ICmpOp>(o->getLoc(), LLVM::ICmpPredicate::eq, ob.create<LLVM::AndOp>(o->getLoc(), i32Type, p2, ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(3))), ob.create<LLVM::ConstantOp>(o->getLoc(), i32Type, builder.getI32IntegerAttr(0)));
                 Value isR = ob.create<LLVM::AndOp>(o->getLoc(), builder.getI1Type(), isP1, isP2);
                 Block *curr = ob.getBlock();
                 Block *push = curr->splitBlock(o);
@@ -972,8 +981,8 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             Value net = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(0))}));
             Value nIdx64 = safeZExt(ob, o->getLoc(), i64Type, nIdx);
             Value offset = ob.create<LLVM::AddOp>(o->getLoc(), i64Type, ob.create<LLVM::ShlOp>(o->getLoc(), i64Type, nIdx64, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(2))), ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(pIdx)));
-            Value val64 = ob.create<LLVM::LoadOp>(o->getLoc(), i64Type, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, net, ValueRange{offset}));
-            o->getResult(0).replaceAllUsesWith(val64);
+            Value val32 = ob.create<LLVM::LoadOp>(o->getLoc(), i32Type, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i32Type, net, ValueRange{offset}));
+            o->getResult(0).replaceAllUsesWith(val32);
             o->erase();
         }
         for (auto* o : getPortsDynamic) {
@@ -985,8 +994,8 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             Value nIdx64 = safeZExt(ob, o->getLoc(), i64Type, nIdx);
             Value pIdx64 = safeZExt(ob, o->getLoc(), i64Type, pIdx);
             Value offset = ob.create<LLVM::AddOp>(o->getLoc(), i64Type, ob.create<LLVM::ShlOp>(o->getLoc(), i64Type, nIdx64, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(2))), pIdx64);
-            Value val64 = ob.create<LLVM::LoadOp>(o->getLoc(), i64Type, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, net, ValueRange{offset}));
-            o->getResult(0).replaceAllUsesWith(val64);
+            Value val32 = ob.create<LLVM::LoadOp>(o->getLoc(), i32Type, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i32Type, net, ValueRange{offset}));
+            o->getResult(0).replaceAllUsesWith(val32);
             o->erase();
         }
         for (auto* o : pushRedexs) {
@@ -2284,7 +2293,7 @@ static Value genInlineDispatch(OpBuilder &builder, Location loc, Value impl, Val
     auto i64Type = builder.getI64Type();
 
     Block *mergeBlock = funcOp.addBlock();
-    mergeBlock->addArgument(i64Type, loc);
+    mergeBlock->addArgument(i32Type, loc);
 
     Block *currentBlock = builder.getInsertionBlock();
 
@@ -2300,9 +2309,11 @@ static Value genInlineDispatch(OpBuilder &builder, Location loc, Value impl, Val
         cb.create<cf::CondBranchOp>(loc, cmp, matchBlock, nextBlock);
 
         OpBuilder mb(matchBlock, matchBlock->end());
+        Value val0_64 = (val0.getType() == i64Type) ? val0 : mb.create<arith::ExtUIOp>(loc, i64Type, val0);
+        Value val1_64 = (val1.getType() == i64Type) ? val1 : mb.create<arith::ExtUIOp>(loc, i64Type, val1);
         SmallVector<Value> callArgs;
-        if (op.numArgs >= 1) callArgs.push_back(val0);
-        if (op.numArgs >= 2) callArgs.push_back(val1);
+        if (op.numArgs >= 1) callArgs.push_back(val0_64);
+        if (op.numArgs >= 2) callArgs.push_back(val1_64);
         if (op.numArgs >= 3) callArgs.push_back(stateArg);
         if (op.numArgs >= 4) callArgs.push_back(c0_i64);
         while (callArgs.size() < (size_t)op.numArgs) {
@@ -2310,14 +2321,16 @@ static Value genInlineDispatch(OpBuilder &builder, Location loc, Value impl, Val
         }
         
         Value res = mb.create<func::CallOp>(loc, i64Type, op.funcName, callArgs).getResult(0);
-        mb.create<cf::BranchOp>(loc, mergeBlock, ValueRange{res});
+        Value res32 = mb.create<arith::TruncIOp>(loc, i32Type, res);
+        mb.create<cf::BranchOp>(loc, mergeBlock, ValueRange{res32});
 
         currentBlock = nextBlock;
     }
 
     // Default fallback block if no user op matches
     OpBuilder fb(currentBlock, currentBlock->end());
-    fb.create<cf::BranchOp>(loc, mergeBlock, ValueRange{c0_i64});
+    Value c0_i32 = fb.create<arith::ConstantOp>(loc, i32Type, fb.getI32IntegerAttr(0));
+    fb.create<cf::BranchOp>(loc, mergeBlock, ValueRange{c0_i32});
 
     builder.setInsertionPointToStart(mergeBlock);
     return mergeBlock->getArgument(0);
@@ -2782,6 +2795,23 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
       // Constants
       Value c0_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0));
       Value c1_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(1));
+      Value c32_i64 = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(32));
+      auto loadLiteralVal = [&](Value node, Value label) -> Value {
+          Value p1 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, node, builder.getI8IntegerAttr(1));
+          Value p2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, node, builder.getI8IntegerAttr(2));
+          
+          Value isF64 = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, label, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("f64"))));
+          Value isI64 = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, label, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("i64"))));
+          Value isNum = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, label, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("num"))));
+          Value is64 = builder.create<arith::OrIOp>(loc, isF64, builder.create<arith::OrIOp>(loc, isI64, isNum));
+          
+          Value p1_64 = builder.create<arith::ExtUIOp>(loc, i64Type, p1);
+          Value p2_64 = builder.create<arith::ExtUIOp>(loc, i64Type, p2);
+          Value sh2 = builder.create<arith::ShLIOp>(loc, i64Type, p2_64, c32_i64);
+          Value combined = builder.create<arith::OrIOp>(loc, i64Type, p1_64, sh2);
+          
+          return builder.create<arith::SelectOp>(loc, is64, combined, p1_64);
+      };
       Value c2_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(2));
       Value c3_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(3));
       Value c7_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(7));
@@ -2795,15 +2825,13 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
       Value c0_i64 = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0));
       Value c1_i64 = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(1));
       Value c2_i64 = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(2));
-      Value c32_i64 = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(32));
       Value c0xFFFFFFFF_i64 = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0xFFFFFFFF));
       Value c0x100000000_i64 = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0x100000000ULL));
       Value c0xFFFFFFFF00000000_i64 = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0xFFFFFFFF00000000ULL));
 
       auto makePortVal = [&](Value idx, int p) {
-          Value idx64 = builder.create<arith::ExtUIOp>(loc, i64Type, idx);
-          Value sh = builder.create<arith::ShLIOp>(loc, i64Type, idx64, c2_i64);
-          return builder.create<arith::OrIOp>(loc, i64Type, sh, builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(p)));
+          Value sh = builder.create<arith::ShLIOp>(loc, i32Type, idx, c2_i32);
+          return builder.create<arith::OrIOp>(loc, i32Type, sh, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(p)));
       };
 
       if (auto rvecOp = dyn_cast<mlir::pic::reduce::ReverseVectorOp>(op)) {
@@ -2811,13 +2839,11 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           Value nodeB = rvecOp.getNodeB();
           Value stateArg = rvecOp.getState();
 
-          Value metaA = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeA, builder.getI8IntegerAttr(3));
-          Value metaB = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeB, builder.getI8IntegerAttr(3));
-          Value metaA32 = builder.create<arith::TruncIOp>(loc, i32Type, metaA);
-          Value metaB32 = builder.create<arith::TruncIOp>(loc, i32Type, metaB);
+          Value metaA = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(3));
+          Value metaB = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeB, builder.getI8IntegerAttr(3));
           
-          Value typeValA = builder.create<arith::ShRUIOp>(loc, metaA32, c24_i32);
-          Value typeValB = builder.create<arith::ShRUIOp>(loc, metaB32, c24_i32);
+          Value typeValA = builder.create<arith::ShRUIOp>(loc, metaA, c24_i32);
+          Value typeValB = builder.create<arith::ShRUIOp>(loc, metaB, c24_i32);
           Value nodeTypeA = builder.create<arith::AndIOp>(loc, typeValA, c0x3F_i32);
           Value nodeTypeB = builder.create<arith::AndIOp>(loc, typeValB, c0x3F_i32);
           
@@ -2832,28 +2858,32 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           builder.create<cf::CondBranchOp>(loc, isL, rvecLBlock, rvecStdBlock);
           
           builder.setInsertionPointToStart(rvecLBlock);
-          Value recNodeA = builder.create<pic::runtime::GetPortOp>(loc, i64Type, tNode, builder.getI8IntegerAttr(1));
-          Value recNodeB = builder.create<pic::runtime::GetPortOp>(loc, i64Type, tNode, builder.getI8IntegerAttr(2));
-          Value recNodeA_32 = builder.create<arith::TruncIOp>(loc, i32Type, recNodeA);
-          Value recNodeB_32 = builder.create<arith::TruncIOp>(loc, i32Type, recNodeB);
-          Value wordA12 = builder.create<pic::runtime::GetHistoryOp>(loc, i64Type, recNodeA_32, builder.getI8IntegerAttr(1));
-          Value wordB12 = builder.create<pic::runtime::GetHistoryOp>(loc, i64Type, recNodeB_32, builder.getI8IntegerAttr(1));
+          Value recNodeA = builder.create<pic::runtime::GetPortOp>(loc, i32Type, tNode, builder.getI8IntegerAttr(1));
+          Value recNodeB = builder.create<pic::runtime::GetPortOp>(loc, i32Type, tNode, builder.getI8IntegerAttr(2));
+          Value wordA12 = builder.create<pic::runtime::GetHistoryOp>(loc, i64Type, recNodeA, builder.getI8IntegerAttr(1));
+          Value wordB12 = builder.create<pic::runtime::GetHistoryOp>(loc, i64Type, recNodeB, builder.getI8IntegerAttr(1));
           Value neighborA1 = builder.create<arith::ShRUIOp>(loc, wordA12, c32_i64);
           Value neighborA2 = builder.create<arith::AndIOp>(loc, wordA12, c0xFFFFFFFF_i64);
           Value neighborB1 = builder.create<arith::ShRUIOp>(loc, wordB12, c32_i64);
           Value neighborB2 = builder.create<arith::AndIOp>(loc, wordB12, c0xFFFFFFFF_i64);
-          builder.create<pic::runtime::LinkOp>(loc, makePortVal(recNodeA_32, 1), neighborA1);
-          builder.create<pic::runtime::LinkOp>(loc, makePortVal(recNodeA_32, 2), neighborA2);
-          builder.create<pic::runtime::LinkOp>(loc, makePortVal(recNodeB_32, 1), neighborB1);
-          builder.create<pic::runtime::LinkOp>(loc, makePortVal(recNodeB_32, 2), neighborB2);
-          builder.create<pic::runtime::LinkOp>(loc, makePortVal(recNodeA_32, 0), makePortVal(recNodeB_32, 0));
+          
+          Value neighborA1_32 = builder.create<arith::TruncIOp>(loc, i32Type, neighborA1);
+          Value neighborA2_32 = builder.create<arith::TruncIOp>(loc, i32Type, neighborA2);
+          Value neighborB1_32 = builder.create<arith::TruncIOp>(loc, i32Type, neighborB1);
+          Value neighborB2_32 = builder.create<arith::TruncIOp>(loc, i32Type, neighborB2);
+          
+          builder.create<pic::runtime::LinkOp>(loc, makePortVal(recNodeA, 1), neighborA1_32);
+          builder.create<pic::runtime::LinkOp>(loc, makePortVal(recNodeA, 2), neighborA2_32);
+          builder.create<pic::runtime::LinkOp>(loc, makePortVal(recNodeB, 1), neighborB1_32);
+          builder.create<pic::runtime::LinkOp>(loc, makePortVal(recNodeB, 2), neighborB2_32);
+          builder.create<pic::runtime::LinkOp>(loc, makePortVal(recNodeA, 0), makePortVal(recNodeB, 0));
           builder.create<cf::BranchOp>(loc, lHead);
           
           builder.setInsertionPointToStart(rvecStdBlock);
           Value r1 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(136), c0_i64, builder.getBoolAttr(false));
           Value r2 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(136), c0_i64, builder.getBoolAttr(false));
-          Value auxT1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, tNode, builder.getI8IntegerAttr(1));
-          Value auxT2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, tNode, builder.getI8IntegerAttr(2));
+          Value auxT1 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, tNode, builder.getI8IntegerAttr(1));
+          Value auxT2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, tNode, builder.getI8IntegerAttr(2));
           builder.create<pic::runtime::LinkOp>(loc, makePortVal(r1, 0), auxT1);
           builder.create<pic::runtime::LinkOp>(loc, makePortVal(r2, 0), auxT2);
           builder.create<cf::BranchOp>(loc, lHead);
@@ -2863,14 +2893,12 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           Value nodeB = eraOp.getNodeB();
           Value stateArg = eraOp.getState();
 
-          Value metaA = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeA, builder.getI8IntegerAttr(3));
-          Value metaB = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeB, builder.getI8IntegerAttr(3));
-          Value metaA32 = builder.create<arith::TruncIOp>(loc, i32Type, metaA);
-          Value metaB32 = builder.create<arith::TruncIOp>(loc, i32Type, metaB);
-          Value labelA = builder.create<arith::AndIOp>(loc, metaA32, c0xFFFFFF_i32);
-          Value labelB = builder.create<arith::AndIOp>(loc, metaB32, c0xFFFFFF_i32);
-          Value polA = builder.create<arith::ShRUIOp>(loc, metaA32, c30_i32);
-          Value polB = builder.create<arith::ShRUIOp>(loc, metaB32, c30_i32);
+          Value metaA = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(3));
+          Value metaB = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeB, builder.getI8IntegerAttr(3));
+          Value labelA = builder.create<arith::AndIOp>(loc, metaA, c0xFFFFFF_i32);
+          Value labelB = builder.create<arith::AndIOp>(loc, metaB, c0xFFFFFF_i32);
+          Value polA = builder.create<arith::ShRUIOp>(loc, metaA, c30_i32);
+          Value polB = builder.create<arith::ShRUIOp>(loc, metaB, c30_i32);
 
           Value isEraA = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelA, c0x979115_i32);
           Value otherNode = builder.create<arith::SelectOp>(loc, isEraA, nodeB, nodeA);
@@ -2899,8 +2927,8 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           builder.setInsertionPointToStart(eraNormalProp);
           Value era1 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(132), c0_i64, builder.getBoolAttr(false));
           Value era2 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(132), c0_i64, builder.getBoolAttr(false));
-          Value auxOther1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, otherNode, builder.getI8IntegerAttr(1));
-          Value auxOther2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, otherNode, builder.getI8IntegerAttr(2));
+          Value auxOther1 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, otherNode, builder.getI8IntegerAttr(1));
+          Value auxOther2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, otherNode, builder.getI8IntegerAttr(2));
           builder.create<pic::runtime::LinkOp>(loc, auxOther1, makePortVal(era1, 0));
           builder.create<pic::runtime::LinkOp>(loc, auxOther2, makePortVal(era2, 0));
           builder.create<cf::BranchOp>(loc, lHead);
@@ -2910,14 +2938,12 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           Value nodeB = fireOp.getNodeB();
           Value stateArg = fireOp.getState();
 
-          Value metaA = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeA, builder.getI8IntegerAttr(3));
-          Value metaB = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeB, builder.getI8IntegerAttr(3));
-          Value metaA32 = builder.create<arith::TruncIOp>(loc, i32Type, metaA);
-          Value metaB32 = builder.create<arith::TruncIOp>(loc, i32Type, metaB);
-          Value labelA = builder.create<arith::AndIOp>(loc, metaA32, c0xFFFFFF_i32);
-          Value labelB = builder.create<arith::AndIOp>(loc, metaB32, c0xFFFFFF_i32);
-          Value polA = builder.create<arith::ShRUIOp>(loc, metaA32, c30_i32);
-          Value polB = builder.create<arith::ShRUIOp>(loc, metaB32, c30_i32);
+          Value metaA = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(3));
+          Value metaB = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeB, builder.getI8IntegerAttr(3));
+          Value labelA = builder.create<arith::AndIOp>(loc, metaA, c0xFFFFFF_i32);
+          Value labelB = builder.create<arith::AndIOp>(loc, metaB, c0xFFFFFF_i32);
+          Value polA = builder.create<arith::ShRUIOp>(loc, metaA, c30_i32);
+          Value polB = builder.create<arith::ShRUIOp>(loc, metaB, c30_i32);
 
           if (!module.lookupSymbol("lookup_rule")) {
               OpBuilder mb(module.getBodyRegion());
@@ -2936,7 +2962,7 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           Value opLabel = builder.create<arith::SelectOp>(loc, hasRuleA, labelA, labelB);
           Value impl = builder.create<arith::SelectOp>(loc, hasRuleA, implA, implB);
 
-          Value v0 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, valNode, builder.getI8IntegerAttr(1));
+          Value v0 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, valNode, builder.getI8IntegerAttr(1));
 
           Value isUnary = builder.create<arith::ConstantOp>(loc, i1Type, builder.getBoolAttr(false));
           Value isBinary = builder.create<arith::ConstantOp>(loc, i1Type, builder.getBoolAttr(false));
@@ -2981,8 +3007,9 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           builder.create<cf::BranchOp>(loc, lHead);
 
           builder.setInsertionPointToStart(cpuBranch);
-          Value resVal = genInlineDispatch(builder, loc, impl, v0, c0_i64, stateArg, funcOp, userOps, c0_i64);
-          Value opP_aux2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, opNode, builder.getI8IntegerAttr(2));
+          Value v0_64 = loadLiteralVal(valNode, valLabel);
+          Value resVal = genInlineDispatch(builder, loc, impl, v0_64, c0_i32, stateArg, funcOp, userOps, c0_i64);
+          Value opP_aux2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, opNode, builder.getI8IntegerAttr(2));
           Value isSame = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, resVal, opP_aux2);
           Block *skipLink = funcOp.addBlock();
           Block *doLink = funcOp.addBlock();
@@ -3004,12 +3031,10 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           builder.create<cf::CondBranchOp>(loc, isBinary, doBinary, doComm);
 
           builder.setInsertionPointToStart(doBinary);
-          Value rPort = builder.create<pic::runtime::GetPortOp>(loc, i64Type, opNode, builder.getI8IntegerAttr(1));
-          Value rPort_32 = builder.create<arith::TruncIOp>(loc, i32Type, rPort);
-          Value rTarget = builder.create<arith::ShRUIOp>(loc, rPort_32, c2_i32);
-          Value rMeta = builder.create<pic::runtime::GetPortOp>(loc, i64Type, rTarget, builder.getI8IntegerAttr(3));
-          Value rMeta_32 = builder.create<arith::TruncIOp>(loc, i32Type, rMeta);
-          Value rLabel = builder.create<arith::AndIOp>(loc, rMeta_32, c0xFFFFFF_i32);
+          Value rPort = builder.create<pic::runtime::GetPortOp>(loc, i32Type, opNode, builder.getI8IntegerAttr(1));
+          Value rTarget = builder.create<arith::ShRUIOp>(loc, rPort, c2_i32);
+          Value rMeta = builder.create<pic::runtime::GetPortOp>(loc, i32Type, rTarget, builder.getI8IntegerAttr(3));
+          Value rLabel = builder.create<arith::AndIOp>(loc, rMeta, c0xFFFFFF_i32);
           Value cCallCode = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("call")));
           Value isCall = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, valLabel, cCallCode);
           Value rLabelMatch = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rLabel, valLabel);
@@ -3023,12 +3048,15 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           builder.create<cf::CondBranchOp>(loc, isRVal, doFullBinary, doComm);
 
           builder.setInsertionPointToStart(doFullBinary);
-          Value v1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, rTarget, builder.getI8IntegerAttr(1));
-          Value rTarget_ext = builder.create<arith::ExtUIOp>(loc, i64Type, rTarget);
-          Value firstArg = builder.create<arith::SelectOp>(loc, isCall, rTarget_ext, v1);
-          Value callArg0 = builder.create<arith::SelectOp>(loc, isCall, v0, firstArg);
-          Value valNode_aux2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, valNode, builder.getI8IntegerAttr(2));
-          Value callArg1 = builder.create<arith::SelectOp>(loc, isCall, valNode_aux2, v0);
+          Value v0_64_bin = loadLiteralVal(valNode, valLabel);
+          Value v1_64 = loadLiteralVal(rTarget, rLabel);
+          Value rTarget_64 = builder.create<arith::ExtUIOp>(loc, i64Type, rTarget);
+          Value valNode_aux2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, valNode, builder.getI8IntegerAttr(2));
+          Value valNode_aux2_64 = builder.create<arith::ExtUIOp>(loc, i64Type, valNode_aux2);
+          
+          Value firstArg_64 = builder.create<arith::SelectOp>(loc, isCall, rTarget_64, v1_64);
+          Value callArg0_64 = builder.create<arith::SelectOp>(loc, isCall, v0_64_bin, firstArg_64);
+          Value callArg1_64 = builder.create<arith::SelectOp>(loc, isCall, valNode_aux2_64, v0_64_bin);
 
           Block *gpuBranchBin = funcOp.addBlock();
           Block *cpuBranchBin = funcOp.addBlock();
@@ -3045,8 +3073,9 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           builder.create<cf::BranchOp>(loc, lHead);
 
           builder.setInsertionPointToStart(cpuBranchBin);
-          Value resValBin = genInlineDispatch(builder, loc, impl, callArg0, callArg1, stateArg, funcOp, userOps, c0_i64);
-          Value isSameBin = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, resValBin, callArg1);
+          Value resValBin = genInlineDispatch(builder, loc, impl, callArg0_64, callArg1_64, stateArg, funcOp, userOps, c0_i64);
+          Value callArg1_32 = builder.create<arith::SelectOp>(loc, isCall, valNode_aux2, v0);
+          Value isSameBin = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, resValBin, callArg1_32);
           Block *skipLinkBin = funcOp.addBlock();
           Block *doLinkBin = funcOp.addBlock();
           builder.create<cf::CondBranchOp>(loc, isSameBin, skipLinkBin, doLinkBin);
@@ -3055,7 +3084,7 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           Value valLabelBin64 = builder.create<arith::ExtUIOp>(loc, i64Type, valLabel);
           Value resNodeBin = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(133), valLabelBin64, builder.getBoolAttr(false));
           builder.create<pic::runtime::SetPortOp>(loc, resNodeBin, builder.getI8IntegerAttr(1), resValBin);
-          Value opNode_aux2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, opNode, builder.getI8IntegerAttr(2));
+          Value opNode_aux2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, opNode, builder.getI8IntegerAttr(2));
           builder.create<pic::runtime::LinkOp>(loc, opNode_aux2, makePortVal(resNodeBin, 0));
           builder.create<cf::BranchOp>(loc, skipLinkBin);
 
@@ -3073,15 +3102,15 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           builder.create<cf::CondBranchOp>(loc, valIsLit, valLitCase, checkOpLit);
 
           builder.setInsertionPointToStart(valLitCase);
-          Value litValVal = builder.create<pic::runtime::GetPortOp>(loc, i64Type, valNode, builder.getI8IntegerAttr(1));
+          Value litValVal = builder.create<pic::runtime::GetPortOp>(loc, i32Type, valNode, builder.getI8IntegerAttr(1));
           Value valLit1 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(0), c0_i64, builder.getBoolAttr(false));
           Value valLit2 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(0), c0_i64, builder.getBoolAttr(false));
           builder.create<pic::runtime::SetPortOp>(loc, valLit1, builder.getI8IntegerAttr(3), metaValVal);
           builder.create<pic::runtime::SetPortOp>(loc, valLit2, builder.getI8IntegerAttr(3), metaValVal);
           builder.create<pic::runtime::SetPortOp>(loc, valLit1, builder.getI8IntegerAttr(1), litValVal);
           builder.create<pic::runtime::SetPortOp>(loc, valLit2, builder.getI8IntegerAttr(1), litValVal);
-          Value auxB1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, opNode, builder.getI8IntegerAttr(1));
-          Value auxB2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, opNode, builder.getI8IntegerAttr(2));
+          Value auxB1 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, opNode, builder.getI8IntegerAttr(1));
+          Value auxB2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, opNode, builder.getI8IntegerAttr(2));
           builder.create<pic::runtime::LinkOp>(loc, makePortVal(valLit1, 0), auxB1);
           builder.create<pic::runtime::LinkOp>(loc, makePortVal(valLit2, 0), auxB2);
           builder.create<cf::BranchOp>(loc, lHead);
@@ -3093,24 +3122,24 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           builder.create<cf::CondBranchOp>(loc, opIsLit, opLitCase, stdCommCase);
 
           builder.setInsertionPointToStart(opLitCase);
-          Value litValOp = builder.create<pic::runtime::GetPortOp>(loc, i64Type, opNode, builder.getI8IntegerAttr(1));
+          Value litValOp = builder.create<pic::runtime::GetPortOp>(loc, i32Type, opNode, builder.getI8IntegerAttr(1));
           Value opLit1 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(0), c0_i64, builder.getBoolAttr(false));
           Value opLit2 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(0), c0_i64, builder.getBoolAttr(false));
           builder.create<pic::runtime::SetPortOp>(loc, opLit1, builder.getI8IntegerAttr(3), metaValOp);
           builder.create<pic::runtime::SetPortOp>(loc, opLit2, builder.getI8IntegerAttr(3), metaValOp);
           builder.create<pic::runtime::SetPortOp>(loc, opLit1, builder.getI8IntegerAttr(1), litValOp);
           builder.create<pic::runtime::SetPortOp>(loc, opLit2, builder.getI8IntegerAttr(1), litValOp);
-          Value auxA1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, valNode, builder.getI8IntegerAttr(1));
-          Value auxA2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, valNode, builder.getI8IntegerAttr(2));
+          Value auxA1 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, valNode, builder.getI8IntegerAttr(1));
+          Value auxA2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, valNode, builder.getI8IntegerAttr(2));
           builder.create<pic::runtime::LinkOp>(loc, makePortVal(opLit1, 0), auxA1);
           builder.create<pic::runtime::LinkOp>(loc, makePortVal(opLit2, 0), auxA2);
           builder.create<cf::BranchOp>(loc, lHead);
 
           builder.setInsertionPointToStart(stdCommCase);
-          Value auxA1_std = builder.create<pic::runtime::GetPortOp>(loc, i64Type, valNode, builder.getI8IntegerAttr(1));
-          Value auxA2_std = builder.create<pic::runtime::GetPortOp>(loc, i64Type, valNode, builder.getI8IntegerAttr(2));
-          Value auxB1_std = builder.create<pic::runtime::GetPortOp>(loc, i64Type, opNode, builder.getI8IntegerAttr(1));
-          Value auxB2_std = builder.create<pic::runtime::GetPortOp>(loc, i64Type, opNode, builder.getI8IntegerAttr(2));
+          Value auxA1_std = builder.create<pic::runtime::GetPortOp>(loc, i32Type, valNode, builder.getI8IntegerAttr(1));
+          Value auxA2_std = builder.create<pic::runtime::GetPortOp>(loc, i32Type, valNode, builder.getI8IntegerAttr(2));
+          Value auxB1_std = builder.create<pic::runtime::GetPortOp>(loc, i32Type, opNode, builder.getI8IntegerAttr(1));
+          Value auxB2_std = builder.create<pic::runtime::GetPortOp>(loc, i32Type, opNode, builder.getI8IntegerAttr(2));
 
           Value a1 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(0), c0_i64, builder.getBoolAttr(false));
           Value a2 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(0), c0_i64, builder.getBoolAttr(false));
@@ -3149,28 +3178,25 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           Value lIdx = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(128 + 7), c0_i64, builder.getBoolAttr(false));
           Value lIdx64 = builder.create<arith::ExtUIOp>(loc, i64Type, lIdx);
           
-          Value nodeA64 = builder.create<arith::ExtUIOp>(loc, i64Type, nodeA);
-          Value nodeB64 = builder.create<arith::ExtUIOp>(loc, i64Type, nodeB);
-          builder.create<pic::runtime::SetPortOp>(loc, lIdx, builder.getI8IntegerAttr(1), nodeA64);
-          builder.create<pic::runtime::SetPortOp>(loc, lIdx, builder.getI8IntegerAttr(2), nodeB64);
+          builder.create<pic::runtime::SetPortOp>(loc, lIdx, builder.getI8IntegerAttr(1), nodeA);
+          builder.create<pic::runtime::SetPortOp>(loc, lIdx, builder.getI8IntegerAttr(2), nodeB);
           
-          builder.create<pic::runtime::SetPortOp>(loc, lIdx, builder.getI8IntegerAttr(3), builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(2214592512ULL)));
+          builder.create<pic::runtime::SetPortOp>(loc, lIdx, builder.getI8IntegerAttr(3), builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr((int32_t)2214592512U)));
 
           Value logPtrA = builder.create<arith::AndIOp>(loc, hWord0A, c0xFFFFFFFF_i64);
           Value valWord0 = builder.create<arith::OrIOp>(loc, c0x100000000_i64, logPtrA);
           builder.create<pic::runtime::SetHistoryOp>(loc, lIdx, builder.getI8IntegerAttr(0), valWord0);
 
-          Value ann_auxA1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeA, builder.getI8IntegerAttr(1));
-          Value ann_auxA2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeA, builder.getI8IntegerAttr(2));
-          Value ann_auxB1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeB, builder.getI8IntegerAttr(1));
-          Value ann_auxB2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeB, builder.getI8IntegerAttr(2));
+          Value ann_auxA1 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(1));
+          Value ann_auxA2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(2));
+          Value ann_auxB1 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeB, builder.getI8IntegerAttr(1));
+          Value ann_auxB2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeB, builder.getI8IntegerAttr(2));
 
           auto getNeighborPortVal = [&](Value auxPort) {
-              Value auxPort_32 = builder.create<arith::TruncIOp>(loc, i32Type, auxPort);
-              Value nNode = builder.create<arith::ShRUIOp>(loc, auxPort_32, c2_i32);
-              Value nPort = builder.create<arith::AndIOp>(loc, auxPort_32, c3_i32);
+              Value nNode = builder.create<arith::ShRUIOp>(loc, auxPort, c2_i32);
+              Value nPort = builder.create<arith::AndIOp>(loc, auxPort, c3_i32);
               Value nPort8 = builder.create<arith::TruncIOp>(loc, i8Type, nPort);
-              return builder.create<pic::runtime::GetPortDynamicOp>(loc, i64Type, nNode, nPort8);
+              return builder.create<pic::runtime::GetPortDynamicOp>(loc, i32Type, nNode, nPort8);
           };
 
           Value neighborA1_ann = getNeighborPortVal(ann_auxA1);
@@ -3178,16 +3204,20 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           Value neighborB1_ann = getNeighborPortVal(ann_auxB1);
           Value neighborB2_ann = getNeighborPortVal(ann_auxB2);
 
-          Value wordA12_ann = builder.create<arith::OrIOp>(loc, builder.create<arith::ShLIOp>(loc, i64Type, neighborA1_ann, c32_i64), neighborA2_ann);
-          Value wordB12_ann = builder.create<arith::OrIOp>(loc, builder.create<arith::ShLIOp>(loc, i64Type, neighborB1_ann, c32_i64), neighborB2_ann);
+          Value neighborA1_ann_64 = builder.create<arith::ExtUIOp>(loc, i64Type, neighborA1_ann);
+          Value neighborA2_ann_64 = builder.create<arith::ExtUIOp>(loc, i64Type, neighborA2_ann);
+          Value neighborB1_ann_64 = builder.create<arith::ExtUIOp>(loc, i64Type, neighborB1_ann);
+          Value neighborB2_ann_64 = builder.create<arith::ExtUIOp>(loc, i64Type, neighborB2_ann);
+
+          Value wordA12_ann = builder.create<arith::OrIOp>(loc, builder.create<arith::ShLIOp>(loc, i64Type, neighborA1_ann_64, c32_i64), neighborA2_ann_64);
+          Value wordB12_ann = builder.create<arith::OrIOp>(loc, builder.create<arith::ShLIOp>(loc, i64Type, neighborB1_ann_64, c32_i64), neighborB2_ann_64);
 
           builder.create<pic::runtime::SetHistoryOp>(loc, nodeA, builder.getI8IntegerAttr(1), wordA12_ann);
           builder.create<pic::runtime::SetHistoryOp>(loc, nodeB, builder.getI8IntegerAttr(1), wordB12_ann);
           builder.create<pic::runtime::SetHistoryOp>(loc, lIdx, builder.getI8IntegerAttr(1), c0_i64);
 
           auto updateNeighborHistory = [&](Value auxPort) {
-              Value auxPort_32 = builder.create<arith::TruncIOp>(loc, i32Type, auxPort);
-              Value nNode = builder.create<arith::ShRUIOp>(loc, auxPort_32, c2_i32);
+              Value nNode = builder.create<arith::ShRUIOp>(loc, auxPort, c2_i32);
               Value hWord0N = builder.create<pic::runtime::GetHistoryOp>(loc, i64Type, nNode, builder.getI8IntegerAttr(0));
               Value flagsN = builder.create<arith::AndIOp>(loc, hWord0N, c0xFFFFFFFF00000000_i64);
               Value newWord0N = builder.create<arith::OrIOp>(loc, flagsN, lIdx64);
@@ -3202,10 +3232,10 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           builder.create<cf::BranchOp>(loc, skipLBlock);
 
           builder.setInsertionPointToStart(skipLBlock);
-          Value final_auxA1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeA, builder.getI8IntegerAttr(1));
-          Value final_auxA2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeA, builder.getI8IntegerAttr(2));
-          Value final_auxB1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeB, builder.getI8IntegerAttr(1));
-          Value final_auxB2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeB, builder.getI8IntegerAttr(2));
+          Value final_auxA1 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(1));
+          Value final_auxA2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(2));
+          Value final_auxB1 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeB, builder.getI8IntegerAttr(1));
+          Value final_auxB2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeB, builder.getI8IntegerAttr(2));
 
           builder.create<pic::runtime::LinkOp>(loc, final_auxA1, final_auxB1);
           builder.create<pic::runtime::LinkOp>(loc, final_auxA2, final_auxB2);
@@ -3216,12 +3246,10 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           Value nodeB = dupOp.getNodeB();
           Value stateArg = dupOp.getState();
 
-          Value metaA = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeA, builder.getI8IntegerAttr(3));
-          Value metaB = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeB, builder.getI8IntegerAttr(3));
-          Value metaA32 = builder.create<arith::TruncIOp>(loc, i32Type, metaA);
-          Value metaB32 = builder.create<arith::TruncIOp>(loc, i32Type, metaB);
-          Value labelA = builder.create<arith::AndIOp>(loc, metaA32, c0xFFFFFF_i32);
-          Value labelB = builder.create<arith::AndIOp>(loc, metaB32, c0xFFFFFF_i32);
+          Value metaA = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(3));
+          Value metaB = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeB, builder.getI8IntegerAttr(3));
+          Value labelA = builder.create<arith::AndIOp>(loc, metaA, c0xFFFFFF_i32);
+          Value labelB = builder.create<arith::AndIOp>(loc, metaB, c0xFFFFFF_i32);
 
           Value valIsLit = isLiteralLabel(builder, loc, labelA);
           Block *valLitCase = funcOp.addBlock();
@@ -3230,15 +3258,29 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
 
           // valLitCase: nodeA is a literal constant, nodeB is standard
           builder.setInsertionPointToStart(valLitCase);
-          Value litValA = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeA, builder.getI8IntegerAttr(1));
+          Value isF64A = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelA, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("f64"))));
+          Value isI64A = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelA, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("i64"))));
+          Value isNumA = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelA, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("num"))));
+          Value is64A = builder.create<arith::OrIOp>(loc, isF64A, builder.create<arith::OrIOp>(loc, isI64A, isNumA));
+          
+          Value litValA = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(1));
           Value valLit1 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(0), c0_i64, builder.getBoolAttr(false));
           Value valLit2 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(0), c0_i64, builder.getBoolAttr(false));
           builder.create<pic::runtime::SetPortOp>(loc, valLit1, builder.getI8IntegerAttr(3), metaA);
           builder.create<pic::runtime::SetPortOp>(loc, valLit2, builder.getI8IntegerAttr(3), metaA);
           builder.create<pic::runtime::SetPortOp>(loc, valLit1, builder.getI8IntegerAttr(1), litValA);
           builder.create<pic::runtime::SetPortOp>(loc, valLit2, builder.getI8IntegerAttr(1), litValA);
-          Value auxB1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeB, builder.getI8IntegerAttr(1));
-          Value auxB2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeB, builder.getI8IntegerAttr(2));
+          
+          Value litValAHigh = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(2));
+          Value valLit1_selfPort2 = makePortVal(valLit1, 2);
+          Value valLit2_selfPort2 = makePortVal(valLit2, 2);
+          Value writeVal1 = builder.create<arith::SelectOp>(loc, is64A, litValAHigh, valLit1_selfPort2);
+          Value writeVal2 = builder.create<arith::SelectOp>(loc, is64A, litValAHigh, valLit2_selfPort2);
+          builder.create<pic::runtime::SetPortOp>(loc, valLit1, builder.getI8IntegerAttr(2), writeVal1);
+          builder.create<pic::runtime::SetPortOp>(loc, valLit2, builder.getI8IntegerAttr(2), writeVal2);
+
+          Value auxB1 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeB, builder.getI8IntegerAttr(1));
+          Value auxB2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeB, builder.getI8IntegerAttr(2));
           builder.create<pic::runtime::LinkOp>(loc, makePortVal(valLit1, 0), auxB1);
           builder.create<pic::runtime::LinkOp>(loc, makePortVal(valLit2, 0), auxB2);
           builder.create<cf::BranchOp>(loc, lHead);
@@ -3252,25 +3294,39 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
 
           // opLitCase: nodeB is a literal constant, nodeA is standard
           builder.setInsertionPointToStart(opLitCase);
-          Value litValB = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeB, builder.getI8IntegerAttr(1));
+          Value isF64B = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelB, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("f64"))));
+          Value isI64B = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelB, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("i64"))));
+          Value isNumB = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelB, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("num"))));
+          Value is64B = builder.create<arith::OrIOp>(loc, isF64B, builder.create<arith::OrIOp>(loc, isI64B, isNumB));
+
+          Value litValB = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeB, builder.getI8IntegerAttr(1));
           Value opLit1 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(0), c0_i64, builder.getBoolAttr(false));
           Value opLit2 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(0), c0_i64, builder.getBoolAttr(false));
           builder.create<pic::runtime::SetPortOp>(loc, opLit1, builder.getI8IntegerAttr(3), metaB);
           builder.create<pic::runtime::SetPortOp>(loc, opLit2, builder.getI8IntegerAttr(3), metaB);
           builder.create<pic::runtime::SetPortOp>(loc, opLit1, builder.getI8IntegerAttr(1), litValB);
           builder.create<pic::runtime::SetPortOp>(loc, opLit2, builder.getI8IntegerAttr(1), litValB);
-          Value auxA1 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeA, builder.getI8IntegerAttr(1));
-          Value auxA2 = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeA, builder.getI8IntegerAttr(2));
+          
+          Value litValBHigh = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeB, builder.getI8IntegerAttr(2));
+          Value opLit1_selfPort2 = makePortVal(opLit1, 2);
+          Value opLit2_selfPort2 = makePortVal(opLit2, 2);
+          Value writeValOp1 = builder.create<arith::SelectOp>(loc, is64B, litValBHigh, opLit1_selfPort2);
+          Value writeValOp2 = builder.create<arith::SelectOp>(loc, is64B, litValBHigh, opLit2_selfPort2);
+          builder.create<pic::runtime::SetPortOp>(loc, opLit1, builder.getI8IntegerAttr(2), writeValOp1);
+          builder.create<pic::runtime::SetPortOp>(loc, opLit2, builder.getI8IntegerAttr(2), writeValOp2);
+
+          Value auxA1 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(1));
+          Value auxA2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(2));
           builder.create<pic::runtime::LinkOp>(loc, makePortVal(opLit1, 0), auxA1);
           builder.create<pic::runtime::LinkOp>(loc, makePortVal(opLit2, 0), auxA2);
           builder.create<cf::BranchOp>(loc, lHead);
 
           // stdCommCase: standard commutation
           builder.setInsertionPointToStart(stdCommCase);
-          Value auxA1_std = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeA, builder.getI8IntegerAttr(1));
-          Value auxA2_std = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeA, builder.getI8IntegerAttr(2));
-          Value auxB1_std = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeB, builder.getI8IntegerAttr(1));
-          Value auxB2_std = builder.create<pic::runtime::GetPortOp>(loc, i64Type, nodeB, builder.getI8IntegerAttr(2));
+          Value auxA1_std = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(1));
+          Value auxA2_std = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(2));
+          Value auxB1_std = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeB, builder.getI8IntegerAttr(1));
+          Value auxB2_std = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeB, builder.getI8IntegerAttr(2));
 
           Value a1 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(0), c0_i64, builder.getBoolAttr(false));
           Value a2 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(0), c0_i64, builder.getBoolAttr(false));
