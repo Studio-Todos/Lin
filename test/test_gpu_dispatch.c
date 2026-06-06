@@ -15,7 +15,7 @@
 #include <string.h>
 
 // Declared in gpu_runtime.c
-void pic_gpu_dispatch(int64_t* netPtr, int32_t* activePairsPtr, int32_t numPairs, int32_t* alPtr, const char* spirvPath);
+void pic_gpu_dispatch(int32_t* netPtr, int32_t* activePairsPtr, int32_t numPairs, int32_t* alPtr, const char* spirvPath);
 
 // Port encoding: nodeIdx << 2 | portNum
 static int32_t makePort(int32_t nodeIdx, int portNum) {
@@ -26,17 +26,19 @@ int main(void) {
     // Allocate the interaction net buffer
     // (matches gpu_runtime.c: (1000000*4 + 1000000*2 + 10) * 4 bytes)
     int32_t netSize = (1000000 * 4 + 1000000 * 2 + 10);
-    int64_t* net = (int64_t*)calloc(netSize, sizeof(int64_t));
+    int32_t* net = (int32_t*)calloc(netSize, sizeof(int32_t));
     if (!net) { fprintf(stderr, "OOM\n"); return 1; }
 
     // Node 1: CON type=1, p1→node3.p1(dummy), p2→node3.p2(dummy)
     int32_t idxA = 1, idxB = 2;
-    net[idxA * 4 + 0] = 1; // type = CON
+    net[idxA * 4 + 3] = (1 << 24); // meta = CON (type=1)
+    net[idxA * 4 + 0] = makePort(idxB, 0); // p0A -> p0B
     net[idxA * 4 + 1] = makePort(3, 1); // p1A → dummy
     net[idxA * 4 + 2] = makePort(3, 2); // p2A → dummy
 
     // Node 2: CON type=1
-    net[idxB * 4 + 0] = 1; // type = CON
+    net[idxB * 4 + 3] = (1 << 24); // meta = CON (type=1)
+    net[idxB * 4 + 0] = makePort(idxA, 0); // p0B -> p0A
     net[idxB * 4 + 1] = makePort(4, 1); // p1B → dummy
     net[idxB * 4 + 2] = makePort(4, 2); // p2B → dummy
 

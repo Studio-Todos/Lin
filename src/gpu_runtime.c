@@ -221,7 +221,7 @@ void pic_gpu_cleanup() {
     printf("[GPU DISPATCH] Cleaned up Vulkan resources successfully.\n");
 }
 
-void pic_gpu_dispatch(int64_t* netPtr, int32_t* activePairsPtr, int32_t numPairs, int32_t* alPtr, const char* spirvPath) {
+void pic_gpu_dispatch(int32_t* netPtr, int32_t* activePairsPtr, int32_t numPairs, int32_t* alPtr, const char* spirvPath) {
     printf("[GPU DISPATCH] Launching parallel kernel for %d active pairs (SPIR-V: %s)\n", numPairs, spirvPath);
 
     if (numPairs == 0) {
@@ -265,7 +265,7 @@ void pic_gpu_dispatch(int64_t* netPtr, int32_t* activePairsPtr, int32_t numPairs
     VK_CHECK(vkCreateShaderModule(device, &shaderModuleCreateInfo, NULL, &computeShaderModule));
 
     // Staging and Device Net Buffers caching/initialization
-    size_t netBufferSize = (1000000 * 4 + 1000000 * 2 + 10) * 8;
+    size_t netBufferSize = (1000000 * 4 + 1000000 * 2 + 10) * 4;
     if (g_bufferNet == VK_NULL_HANDLE) {
         g_netBufferSize = netBufferSize;
         createBuffer(device, physicalDevice, g_netBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &g_stagingBufferNet, &g_stagingMemoryNet);

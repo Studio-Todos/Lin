@@ -22,21 +22,25 @@ class PicReduce_Op<string mnemonic, list<Trait> traits = []> :
 // Simple marker op - no attributes needed
 def PicReduce_AnnihilateOp : PicReduce_Op<"annihilate"> {
   let summary = "Annihilation rule for γ⁺ ⋈ γ⁻";
+  let arguments = (ins I32:$node_a, I32:$node_b, I64:$state);
 }
 
 // Duplicate: δ → γ⁺ ⋈ γ⁻ (Rule 2)
 def PicReduce_DuplicateOp : PicReduce_Op<"duplicate"> {
   let summary = "Duplication rule for δ";
+  let arguments = (ins I32:$node_a, I32:$node_b, I64:$state);
 }
 
 // Erase: ε ⋈ X → ε (Rule 3)
 def PicReduce_EraseOp : PicReduce_Op<"erase"> {
   let summary = "Erasure rule for ε ⋈ X";
+  let arguments = (ins I32:$node_a, I32:$node_b, I64:$state);
 }
 
 // Fire-op: ω(~) with inputs → evaluate (Rule congruence)
 def PicReduce_FireOpOp : PicReduce_Op<"fire_op"> {
   let summary = "Operation firing rule for ω agents";
+  let arguments = (ins I32:$node_a, I32:$node_b, I64:$state);
 }
 
 // Merge boundary: [A] ⋈ [B] → [A ∪ B] (Rule 4)
@@ -51,6 +55,7 @@ def PicReduce_LogBondOp : PicReduce_Op<"log_bond"> {
 
 def PicReduce_ReverseVectorOp : PicReduce_Op<"reverse_vector"> {
   let summary = "Reverse-Vector propagation marker";
+  let arguments = (ins I32:$node_a, I32:$node_b, I64:$state);
 }
 
 def PicReduce_UncomputeOp : PicReduce_Op<"uncompute"> {
