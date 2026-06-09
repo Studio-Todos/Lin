@@ -1,6 +1,7 @@
 // RUN: %linc build %s -o %t && %t
 
 import "std/types.lin"
+import "std/io.lin"
 
 test_rev: func [
     return: [i32!]
@@ -9,4 +10,4 @@ test_rev: func [
     0
 ]
 
-(print (test_rev))
+(print_i32 (test_rev))

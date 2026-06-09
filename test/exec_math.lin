@@ -3,6 +3,7 @@
 
 
 import "std/math.lin"
+import "std/io.lin"
 
 test_math: func [
     argc [i32!]
@@ -31,4 +32,4 @@ test_math: func [
     ]
 ]
 
-(print (test_math 0))
+(print_i32 (test_math 0))

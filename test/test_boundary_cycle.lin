@@ -1,6 +1,7 @@
 // RUN: %linc build %s -o %t && %t | FileCheck %s
 
 import "std/types.lin"
+import "std/io.lin"
 import "std/math.lin"
 
 test_boundary: func [
@@ -10,5 +11,5 @@ test_boundary: func [
     0
 ]
 
-(print (test_boundary))
+(print_i32 (test_boundary))
 // CHECK: 0

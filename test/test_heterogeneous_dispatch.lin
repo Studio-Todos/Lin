@@ -1,5 +1,6 @@
 // RUN: %linc build %s -o %t_het && test -s %t_het.spv && spirv-val %t_het.spv
 import "std/math.lin"
+import "std/io.lin"
 
 @gpu
 gpu_func: func [
@@ -26,4 +27,4 @@ test_main: func [
     (add x y)
 ]
 
-(print (test_main 0))
+(print_i32 (test_main 0))
