@@ -77,6 +77,9 @@
         - [ ] Add cpu_only flag to rule table entry (needs A2b 5-field expansion)
         - [ ] Auto-classify all ops at registration time (not just tagged ones)
         - [ ] Support @cpu override annotation
+        - [ ] Replace hardcoded GPU dispatch string check (Semantic.cpp:328)
+        # strncmp(node->as.func_decl.dispatch, "gpu", ...) should derive from
+        # the registry's GPU eligibility data instead of ad-hoc string comparison.
         - Prerequisite: C1, A1b, A2b (flags field in rule table)
 
 [x] A1. pic.reduce pass: implement reduction rules in target-independent MLIR
@@ -105,6 +108,15 @@
         - [x] Make PicRuntimeToLLVMPass a thin mechanical conversion only
         - [ ] Create PicRuntimeToSPIRVPass for GPU target
         - Unblocks: item 31 (unified pipeline), 21b (multi-threading)
+
+[ ] A1c. Node type encodings are hardcoded C++ constants 🔴
+        # LoweringPasses.cpp:138-147 — enum PicrNodeType { NODE_CON=1, NODE_DES=2, ... }
+        # LoweringPasses.cpp:258-269 — string "constructor"→NODE_CON mapping
+        # These are runtime-level encodings tying the 7 PIC node types to numeric constants.
+        # Should be defined in pic.runtime dialect attributes to ensure a single source of truth.
+        - [ ] Move node type constants from C++ enum to PicRuntimeDialect.td
+        - [ ] Derive agent→type mapping from dialect attributes instead of hardcoded if-else
+        - Prerequisite: A1b
 
 [x] A2. Rule lookup table (user-extensible dispatch)
         - APPROVED: table keyed on (agentType_A, label_A, agentType_B, label_B)
@@ -406,6 +418,20 @@
         - [ ] Remove hardcoded type strings from compile-time type dispatch (Semantic.cpp)
         - [ ] Remove hardcoded type defaults from Parser.c (line 767)
         - [ ] Make type tags fully user-definable via std library
+        - [ ] Derive literal type label list from std library instead of hardcoded set
+              # LoweringPasses.cpp:441 — {"num","i1","i8","i16","i32","i64","f32","f64","bool","str"}
+              # Also isLiteralLabel() check at LoweringPasses.cpp:305. These should be populated
+              # from std/types.lin declarations at registry time.
+        - [ ] Replace Binary op dispatch table (kBinVariants) with registry lookup
+              # Semantic.cpp:166-177 — 10 generic ops × 4 type variants (i32/i64/f32/f64)
+              # hardcoded in C++. The data already exists in std/math.lin. Make dispatch
+              # query the registry: "what variants does op 'add' have?" → use resolved_callee.
+        - [ ] Replace hardcoded type inference rules (Semantic.cpp:145-148)
+              # AST_NUMBER→"i64", AST_FLOAT→"f64", AST_BOOL→"bool", AST_STRING→"str"
+              # should be defined in std/types.lin and resolved through the type system
+        - [ ] Infix operator → function name mapping configurable (Parser.c:565-576)
+              # 12 operators (+, -, *, /, <, >, <=, >=, =, <>, <<, >>) hardcoded to
+              # function names like "add", "sub", "mul". Make this mapping declarative.
 
 ## 🔵 Architecture — Long-Term
 
