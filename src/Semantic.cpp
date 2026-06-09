@@ -176,6 +176,18 @@ static const std::unordered_map<std::string, std::array<const char*, 4>> kBinVar
     {"ne",  {"ne", "ne64","fneq","fneq64"}},
 };
 
+// Typed variant table: generic 1-arg op → arg type → specific variant
+static const std::unordered_map<std::string, std::unordered_map<std::string, const char*>> kUnaryVariants = {
+    {"print", {
+        {"i32",  "print_i32"},
+        {"i64",  "print_i64"},
+        {"f32",  "print_f32"},
+        {"f64",  "print_f64"},
+        {"str",  "print_str"},
+        {"bool", "print_i32"},
+    }},
+};
+
 // Walk AST and rewrite resolved_callee for typed binary ops.
 static void typeDirectedDispatch(AstNode *node, TypeEnv env,
                                   const std::unordered_map<std::string, OpSig> &sigs) {
@@ -227,6 +239,19 @@ static void typeDirectedDispatch(AstNode *node, TypeEnv env,
                 if (variant && strcmp(variant, node->as.call.callee) != 0) {
                     if (node->as.call.resolved_callee) free((void*)node->as.call.resolved_callee);
                     node->as.call.resolved_callee = strdup(variant);
+                }
+            }
+            auto uit = kUnaryVariants.find(callee);
+            if (uit != kUnaryVariants.end() && node->as.call.arg_count >= 1) {
+                int tyIdx = (node->as.call.arg_count == 2) ? 1 : 0;
+                std::string ty = inferType(node->as.call.args[tyIdx], env, sigs);
+                auto tyIt = uit->second.find(ty);
+                if (tyIt != uit->second.end()) {
+                    const char *variant = tyIt->second;
+                    if (strcmp(variant, node->as.call.callee) != 0) {
+                        if (node->as.call.resolved_callee) free((void*)node->as.call.resolved_callee);
+                        node->as.call.resolved_callee = strdup(variant);
+                    }
                 }
             }
             break;
