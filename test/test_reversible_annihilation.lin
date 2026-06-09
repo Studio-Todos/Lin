@@ -1,6 +1,7 @@
 // RUN: %linc build %s -o %t && %t | FileCheck %s
 
 import "std/types.lin"
+import "std/io.lin"
 import "std/math.lin"
 
 test_annihilation: func [
@@ -11,5 +12,5 @@ test_annihilation: func [
     0
 ]
 
-(print (test_annihilation))
+(print_i32 0 (test_annihilation))
 // CHECK: 0

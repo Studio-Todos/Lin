@@ -1,6 +1,7 @@
 // RUN: %linc build %s -o %t
 import "std/types.lin"
+import "std/io.lin"
 
 identity: func [x [i32!] return: [i32!]] [x]
 
-(print (identity 42))
+(print_i32 (identity 42))

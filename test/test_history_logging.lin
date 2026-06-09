@@ -1,6 +1,7 @@
 // RUN: %linc build %s -o %t && %t | FileCheck %s
 
 import "std/types.lin"
+import "std/io.lin"
 import "std/math.lin"
 
 main: func [
@@ -12,5 +13,5 @@ main: func [
     0
 ]
 
-(print (main 0))
+(print_i32 0 (main 0))
 // CHECK: 0
