@@ -124,7 +124,7 @@ static Token string(Lexer *lexer) {
 }
 
 static Token identifier(Lexer *lexer) {
-    while (isalpha(peek(lexer)) || isdigit(peek(lexer)) || peek(lexer) == '_' ||
+    while (isalpha(peek(lexer)) || isdigit(peek(lexer)) || peek(lexer) == '_' || peek(lexer) == '?' ||
            (peek(lexer) == '-' && isalpha(peekNext(lexer)))) {
         advance(lexer);
     }
@@ -177,7 +177,7 @@ Token scanToken(Lexer *lexer) {
         case '@': {
             if (isalpha(peek(lexer)) || peek(lexer) == '_') {
                 advance(lexer);
-                while (isalpha(peek(lexer)) || isdigit(peek(lexer)) || peek(lexer) == '_' ||
+                while (isalpha(peek(lexer)) || isdigit(peek(lexer)) || peek(lexer) == '_' || peek(lexer) == '?' ||
                        (peek(lexer) == '-' && isalpha(peekNext(lexer)))) {
                     advance(lexer);
                 }

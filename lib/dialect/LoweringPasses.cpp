@@ -26,6 +26,7 @@
 #include "mlir/IR/IRMapping.h"
 #include <sstream>
 #include <unordered_map>
+#include <map>
 
 using namespace mlir;
 
@@ -239,8 +240,11 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
         }
 
         uint32_t val = 0;
+        static std::map<std::string, int> strIndexMap;
+        static int nextStrIndex = 0;
         if (label == "num" && op.getValue()) val = op.getValue().value();
         else if (label == "str" && op.getStrVal()) {
+            val = opcodeForLabel("str");
             std::string rawStr = op.getStrVal().value().str();
             std::string strKey = "STR_";
             for (char c : rawStr) {
@@ -251,8 +255,10 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
                     strKey += buf;
                 }
             }
-            val = opcodeForLabel(strKey);
             builder.create<pic::graph::RegistryOp>(loc, builder.getStringAttr(strKey), op.getStrVal().value(), StringAttr{});
+            if (strIndexMap.find(strKey) == strIndexMap.end()) {
+                strIndexMap[strKey] = nextStrIndex++;
+            }
         } else val = opcodeForLabel(label);
 
         uint8_t nodeType = NODE_OP; // Default to omega/op
@@ -275,7 +281,18 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
         
         if ((label == "num" || label == "i32" || label == "i64" || label == "f64" || label == "bool" || label == "str") && (op.getValue() || op.getStrVal())) {
             if (label == "str") {
-                Value litVal = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(val));
+                std::string rawStr = op.getStrVal().value().str();
+                std::string strKey = "STR_";
+                for (char c : rawStr) {
+                    if (std::isalnum(c)) strKey += c;
+                    else {
+                        char buf[8];
+                        sprintf(buf, "_%02x", (unsigned char)c);
+                        strKey += buf;
+                    }
+                }
+                int idx = strIndexMap[strKey];
+                Value litVal = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(idx));
                 builder.create<pic::runtime::SetPortOp>(loc, nodeIdx, builder.getI8IntegerAttr(1), litVal);
             } else {
                 uint64_t fullVal = op.getValue().value();
@@ -1425,6 +1442,63 @@ std::string base = op.label.substr(0, op.label.size() - 2);
             ob.create<LLVM::ReturnOp>(module.getLoc(), ValueRange{});
         };
         genLinPrintF64();
+
+        auto genLinPrintStr = [&]() {
+            if (auto existing = module.lookupSymbol<LLVM::LLVMFuncOp>("lin_print_str")) {
+                existing.erase();
+            }
+
+            SmallVector<LLVM::GlobalOp, 16> strGlobals;
+            module.walk([&](LLVM::GlobalOp gop) {
+                StringRef name = gop.getName();
+                if (name.starts_with("STR_")) {
+                    strGlobals.push_back(gop);
+                }
+            });
+
+            OpBuilder b(module.getBodyRegion());
+            auto fType = LLVM::LLVMFunctionType::get(i64Type, {i64Type});
+            auto f = b.create<LLVM::LLVMFuncOp>(module.getLoc(), "lin_print_str", fType);
+            f.setPrivate();
+
+            Block *entry = f.addEntryBlock();
+            OpBuilder ob(entry, entry->end());
+            Value idx = entry->getArgument(0);
+            Value zeroI64 = ob.create<LLVM::ConstantOp>(module.getLoc(), i64Type, ob.getI64IntegerAttr(0));
+
+            Value fmtVal = ob.create<LLVM::ConstantOp>(module.getLoc(), i64Type, ob.getI64IntegerAttr(29477));
+            Value four = ob.create<LLVM::ConstantOp>(module.getLoc(), i32Type, ob.getI32IntegerAttr(4));
+            Value fmtBuf = ob.create<LLVM::AllocaOp>(module.getLoc(), ptrType, i32Type, four);
+            ob.create<LLVM::StoreOp>(module.getLoc(), fmtVal, fmtBuf);
+
+            if (strGlobals.empty()) {
+                ob.create<LLVM::ReturnOp>(module.getLoc(), ValueRange{zeroI64});
+                return;
+            }
+
+            Block *fallback = f.addBlock();
+            OpBuilder fb(fallback, fallback->end());
+            fb.create<LLVM::ReturnOp>(module.getLoc(), ValueRange{zeroI64});
+
+            Block *curBlock = entry;
+            for (int i = 0; i < (int)strGlobals.size(); i++) {
+                Value idxVal = ob.create<LLVM::ConstantOp>(module.getLoc(), i64Type, ob.getI64IntegerAttr(i));
+                Value cmp = ob.create<LLVM::ICmpOp>(module.getLoc(), LLVM::ICmpPredicate::eq, idx, idxVal);
+
+                Block *matchBlock = f.addBlock();
+                Block *nextBlock = (i == (int)strGlobals.size() - 1) ? fallback : f.addBlock();
+
+                ob.create<LLVM::CondBrOp>(module.getLoc(), cmp, matchBlock, ValueRange{}, nextBlock, ValueRange{});
+
+                OpBuilder mb(matchBlock, matchBlock->end());
+                Value strPtr = mb.create<LLVM::AddressOfOp>(module.getLoc(), ptrType, strGlobals[i].getName());
+                mb.create<LLVM::CallOp>(module.getLoc(), i32Type, "printf", ValueRange{fmtBuf, strPtr});
+                mb.create<LLVM::ReturnOp>(module.getLoc(), ValueRange{zeroI64});
+
+                ob.setInsertionPointToStart(nextBlock);
+            }
+        };
+        genLinPrintStr();
     }
     /*
     auto wType = LLVM::LLVMFunctionType::get(ptrType, {ptrType});
@@ -1903,6 +1977,7 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
                     addDecl("free", "llvm.func @free(!llvm.ptr)");
                     addDecl("strlen", "llvm.func @strlen(!llvm.ptr) -> i64");
                     addDecl("strcmp", "llvm.func @strcmp(!llvm.ptr, !llvm.ptr) -> i32");
+                    addDecl("lin_print_str", "llvm.func @lin_print_str(i64) -> i64");
                     addDecl("sin", "llvm.func @sin(f64) -> f64");
                     addDecl("cos", "llvm.func @cos(f64) -> f64");
                     addDecl("tan", "llvm.func @tan(f64) -> f64");
