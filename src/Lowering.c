@@ -8,6 +8,34 @@
 #include <string.h>
 #include <ctype.h>
 
+static void sanitizeMlirName(char *name) {
+    for (char *p = name; *p; p++) {
+        if (*p == '-') *p = '_';
+    }
+}
+
+#define MAX_MLIR_OPS 256
+
+static const char *mlirOpNames[MAX_MLIR_OPS];
+static int mlirOpCount = 0;
+
+static void addMlirOpName(const char *name, int len) {
+    if (mlirOpCount < MAX_MLIR_OPS) {
+        char *s = malloc(len + 1);
+        strncpy(s, name, len);
+        s[len] = '\0';
+        mlirOpNames[mlirOpCount++] = s;
+    }
+}
+
+static int isMlirOpName(const char *name, int len) {
+    for (int i = 0; i < mlirOpCount; i++) {
+        if ((int)strlen(mlirOpNames[i]) == len && strncmp(mlirOpNames[i], name, len) == 0)
+            return 1;
+    }
+    return 0;
+}
+
 static MlirValue createEra(MlirContext ctx, MlirBlock block, MlirLocation loc);
 static void linkToEra(MlirContext ctx, MlirBlock block, MlirLocation loc, MlirValue v);
 
@@ -486,11 +514,19 @@ static int count_var_usage(AstNode *node, const char *name, int name_len) {
 
     if (node->type == AST_CALL) {
         int c = 0;
-        if (node->as.call.callee_len == name_len && strncmp(node->as.call.callee, name, name_len) == 0) {
-            c++;
-        } else if (node->as.call.resolved_callee && strlen(node->as.call.resolved_callee) == (size_t)name_len && strncmp(node->as.call.resolved_callee, name, name_len) == 0) {
-            c++;
+        // Don't count mlir-op names as variable references — they're registered ops,
+        // not user-defined functions or variables.
+        if (!isMlirOpName(node->as.call.callee, node->as.call.callee_len)) {
+            if (node->as.call.callee_len == name_len && strncmp(node->as.call.callee, name, name_len) == 0) {
+                c++;
+            }
         }
+        // NOTE: resolved_callee is intentionally NOT checked here.
+        // It is set by type-directed dispatch (e.g. print(string) -> print_str)
+        // and the resolved name is an mlir-op, not a variable reference.
+        // Checking it would cause mlir-op names to be spuriously captured
+        // as free variables, leading to incorrect closure call dispatch
+        // instead of the built-in omega agent path.
         for (int i = 0; i < node->as.call.arg_count; i++) {
             c += count_var_usage(node->as.call.args[i], name, name_len);
         }
@@ -642,6 +678,8 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
     }
 
     if (expr->type == AST_MLIR_OP) {
+        addMlirOpName(expr->as.mlir_op.name, expr->as.mlir_op.name_len);
+
         MlirOperationState regState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.registry"), loc);
 
         MlirAttribute nameAttr = mlirStringAttrGet(ctx, mlirStringRefCreate(expr->as.mlir_op.name, expr->as.mlir_op.name_len));
@@ -1344,6 +1382,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         } else {
             snprintf(funcNameStr, sizeof(funcNameStr), "anon_fn_%d", anon_counter++);
         }
+        sanitizeMlirName(funcNameStr);
 
         // Skip type declaration functions to avoid duplicate symbol errors.
         // A type declaration function is a function with no arguments, a return type, and an empty body.
@@ -1678,11 +1717,49 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
                                  ? (int)strlen(expr->as.call.resolved_callee)
                                  : expr->as.call.callee_len;
 
+        // Built-in "pair" operator: (pair a b) creates a delta-(pair) node
+        if (effectiveCalleeLen == 4 && memcmp(effectiveCallee, "pair", 4) == 0 && expr->as.call.arg_count == 2) {
+            MlirValue left = lowerExpression(ctx, block, loc, expr->as.call.args[0], env, false);
+            MlirValue right = lowerExpression(ctx, block, loc, expr->as.call.args[1], env, false);
+            MlirOperationState pairState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+            MlirAttribute pTypeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("delta"));
+            MlirNamedAttribute pTypeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), pTypeAttr);
+            MlirAttribute pPolAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("*"));
+            MlirNamedAttribute pPolNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), pPolAttr);
+            MlirAttribute pLabelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("pair"));
+            MlirNamedAttribute pLabelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), pLabelAttr);
+            MlirNamedAttribute pAttrs[] = {pTypeNamedAttr, pPolNamedAttr, pLabelNamedAttr};
+            mlirOperationStateAddAttributes(&pairState, 3, pAttrs);
+            MlirType portType = getPicPortType(ctx);
+            MlirType pTypes[] = {portType, portType, portType};
+            mlirOperationStateAddResults(&pairState, 3, pTypes);
+            MlirOperation pairOp = mlirOperationCreate(&pairState);
+            mlirBlockAppendOwnedOperation(block, pairOp);
+            MlirValue p0 = mlirOperationGetResult(pairOp, 0);
+            MlirValue p1 = mlirOperationGetResult(pairOp, 1);
+            MlirValue p2 = mlirOperationGetResult(pairOp, 2);
+            MlirOperationState lls = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
+            MlirValue lOps[] = {p1, left};
+            mlirOperationStateAddOperands(&lls, 2, lOps);
+            mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&lls));
+            MlirOperationState lrs = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
+            MlirValue rOps[] = {p2, right};
+            mlirOperationStateAddOperands(&lrs, 2, rOps);
+            mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&lrs));
+            return p0;
+        }
+
         // Check if callee is a user-defined function in the environment
-        MlirValue currentVal = env_fetch(ctx, block, loc, env, effectiveCallee, effectiveCalleeLen);
-        // If not found with effective callee, also try original callee (for closures stored by original name)
-        if (mlirValueIsNull(currentVal) && expr->as.call.resolved_callee)
-            currentVal = env_fetch(ctx, block, loc, env, expr->as.call.callee, expr->as.call.callee_len);
+        // Skip the env lookup if the resolved callee comes from type-directed dispatch
+        // OR if the callee is a known mlir-op name (registered in std/io.lin or similar).
+        // Mlir-ops store omega+ agent ports in the env, not function closures.
+        // Treating them as closures creates a malformed omega-(call) agent.
+        MlirValue currentVal = {NULL};
+        if (!expr->as.call.resolved_callee && !isMlirOpName(effectiveCallee, effectiveCalleeLen)) {
+            currentVal = env_fetch(ctx, block, loc, env, effectiveCallee, effectiveCalleeLen);
+            if (mlirValueIsNull(currentVal))
+                currentVal = env_fetch(ctx, block, loc, env, expr->as.call.callee, expr->as.call.callee_len);
+        }
 
         if (!mlirValueIsNull(currentVal)) {
             MlirType portType = getPicPortType(ctx);
@@ -1980,11 +2057,15 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
 
     Environment env;
     env_init(&env);
+    if (mlirOpCount == 0) {
+        addMlirOpName("pair", 4);
+    }
 
     MlirBlock block = {NULL};
     if (ast->type == AST_FUNC_DECL) {
         char funcNameStr[256];
         snprintf(funcNameStr, sizeof(funcNameStr), "%.*s", ast->as.func_decl.name_len, ast->as.func_decl.name);
+        sanitizeMlirName(funcNameStr);
         bool isMain = (strcmp(funcNameStr, "main") == 0);
 
         MlirOperationState funcState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.func"), loc);

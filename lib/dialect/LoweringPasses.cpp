@@ -1810,6 +1810,20 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
         regOps.push_back(op);
     });
 
+    // Add lin_print_str declaration directly as an LLVM function
+    if (!module.lookupSymbol<LLVM::LLVMFuncOp>("lin_print_str")) {
+        OpBuilder b(module.getBodyRegion());
+        auto fType = LLVM::LLVMFunctionType::get(i64Type, {i64Type});
+        b.create<LLVM::LLVMFuncOp>(module.getLoc(), "lin_print_str", fType);
+    }
+
+    // Add lin_write_ppm declaration for PPM output (returns i64 for state threading)
+    if (!module.lookupSymbol<LLVM::LLVMFuncOp>("lin_write_ppm")) {
+        OpBuilder b(module.getBodyRegion());
+        auto fType = LLVM::LLVMFunctionType::get(i64Type, {i64Type, i64Type, i64Type});
+        b.create<LLVM::LLVMFuncOp>(module.getLoc(), "lin_write_ppm", fType);
+    }
+
     SmallVector<std::string> existingDecls;
     for (auto func : module.getOps<func::FuncOp>()) {
         std::string name = func.getSymName().str();
@@ -1846,6 +1860,11 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
         }
         existingDecls.push_back(s);
     }
+
+    // Pre-populate existingDecls with known runtime function declarations
+    // so they can be referenced in mlir-op payload temp modules.
+    existingDecls.push_back("llvm.func @lin_print_str(i64) -> i64");
+    existingDecls.push_back("llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
 
     std::vector<UserOp> userOps;
 
@@ -1988,6 +2007,14 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
                     addDecl("log", "llvm.func @log(f64) -> f64");
                     addDecl("sqrt", "llvm.func @sqrt(f64) -> f64");
                     addDecl("pow", "llvm.func @pow(f64, f64) -> f64");
+                    addDecl("fopen", "llvm.func @fopen(!llvm.ptr, !llvm.ptr) -> !llvm.ptr");
+                    addDecl("fclose", "llvm.func @fclose(!llvm.ptr) -> i32");
+                    addDecl("fgetc", "llvm.func @fgetc(!llvm.ptr) -> i32");
+                    addDecl("fputc", "llvm.func @fputc(i32, !llvm.ptr) -> i32");
+                    addDecl("exit", "llvm.func @exit(i32)");
+                    addDecl("abort", "llvm.func @abort()");
+                    addDecl("time", "llvm.func @time(!llvm.ptr) -> i64");
+                    addDecl("sleep", "llvm.func @sleep(i32) -> i32");
                     for (auto &d : existingDecls) {
                         auto atPos = d.find("@");
                         if (atPos != std::string::npos) {
@@ -2068,6 +2095,10 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
                                 }
                             }
                         }
+                    } else {
+                        llvm::errs() << "PARSE ERROR: Failed to parse MLIR snippet for user_op_" << label << "\n";
+                        llvm::errs() << "--- tempModuleStr ---\n" << tempModuleStr << "\n--- end ---\n";
+                        abort();
                     }
 
                     func::FuncOp tempFunc = parsedSnippet ? parsedSnippet->lookupSymbol<func::FuncOp>("temp") : nullptr;
