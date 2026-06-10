@@ -39,22 +39,13 @@ print_char: mlir-op [
 }
 
 // Print a string literal.
-// We receive a truncated 32-bit pointer. We zero-extend to 64-bit to call printf/puts.
+// We receive a string index. Call lin_print_str to look up and print the actual string.
 print_str: mlir-op [
     inputs:  [state [i64!] str [i32!]]
     outputs: [res [i64!]]
 ] {
-    // 32-bit int to 64-bit int then inttoptr
     %str_i64 = llvm.zext %str : i32 to i64
-    %str_ptr = llvm.inttoptr %str_i64 : i64 to !llvm.ptr
-
-    // %s is % (37), s (115), \0
-    %four = llvm.mlir.constant(4 : i32) : i32
-    %fmt = llvm.alloca %four x i8 : (i32) -> !llvm.ptr
-    %pct_s = llvm.mlir.constant(29477 : i32) : i32 // 37 | (115 << 8) = 37 + 29440 = 29477
-    llvm.store %pct_s, %fmt : i32, !llvm.ptr
-
-    %res_call = llvm.call @printf(%fmt, %str_ptr) vararg(!llvm.func<i32 (!llvm.ptr, ...)>) : (!llvm.ptr, !llvm.ptr) -> i32
+    %res_call = llvm.call @lin_print_str(%str_i64) : (i64) -> i64
     %res = llvm.add %state, %state : i64
 }
 

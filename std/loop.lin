@@ -3,14 +3,15 @@
 // Helps avoid generating deep recursive Interaction Net structures for simple array logic.
 
 loop_n: mlir-op [
-    inputs:  [state [i64!] n [i32!] cb_ptr [i64!]]
+    inputs:  [state [i64!] n [i64!] cb_ptr [i64!]]
     outputs: [res_state [i64!]]
 ] {
     // Defines a basic scf.for loop structure running 'n' times.
     // Future enhancements will map cb_ptr to a callback interaction via indirection.
-    %c0 = llvm.mlir.constant(0 : i32) : i32
-    %c1 = llvm.mlir.constant(1 : i32) : i32
-    scf.for %iv = %c0 to %n step %c1 {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %n_idx = arith.index_cast %n : i64 to index
+    scf.for %iv = %c0 to %n_idx step %c1 {
         // Body of loop executing callback or accumulated logic.
         // Currently empty iteration stub to map the control flow boundary.
     }

@@ -124,7 +124,7 @@ static Token string(Lexer *lexer) {
 }
 
 static Token identifier(Lexer *lexer) {
-    while (isalpha(peek(lexer)) || isdigit(peek(lexer)) || peek(lexer) == '_' ||
+    while (isalpha(peek(lexer)) || isdigit(peek(lexer)) || peek(lexer) == '_' || peek(lexer) == '?' ||
            (peek(lexer) == '-' && isalpha(peekNext(lexer)))) {
         advance(lexer);
     }
@@ -177,7 +177,7 @@ Token scanToken(Lexer *lexer) {
         case '@': {
             if (isalpha(peek(lexer)) || peek(lexer) == '_') {
                 advance(lexer);
-                while (isalpha(peek(lexer)) || isdigit(peek(lexer)) || peek(lexer) == '_' ||
+                while (isalpha(peek(lexer)) || isdigit(peek(lexer)) || peek(lexer) == '_' || peek(lexer) == '?' ||
                        (peek(lexer) == '-' && isalpha(peekNext(lexer)))) {
                     advance(lexer);
                 }
@@ -681,7 +681,20 @@ static AstNode* parseEither(Parser *parser) {
         return NULL;
     }
     pair->as.pair.left = parseBlock(parser);
-    pair->as.pair.right = parseBlock(parser);
+    if (parser->current.type == TOKEN_LBRACKET) {
+        pair->as.pair.right = parseBlock(parser);
+    } else {
+        AstNode *empty = createNode(parser, AST_BLOCK);
+        if (!empty) {
+            freeAst(call);
+            freeAst(pair);
+            return NULL;
+        }
+        empty->as.block.statements = NULL;
+        empty->as.block.count = 0;
+        empty->as.block.capacity = 0;
+        pair->as.pair.right = empty;
+    }
     call->as.call.args[1] = pair;
 
     return call;

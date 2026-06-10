@@ -15,3 +15,9 @@ f32: func [return: [f32!]] []
 f64: func [return: [f64!]] []
 bool: func [return: [bool!]] []
 str: func [return: [str!]] []
+
+; Block type for tuples and lists (used by Linden)
+block: func [return: [block!]] []
+
+; Undeclared type placeholder (for forward compatibility)
+undeclared: func [return: [undeclared!]] []

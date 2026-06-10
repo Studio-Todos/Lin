@@ -137,8 +137,9 @@ int main(int argc, char **argv) {
   buffer << file.rdbuf();
   std::string source_str = buffer.str();
 
-  // Implicitly inject std/types.lin at the beginning of the AST
-  std::string fullSource = "import \"std/types.lin\"\n" + source_str;
+  // Implicitly inject std/types.lin and std/io.lin at the beginning of the AST
+  // std/io.lin is needed for print/read I/O operations to register their rules and user-op functions.
+  std::string fullSource = "import \"std/types.lin\"\nimport \"std/io.lin\"\n" + source_str;
   const char *patchedSource = strdup(fullSource.c_str());
   importSources.push_back(patchedSource);
 
@@ -476,6 +477,10 @@ int main(int argc, char **argv) {
       }
 
       std::cout << "\nLowering pass successful.\n";
+
+      std::cout << "--- MLIR Module after lowering ---\n";
+      module.print(llvm::outs());
+      std::cout << "------------------------------------\n";
 
       llvm::LLVMContext llvmContext;
       auto llvmModule = mlir::translateModuleToLLVMIR(module, llvmContext);
