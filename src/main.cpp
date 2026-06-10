@@ -99,6 +99,7 @@ int main(int argc, char **argv) {
   bool enableWasm = false;
   std::vector<std::string> includePaths;
   std::vector<const char*> importSources;
+  std::vector<std::string> linkCFiles;
 
   for (int i = 1; i < argc; ++i) {
       std::string arg = argv[i];
@@ -112,13 +113,15 @@ int main(int argc, char **argv) {
           enableGPU = true;
       } else if (arg == "--wasm" || arg == "-wasm") {
           enableWasm = true;
+      } else if ((arg == "--link-c" || arg == "-link-c") && i + 1 < argc) {
+          linkCFiles.push_back(argv[++i]);
       } else if (sourceFile.empty()) {
           sourceFile = arg;
       }
   }
 
   if (command.empty() || sourceFile.empty()) {
-      std::cerr << "Usage: linc <build|test> <source_file.lin> [-o output_binary] [-I include_path]\n";
+      std::cerr << "Usage: linc <build|test> <source_file.lin> [-o output_binary] [-I include_path] [--link-c c_file]\n";
       return 1;
   }
 
@@ -550,6 +553,7 @@ int main(int argc, char **argv) {
               if (enableWasm) {
                   args.push_back(const_cast<char*>("wasm-ld"));
                   args.push_back(const_cast<char*>(objFile.c_str()));
+                  for (auto &cf : linkCFiles) args.push_back(const_cast<char*>(cf.c_str()));
                   args.push_back(const_cast<char*>("-o"));
                   args.push_back(const_cast<char*>(outputBinary.c_str()));
                   args.push_back(const_cast<char*>("--no-entry"));
@@ -559,6 +563,7 @@ int main(int argc, char **argv) {
               } else {
                   args.push_back(const_cast<char*>("gcc"));
                   args.push_back(const_cast<char*>(objFile.c_str()));
+                  for (auto &cf : linkCFiles) args.push_back(const_cast<char*>(cf.c_str()));
                   args.push_back(const_cast<char*>("-o"));
                   args.push_back(const_cast<char*>(outputBinary.c_str()));
                   args.push_back(const_cast<char*>("-lpthread"));
