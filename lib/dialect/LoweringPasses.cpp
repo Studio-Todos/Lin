@@ -1675,8 +1675,20 @@ std::string base = op.label.substr(0, op.label.size() - 2);
         builder.create<func::CallOp>(entry.getLoc(), TypeRange{}, entry.getSymName(), ValueRange{builder.create<LLVM::PtrToIntOp>(entry.getLoc(), i64Type, as)});
         
         if (enableGPU) {
-            // GPU path: no pthreads (worker_thread is a SPIR-V kernel)
-            // GPU dispatch is handled by gpu_runtime.c's Vulkan code.
+            Value one32 = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(1));
+            Value threads = builder.create<LLVM::AllocaOp>(entry.getLoc(), ptrType, i64Type, one32);
+            Value threadAttr = builder.create<LLVM::ZeroOp>(entry.getLoc(), ptrType);
+            auto wFuncType = builder.getFunctionType({i64Type}, {i64Type});
+            auto wFuncConst = builder.create<func::ConstantOp>(entry.getLoc(), wFuncType, FlatSymbolRefAttr::get(builder.getContext(), "worker_thread"));
+            Value wAddr = builder.create<UnrealizedConversionCastOp>(entry.getLoc(), TypeRange{ptrType}, ValueRange(static_cast<Value>(wFuncConst.getResult()))).getResult(0);
+
+            Value idx0 = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(0));
+            Value tPtr = builder.create<LLVM::GEPOp>(entry.getLoc(), ptrType, i64Type, threads, ValueRange{idx0});
+            builder.create<LLVM::CallOp>(entry.getLoc(), i32Type, "pthread_create", ValueRange{tPtr, threadAttr, wAddr, as});
+
+            Value retValPtr = builder.create<LLVM::ZeroOp>(entry.getLoc(), ptrType);
+            Value tVal = builder.create<LLVM::LoadOp>(entry.getLoc(), i64Type, tPtr);
+            builder.create<LLVM::CallOp>(entry.getLoc(), i32Type, "pthread_join", ValueRange{tVal, retValPtr});
         } else {
             Value four = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(4));
             Value threads = builder.create<LLVM::AllocaOp>(entry.getLoc(), ptrType, i64Type, four);
@@ -3060,7 +3072,7 @@ struct PicRuntimeToSPIRVPass : public PassWrapper<PicRuntimeToSPIRVPass, Operati
 
     eb.create<mlir::spirv::ReturnOp>(loc);
 
-    workerFunc.erase();
+    // worker_thread is kept alive for the dispatch loop lowered by PicRuntimeToLLVMPass
 #else
     llvm::outs() << "Info: SPIR-V dialect headers not available; PicRuntimeToSPIRVPass skipped.\n";
 #endif
