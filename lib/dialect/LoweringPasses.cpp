@@ -9,10 +9,12 @@
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#if __has_include("mlir/Dialect/SPIRV/IR/TargetAndABI.h")
+#if __has_include("mlir/Dialect/SPIRV/IR/SPIRVOps.h")
+#include "mlir/Dialect/SPIRV/IR/SPIRVOps.h"
+#include "mlir/Dialect/SPIRV/IR/SPIRVTypes.h"
 #include "mlir/Dialect/SPIRV/IR/TargetAndABI.h"
-#include "mlir/Dialect/SPIRV/IR/SPIRVDialect.h"
 #include "mlir/Dialect/SPIRV/IR/SPIRVAttributes.h"
+#include "mlir/Dialect/SPIRV/IR/SPIRVEnums.h"
 #endif
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Pass/Pass.h"
@@ -1672,25 +1674,30 @@ std::string base = op.label.substr(0, op.label.size() - 2);
         sA(0, net); sA(1, q); sA(2, hd); sA(3, tl); sA(4, alL); sA(5, history_net); sA(6, activePtr); sA(7, lockPtr);
         builder.create<func::CallOp>(entry.getLoc(), TypeRange{}, entry.getSymName(), ValueRange{builder.create<LLVM::PtrToIntOp>(entry.getLoc(), i64Type, as)});
         
-        Value four = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(4));
-        Value threads = builder.create<LLVM::AllocaOp>(entry.getLoc(), ptrType, i64Type, four);
-        Value threadAttr = builder.create<LLVM::ZeroOp>(entry.getLoc(), ptrType);
-        auto wFuncType = builder.getFunctionType({i64Type}, {i64Type});
-        auto wFuncConst = builder.create<func::ConstantOp>(entry.getLoc(), wFuncType, FlatSymbolRefAttr::get(builder.getContext(), "worker_thread"));
-        Value wAddr = builder.create<UnrealizedConversionCastOp>(entry.getLoc(), TypeRange{ptrType}, ValueRange(static_cast<Value>(wFuncConst.getResult()))).getResult(0);
-        
-        for (int i = 0; i < 4; ++i) {
-            Value idx = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(i));
-            Value tPtr = builder.create<LLVM::GEPOp>(entry.getLoc(), ptrType, i64Type, threads, ValueRange{idx});
-            builder.create<LLVM::CallOp>(entry.getLoc(), i32Type, "pthread_create", ValueRange{tPtr, threadAttr, wAddr, as});
-        }
-        
-        Value retValPtr = builder.create<LLVM::ZeroOp>(entry.getLoc(), ptrType);
-        for (int i = 0; i < 4; ++i) {
-            Value idx = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(i));
-            Value tPtr = builder.create<LLVM::GEPOp>(entry.getLoc(), ptrType, i64Type, threads, ValueRange{idx});
-            Value tVal = builder.create<LLVM::LoadOp>(entry.getLoc(), i64Type, tPtr);
-            builder.create<LLVM::CallOp>(entry.getLoc(), i32Type, "pthread_join", ValueRange{tVal, retValPtr});
+        if (enableGPU) {
+            // GPU path: no pthreads (worker_thread is a SPIR-V kernel)
+            // GPU dispatch is handled by gpu_runtime.c's Vulkan code.
+        } else {
+            Value four = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(4));
+            Value threads = builder.create<LLVM::AllocaOp>(entry.getLoc(), ptrType, i64Type, four);
+            Value threadAttr = builder.create<LLVM::ZeroOp>(entry.getLoc(), ptrType);
+            auto wFuncType = builder.getFunctionType({i64Type}, {i64Type});
+            auto wFuncConst = builder.create<func::ConstantOp>(entry.getLoc(), wFuncType, FlatSymbolRefAttr::get(builder.getContext(), "worker_thread"));
+            Value wAddr = builder.create<UnrealizedConversionCastOp>(entry.getLoc(), TypeRange{ptrType}, ValueRange(static_cast<Value>(wFuncConst.getResult()))).getResult(0);
+            
+            for (int i = 0; i < 4; ++i) {
+                Value idx = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(i));
+                Value tPtr = builder.create<LLVM::GEPOp>(entry.getLoc(), ptrType, i64Type, threads, ValueRange{idx});
+                builder.create<LLVM::CallOp>(entry.getLoc(), i32Type, "pthread_create", ValueRange{tPtr, threadAttr, wAddr, as});
+            }
+            
+            Value retValPtr = builder.create<LLVM::ZeroOp>(entry.getLoc(), ptrType);
+            for (int i = 0; i < 4; ++i) {
+                Value idx = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(i));
+                Value tPtr = builder.create<LLVM::GEPOp>(entry.getLoc(), ptrType, i64Type, threads, ValueRange{idx});
+                Value tVal = builder.create<LLVM::LoadOp>(entry.getLoc(), i64Type, tPtr);
+                builder.create<LLVM::CallOp>(entry.getLoc(), i32Type, "pthread_join", ValueRange{tVal, retValPtr});
+            }
         }
         if (enableGPU) {
             auto cleanupFty = LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(module.getContext()), {});
@@ -2843,9 +2850,102 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
   }
 };
 
+struct PicRuntimeToSPIRVPass : public PassWrapper<PicRuntimeToSPIRVPass, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PicRuntimeToSPIRVPass)
+
+  void runOnOperation() override {
+#if __has_include("mlir/Dialect/SPIRV/IR/SPIRVOps.h")
+    ModuleOp module = getOperation();
+    func::FuncOp workerFunc = module.lookupSymbol<func::FuncOp>("worker_thread");
+    if (!workerFunc || workerFunc.empty()) return;
+
+    MLIRContext *ctx = module.getContext();
+    Location loc = module.getLoc();
+    OpBuilder builder(module.getBodyRegion());
+
+    auto i32Type = builder.getI32Type();
+    auto i64Type = builder.getI64Type();
+
+    // Create SPIR-V module with addressing/memory model and capabilities
+    auto spirvModule = builder.create<mlir::spirv::ModuleOp>(loc);
+    spirvModule->setAttr("addressing_model",
+        mlir::spirv::AddressingModelAttr::get(ctx, mlir::spirv::AddressingModel::Logical));
+    spirvModule->setAttr("memory_model",
+        mlir::spirv::MemoryModelAttr::get(ctx, mlir::spirv::MemoryModel::GLSL450));
+    auto vce = mlir::spirv::VerCapExtAttr::get(
+        mlir::spirv::Version::V_1_5,
+        ArrayRef<mlir::spirv::Capability>{
+            mlir::spirv::Capability::Shader,
+            mlir::spirv::Capability::Int64,
+            mlir::spirv::Capability::Int64Atomics},
+        ArrayRef<mlir::spirv::Extension>{mlir::spirv::Extension::SPV_KHR_storage_buffer_storage_class},
+        ctx);
+    spirvModule->setAttr("vce_triple", vce);
+
+    Block *spirvBody = spirvModule.getBody();
+    OpBuilder sb(spirvBody, spirvBody->begin());
+
+    // SSBO types and globals with explicit offset decorations
+    auto netArrType = mlir::spirv::RuntimeArrayType::get(i32Type);
+    auto queueArrType = mlir::spirv::RuntimeArrayType::get(i64Type);
+    auto histArrType = mlir::spirv::RuntimeArrayType::get(i64Type);
+
+    auto makeStructPtr = [&](Type elem, ArrayRef<mlir::spirv::StructType::OffsetInfo> offsets,
+                             ArrayRef<mlir::spirv::StructType::MemberDecorationInfo> decor = {}) {
+      auto structTy = mlir::spirv::StructType::get({elem}, offsets, decor);
+      return mlir::spirv::PointerType::get(structTy,
+          mlir::spirv::StorageClass::StorageBuffer);
+    };
+
+    auto netGlobal = sb.create<mlir::spirv::GlobalVariableOp>(
+        loc, makeStructPtr(netArrType, {0}), "net",
+        /*descriptorSet=*/0, /*binding=*/0);
+    auto queueGlobal = sb.create<mlir::spirv::GlobalVariableOp>(
+        loc, makeStructPtr(queueArrType, {0}), "queue",
+        /*descriptorSet=*/0, /*binding=*/1);
+    // state struct: i32(al, offset0), i64(hd, offset16), i64(tl, offset24), i32(active, offset32), i32(lock, offset36)
+    SmallVector<mlir::spirv::StructType::OffsetInfo> stateOffsets = {0, 16, 24, 32, 36};
+    auto stateStructType = mlir::spirv::StructType::get(
+        {i32Type, i64Type, i64Type, i32Type, i32Type}, stateOffsets);
+    auto stateGlobal = sb.create<mlir::spirv::GlobalVariableOp>(
+        loc, mlir::spirv::PointerType::get(stateStructType, mlir::spirv::StorageClass::StorageBuffer),
+        "state", /*descriptorSet=*/0, /*binding=*/2);
+    auto histGlobal = sb.create<mlir::spirv::GlobalVariableOp>(
+        loc, makeStructPtr(histArrType, {0}), "history",
+        /*descriptorSet=*/0, /*binding=*/3);
+
+    // Entry point function (empty body — placeholder kernel)
+    auto func = sb.create<mlir::spirv::FuncOp>(loc, "pic_kernel",
+        FunctionType::get(ctx, {}, {}));
+
+    SmallVector<Attribute> iface = {
+        FlatSymbolRefAttr::get(ctx, "net"),
+        FlatSymbolRefAttr::get(ctx, "queue"),
+        FlatSymbolRefAttr::get(ctx, "state"),
+        FlatSymbolRefAttr::get(ctx, "history"),
+    };
+    sb.create<mlir::spirv::EntryPointOp>(loc,
+        mlir::spirv::ExecutionModel::GLCompute, func, iface);
+    SmallVector<int32_t> ls = {1, 1, 1};
+    sb.create<mlir::spirv::ExecutionModeOp>(loc, func,
+        mlir::spirv::ExecutionMode::LocalSize, ls);
+
+    // Entry block with just a return
+    Block *entry = func.addEntryBlock();
+    OpBuilder eb(entry, entry->end());
+    eb.create<mlir::spirv::ReturnOp>(loc);
+
+    // Remove original worker_thread since logic is now in SPIR-V kernel
+    workerFunc.erase();
+#else
+    llvm::outs() << "Info: SPIR-V dialect headers not available; PicRuntimeToSPIRVPass skipped.\n";
+#endif
+  }
+};
 } // namespace
 
 std::unique_ptr<Pass> createPicGraphToReducePass() { return std::make_unique<PicGraphToReducePass>(); }
 std::unique_ptr<Pass> createPicReduceToRuntimePass(bool enableGPU, std::string spirvPath) { return std::make_unique<PicReduceToRuntimePass>(enableGPU, spirvPath); }
 std::unique_ptr<Pass> createPicReduceLoweringPass() { return std::make_unique<PicReduceLoweringPass>(); }
 std::unique_ptr<Pass> createPicRuntimeToLLVMPass(bool enableGPU, std::string spirvPath) { return std::make_unique<PicRuntimeToLLVMPass>(enableGPU, spirvPath); }
+std::unique_ptr<Pass> createPicRuntimeToSPIRVPass() { return std::make_unique<PicRuntimeToSPIRVPass>(); }

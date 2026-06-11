@@ -44,6 +44,8 @@ add_mlir_dialect_library(PicDialects
   MLIRFuncToLLVM
   MLIRArithToLLVM
   MLIRGPUDialect
+  MLIRSPIRVDialect
+  MLIRSPIRVSerialization
 )
 
 target_include_directories(PicDialects PUBLIC

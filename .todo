@@ -106,8 +106,8 @@
         - [x] worker_thread contains redex dispatch, polarity decode, rule lookup, rules
         - [x] Emit pic.reduce dialect ops (annihilate, duplicate, erase, fire_op, ...)
         - [x] Make PicRuntimeToLLVMPass a thin mechanical conversion only
-        - [ ] Create PicRuntimeToSPIRVPass for GPU target
-        - Unblocks: item 31 (unified pipeline), 21b (multi-threading)
+- [x] Create PicRuntimeToSPIRVPass for GPU target
+         - Unblocks: item 31 (unified pipeline), 21b (multi-threading)
 
 [ ] A1c. Node type encodings are hardcoded C++ constants 🔴
         # LoweringPasses.cpp:138-147 — enum PicrNodeType { NODE_CON=1, NODE_DES=2, ... }
