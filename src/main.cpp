@@ -335,10 +335,11 @@ int main(int argc, char **argv) {
       pm.addPass(createPicReduceToRuntimePass(enableGPU, outputBinary + ".spv"));
       pm.addPass(createPicReduceLoweringPass());
       pm.addPass(mlir::createConvertSCFToCFPass());
-      pm.addPass(createPicRuntimeToLLVMPass(enableGPU, outputBinary + ".spv"));
-
       if (enableGPU) {
-          pm.addPass(mlir::createGpuKernelOutliningPass());
+          pm.addPass(createPicRuntimeToSPIRVPass());
+          pm.addPass(createPicRuntimeToLLVMPass(enableGPU, outputBinary + ".spv"));
+      } else {
+          pm.addPass(createPicRuntimeToLLVMPass(enableGPU, outputBinary + ".spv"));
       }
 
       if (mlir::failed(pm.run(module))) {
@@ -357,40 +358,13 @@ int main(int argc, char **argv) {
       }
 #endif
 
-      if (enableGPU) {
-          PassManager pm_gpu(&context);
-#if __has_include("mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h")
-           pm_gpu.addPass(mlir::createGpuSPIRVAttachTarget());
-#if __has_include("mlir/Conversion/MemRefToSPIRV/MemRefToSPIRVPass.h")
-           pm_gpu.addNestedPass<mlir::gpu::GPUModuleOp>(mlir::createMapMemRefStorageClassPass());
-           pm_gpu.addNestedPass<mlir::gpu::GPUModuleOp>(mlir::createConvertMemRefToSPIRVPass());
-#endif
-#if __has_include("mlir/Conversion/ArithToSPIRV/ArithToSPIRVPass.h")
-           pm_gpu.addNestedPass<mlir::gpu::GPUModuleOp>(mlir::createConvertArithToSPIRVPass());
-#endif
-#if __has_include("mlir/Conversion/IndexToSPIRV/IndexToSPIRVPass.h")
-           pm_gpu.addNestedPass<mlir::gpu::GPUModuleOp>(mlir::createConvertIndexToSPIRVPass());
-#endif
-#if __has_include("mlir/Conversion/ControlFlowToSPIRV/ControlFlowToSPIRVPass.h")
-           pm_gpu.addNestedPass<mlir::gpu::GPUModuleOp>(mlir::createConvertControlFlowToSPIRVPass());
-#endif
-// #if __has_include("mlir/Conversion/FuncToSPIRV/FuncToSPIRVPass.h")
-//            pm_gpu.addNestedPass<mlir::gpu::GPUModuleOp>(mlir::createConvertFuncToSPIRVPass());
-// #endif
-           pm_gpu.addPass(mlir::createConvertGPUToSPIRVPass());
-#if __has_include("mlir/Dialect/SPIRV/Transforms/Passes.h")
-           pm_gpu.addNestedPass<mlir::spirv::ModuleOp>(mlir::spirv::createSPIRVLowerABIAttributesPass());
-           pm_gpu.addNestedPass<mlir::spirv::ModuleOp>(mlir::spirv::createSPIRVUpdateVCEPass());
-#endif
-#else
-          std::cerr << "Warning: MLIR GPU-to-SPIRV conversion headers not available; skipping SPIR-V conversion.\n";
-#endif
-          if (mlir::failed(pm_gpu.run(module))) {
-              std::cerr << "GPU to SPIR-V conversion pass failed.\n";
-              return 1;
-          }
+if (enableGPU) {
+          // PicRuntimeToSPIRVPass already produced a spirv::ModuleOp directly.
+          // Skip the standard GPU→SPIR-V conversion pipeline (pm_gpu) which would
+          // try to convert the empty gpu::LaunchOp and conflict with our module.
+          // We serialize our spirv module directly below.
       }
-
+      
 #if __has_include("mlir/Target/SPIRV/Serialization.h")
       if (enableGPU) {
           module.walk([&](mlir::spirv::ModuleOp spirvModule) {
