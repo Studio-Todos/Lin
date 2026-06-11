@@ -71,6 +71,4 @@ fib: func [
 ]
 ```
 
-## Examples
-
-* **[Linden](https://github.com/Studio-Todos/Linden)**: An example project using Lin.
+[Join our Discord Server!](https://discord.gg/BKtQVs5qSb)
