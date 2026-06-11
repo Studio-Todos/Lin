@@ -1,0 +1,36 @@
+import "std/types.lin"
+
+create-window: mlir-op [
+    inputs: [state [i64!] width [i32!] height [i32!]]
+    outputs: [res_state [i64!] result [i32!]]
+] {
+    %res = llvm.call @lin_create_window(%width, %height) : (i32, i32) -> i32
+}
+
+window-should-close: mlir-op [
+    inputs: [state [i64!]]
+    outputs: [res_state [i64!] result [i32!]]
+] {
+    %res = llvm.call @lin_window_should_close() : () -> i32
+}
+
+poll-events: mlir-op [
+    inputs: [state [i64!]]
+    outputs: [res_state [i64!] result [i32!]]
+] {
+    %res = llvm.call @lin_poll_events() : () -> i32
+}
+
+display-pixels: mlir-op [
+    inputs: [state [i64!] w [i32!] h [i32!] data_ptr [i64!]]
+    outputs: [res_state [i64!] result [i32!]]
+] {
+    %res = llvm.call @lin_display_pixels(%w, %h, %data_ptr) : (i32, i32, i64) -> i32
+}
+
+destroy-window: mlir-op [
+    inputs: [state [i64!]]
+    outputs: [res_state [i64!]]
+] {
+    %res = llvm.call @lin_destroy_window() : () -> i32
+}

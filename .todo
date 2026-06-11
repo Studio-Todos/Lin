@@ -309,6 +309,18 @@
         - Support nested paths: `engine/world/bodies/1`
         - ✅ Works with arrays and blocks
 
+[x] 6b. Computed path access `expr/(expr)` 🟡
+        # Parser: Added support for computed indices via `/(expression)` syntax
+        # Enables dynamic array access: `arr/(add idx 1)`
+        - Parser: handle `/(` as computed index in parseIdentifierExpr, parseExpression, parseGroupingExpr
+        - Added `computed_index` field to AST_FIELD_ACCESS struct
+
+[x] 6c. Disambiguate grouped expressions from function calls 🔴
+        # Parser: `(coeffs/1)` inside `(print (coeffs/1))` was misparsed as
+        # function call `coeffs(1)` instead of grouping with path access.
+        # parseGroupingExpr now peeks ahead — if followed by `/`, `.`, `)`
+        # it's treated as a grouping expression, not a call.
+
 [x] 7. Data Blocks vs. Code Blocks
         - Parser: Distinguish between block as statement-list vs. block as data-literal
         - Lowering: For data blocks, emit a linked structure of Pair agents in the graph
@@ -354,6 +366,11 @@
         - ✅ Resolved worker thread segfault during closure application
         - ✅ test/test_closure.lin compiles and runs cleanly (exit 0)
 
+[x] 11b. Sanitize `?` in MLIR function names 🟡
+        # Lowering.c: sanitizeMlirName() replaces `?` with `_` in addition to
+        # existing `-` → `_` conversion. Functions like `aabb-overlaps?` 
+        # become `aabb_overlaps_` for MLIR compatibility.
+
 [x] 12. Binary operators via std library
         - All 12 operators (+, -, *, /, <, >, <=, >=, ==, !=, &&, ||) work
         - Parsed in Parser.c and emitted as Call(op_name) AST nodes
@@ -375,6 +392,19 @@
 [x] 15. `linc run` command
         - Compile to binary and execute in one step: linc run file.lin -o /tmp/bin
         - Prints exit code and stdout; requires pre-built binary path
+
+[x] 15b. `--link-libs` CLI flag 🟡
+        # New flag to pass extra linker flags when compiling Lin binaries.
+        # Usage: --link-libs "-lglfw -lGL"
+        # Enables linking external C libraries (GLFW, system libs, etc.)
+
+[x] 15c. Window system support via GLFW 🟡
+        # Added glfw_window.c — GLFW-based window with OpenGL framebuffer display
+        # Added std/window.lin — Lin standard library bindings for window ops:
+        #   create-window, window-should-close, poll-events, display-pixels, destroy-window
+        # Added pkgs.glfw to Nix flake devShell
+        # Pre-declared window function symbols in LoweringPasses.cpp
+        # Usage: linc build app.lin -o app --link-c glfw_window.c --link-libs "-lglfw -lGL"
 
 [x] 16. @gpu / @cpu per-function annotations
         - Parser: recognize @identifier before func/mlir-op declarations

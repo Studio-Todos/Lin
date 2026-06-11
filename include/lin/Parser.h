@@ -146,7 +146,7 @@ typedef struct AstNode {
         struct { const char *name; int name_len; struct AstNode *module_block; } module;
         struct { struct AstNode *condition; struct AstNode *body; } while_loop;
         struct { struct AstNode *left; struct AstNode *right; } pair;
-        struct { struct AstNode *base; int field_index; const char *field_name; int field_name_len; } field_access;
+        struct { struct AstNode *base; int field_index; const char *field_name; int field_name_len; struct AstNode *computed_index; } field_access;
     } as;
 } AstNode;
 

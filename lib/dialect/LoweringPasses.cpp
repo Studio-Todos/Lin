@@ -2036,6 +2036,12 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
                     addDecl("abort", "llvm.func @abort()");
                     addDecl("time", "llvm.func @time(!llvm.ptr) -> i64");
                     addDecl("sleep", "llvm.func @sleep(i32) -> i32");
+addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
+addDecl("lin_create_window", "llvm.func @lin_create_window(i32, i32) -> i32");
+addDecl("lin_window_should_close", "llvm.func @lin_window_should_close() -> i32");
+addDecl("lin_poll_events", "llvm.func @lin_poll_events() -> i32");
+addDecl("lin_display_pixels", "llvm.func @lin_display_pixels(i32, i32, i64) -> i32");
+addDecl("lin_destroy_window", "llvm.func @lin_destroy_window() -> i32");
                     for (auto &d : existingDecls) {
                         auto atPos = d.find("@");
                         if (atPos != std::string::npos) {

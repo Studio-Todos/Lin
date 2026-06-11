@@ -100,6 +100,7 @@ int main(int argc, char **argv) {
   std::vector<std::string> includePaths;
   std::vector<const char*> importSources;
   std::vector<std::string> linkCFiles;
+  std::vector<std::string> linkLibs;
 
   for (int i = 1; i < argc; ++i) {
       std::string arg = argv[i];
@@ -115,13 +116,15 @@ int main(int argc, char **argv) {
           enableWasm = true;
       } else if ((arg == "--link-c" || arg == "-link-c") && i + 1 < argc) {
           linkCFiles.push_back(argv[++i]);
+      } else if ((arg == "--link-libs" || arg == "-link-libs") && i + 1 < argc) {
+          linkLibs.push_back(argv[++i]);
       } else if (sourceFile.empty()) {
           sourceFile = arg;
       }
   }
 
   if (command.empty() || sourceFile.empty()) {
-      std::cerr << "Usage: linc <build|test> <source_file.lin> [-o output_binary] [-I include_path] [--link-c c_file]\n";
+      std::cerr << "Usage: linc <build|test> <source_file.lin> [-o output_binary] [-I include_path] [--link-c c_file] [--link-libs \"-lfoo -lbar\"]\n";
       return 1;
   }
 
@@ -584,6 +587,13 @@ if (enableGPU) {
                       args.push_back(const_cast<char*>("-lvulkan"));
                   }
                   args.push_back(const_cast<char*>("-lm"));
+                  for (auto &lib : linkLibs) {
+                      std::istringstream libStream(lib);
+                      std::string singleLib;
+                      while (libStream >> singleLib) {
+                          args.push_back(const_cast<char*>(strdup(singleLib.c_str())));
+                      }
+                  }
                   args.push_back(nullptr);
                   execvp("gcc", args.data());
               }

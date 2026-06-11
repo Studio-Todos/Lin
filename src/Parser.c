@@ -417,7 +417,7 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
         result = parseFieldAccess(parser, result);
     }
     
-    // Check for path access: identifier/path or identifier/field
+    // Check for path access: identifier/path or identifier/field or identifier/(expr)
     while (parser->current.type == TOKEN_SLASH) {
         parserAdvance(parser); // consume '/'
         Token pathSegment = parser->current;
@@ -440,6 +440,16 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
             access->as.field_access.field_name = pathSegment.start;
             access->as.field_access.field_name_len = pathSegment.length;
             result = access;
+        } else if (pathSegment.type == TOKEN_LPAREN) {
+            // Computed index: /(expression)
+            AstNode *idxExpr = parseExpression(parser);
+            consume(parser, TOKEN_RPAREN, "Expect ')' after computed index.");
+            AstNode *access = createNode(parser, AST_FIELD_ACCESS);
+            if (!access) return result;
+            access->as.field_access.base = result;
+            access->as.field_access.computed_index = idxExpr;
+            access->as.field_access.field_index = -1; // sentinel for computed
+            result = access;
         } else {
             // Not a valid path segment, just return what we have
             break;
@@ -452,43 +462,122 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
 static AstNode* parseGroupingExpr(Parser *parser) {
     parserAdvance(parser);
     if (parser->current.type == TOKEN_IDENTIFIER) {
-        AstNode *call = createNode(parser, AST_CALL);
-        if (!call) return NULL;
-        call->as.call.callee = parser->current.start;
-        call->as.call.callee_len = parser->current.length;
-        parserAdvance(parser);
+        Token savedIdent = parser->current;
+        
+        // Peek at what follows to decide: call or grouped expression with postfix ops.
+        // If followed by `/`, `.`, `)`, then it's a grouping (path access, field access, or bare identifier).
+        // If followed by anything else (expressions), it's a function call.
+        const char *p = parser->lexer.current;
+        while (*p == ' ' || *p == '\n' || *p == '\t' || *p == '\r') p++;
+        bool isGroupingExpr = (*p == '/' || *p == '.' || *p == ')' || *p == ']' || *p == ',');
 
-        call->as.call.args = NULL;
-        call->as.call.arg_count = 0;
-        call->as.call.capacity = 0;
-        call->as.call.resolved_callee = NULL;
-        while (parser->current.type != TOKEN_RPAREN && parser->current.type != TOKEN_EOF) {
-            AstNode *arg = parseExpression(parser);
-            if (call->as.call.arg_count >= call->as.call.capacity) {
-                call->as.call.capacity = call->as.call.capacity < 8 ? 8 : call->as.call.capacity * 2;
-                void *tmp = realloc(call->as.call.args, sizeof(AstNode*) * call->as.call.capacity);
-                if (!tmp) {
-                    error(parser, "Out of memory");
-                    freeAst(call);
-                    return NULL;
-                }
-                call->as.call.args = (AstNode**)tmp;
+        if (isGroupingExpr) {
+            AstNode *expr = parseExpression(parser);
+            consume(parser, TOKEN_RPAREN, "Expect ')' after expression.");
+            
+            while (parser->current.type == TOKEN_DOT) {
+                expr = parseFieldAccess(parser, expr);
             }
-            call->as.call.args[call->as.call.arg_count++] = arg;
-        }
-        consume(parser, TOKEN_RPAREN, "Expect ')' after arguments.");
+            while (parser->current.type == TOKEN_SLASH) {
+                parserAdvance(parser);
+                Token pathSegment = parser->current;
+                if (pathSegment.type == TOKEN_NUMBER || pathSegment.type == TOKEN_IDENTIFIER) {
+                    parserAdvance(parser);
+                    AstNode *access = createNode(parser, AST_FIELD_ACCESS);
+                    if (!access) return expr;
+                    access->as.field_access.base = expr;
+                    if (pathSegment.type == TOKEN_NUMBER) {
+                        access->as.field_access.field_index = atoi(pathSegment.start) - 1;
+                    } else {
+                        access->as.field_access.field_index = 0;
+                        access->as.field_access.field_name = pathSegment.start;
+                        access->as.field_access.field_name_len = pathSegment.length;
+                    }
+                    expr = access;
+                } else {
+                    break;
+                }
+            }
+            return expr;
+        } else {
+            AstNode *call = createNode(parser, AST_CALL);
+            if (!call) return NULL;
+            call->as.call.callee = parser->current.start;
+            call->as.call.callee_len = parser->current.length;
+            parserAdvance(parser);
 
-        AstNode *result = call;
-        while (parser->current.type == TOKEN_DOT) {
-            result = parseFieldAccess(parser, result);
+            call->as.call.args = NULL;
+            call->as.call.arg_count = 0;
+            call->as.call.capacity = 0;
+            call->as.call.resolved_callee = NULL;
+            while (parser->current.type != TOKEN_RPAREN && parser->current.type != TOKEN_EOF) {
+                AstNode *arg = parseExpression(parser);
+                if (call->as.call.arg_count >= call->as.call.capacity) {
+                    call->as.call.capacity = call->as.call.capacity < 8 ? 8 : call->as.call.capacity * 2;
+                    void *tmp = realloc(call->as.call.args, sizeof(AstNode*) * call->as.call.capacity);
+                    if (!tmp) {
+                        error(parser, "Out of memory");
+                        freeAst(call);
+                        return NULL;
+                    }
+                    call->as.call.args = (AstNode**)tmp;
+                }
+                call->as.call.args[call->as.call.arg_count++] = arg;
+            }
+            consume(parser, TOKEN_RPAREN, "Expect ')' after arguments.");
+
+            AstNode *result = call;
+            while (parser->current.type == TOKEN_DOT) {
+                result = parseFieldAccess(parser, result);
+            }
+            while (parser->current.type == TOKEN_SLASH) {
+                parserAdvance(parser);
+                Token pathSegment = parser->current;
+                if (pathSegment.type == TOKEN_NUMBER || pathSegment.type == TOKEN_IDENTIFIER) {
+                    parserAdvance(parser);
+                    AstNode *access = createNode(parser, AST_FIELD_ACCESS);
+                    if (!access) return result;
+                    access->as.field_access.base = result;
+                    if (pathSegment.type == TOKEN_NUMBER) {
+                        access->as.field_access.field_index = atoi(pathSegment.start) - 1;
+                    } else {
+                        access->as.field_access.field_index = 0;
+                        access->as.field_access.field_name = pathSegment.start;
+                        access->as.field_access.field_name_len = pathSegment.length;
+                    }
+                    result = access;
+                } else {
+                    break;
+                }
+            }
+            return result;
         }
-        return result;
     } else {
         AstNode *expr = parseExpression(parser);
         consume(parser, TOKEN_RPAREN, "Expect ')' after expression.");
         
         while (parser->current.type == TOKEN_DOT) {
             expr = parseFieldAccess(parser, expr);
+        }
+        while (parser->current.type == TOKEN_SLASH) {
+            parserAdvance(parser);
+            Token pathSegment = parser->current;
+            if (pathSegment.type == TOKEN_NUMBER || pathSegment.type == TOKEN_IDENTIFIER) {
+                parserAdvance(parser);
+                AstNode *access = createNode(parser, AST_FIELD_ACCESS);
+                if (!access) return expr;
+                access->as.field_access.base = expr;
+                if (pathSegment.type == TOKEN_NUMBER) {
+                    access->as.field_access.field_index = atoi(pathSegment.start) - 1;
+                } else {
+                    access->as.field_access.field_index = 0;
+                    access->as.field_access.field_name = pathSegment.start;
+                    access->as.field_access.field_name_len = pathSegment.length;
+                }
+                expr = access;
+            } else {
+                break;
+            }
         }
         return expr;
     }
