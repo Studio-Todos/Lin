@@ -2864,9 +2864,7 @@ struct PicRuntimeToSPIRVPass : public PassWrapper<PicRuntimeToSPIRVPass, Operati
     OpBuilder builder(module.getBodyRegion());
 
     auto i32Type = builder.getI32Type();
-    auto i64Type = builder.getI64Type();
 
-    // Create SPIR-V module with addressing/memory model and capabilities
     auto spirvModule = builder.create<mlir::spirv::ModuleOp>(loc);
     spirvModule->setAttr("addressing_model",
         mlir::spirv::AddressingModelAttr::get(ctx, mlir::spirv::AddressingModel::Logical));
@@ -2876,66 +2874,192 @@ struct PicRuntimeToSPIRVPass : public PassWrapper<PicRuntimeToSPIRVPass, Operati
         mlir::spirv::Version::V_1_5,
         ArrayRef<mlir::spirv::Capability>{
             mlir::spirv::Capability::Shader,
-            mlir::spirv::Capability::Int64,
-            mlir::spirv::Capability::Int64Atomics},
-        ArrayRef<mlir::spirv::Extension>{mlir::spirv::Extension::SPV_KHR_storage_buffer_storage_class},
+            mlir::spirv::Capability::Int64},
+        ArrayRef<mlir::spirv::Extension>{},
         ctx);
     spirvModule->setAttr("vce_triple", vce);
 
     Block *spirvBody = spirvModule.getBody();
     OpBuilder sb(spirvBody, spirvBody->begin());
 
-    // SSBO types and globals with explicit offset decorations
     auto netArrType = mlir::spirv::RuntimeArrayType::get(i32Type);
-    auto queueArrType = mlir::spirv::RuntimeArrayType::get(i64Type);
-    auto histArrType = mlir::spirv::RuntimeArrayType::get(i64Type);
+    auto pairsArrType = mlir::spirv::RuntimeArrayType::get(i32Type);
 
-    auto makeStructPtr = [&](Type elem, ArrayRef<mlir::spirv::StructType::OffsetInfo> offsets,
-                             ArrayRef<mlir::spirv::StructType::MemberDecorationInfo> decor = {}) {
-      auto structTy = mlir::spirv::StructType::get({elem}, offsets, decor);
+    auto makeStorageBufferPtr = [&](Type elem, int64_t offset) {
+      auto structTy = mlir::spirv::StructType::get(
+          {elem}, {static_cast<uint32_t>(offset)});
       return mlir::spirv::PointerType::get(structTy,
           mlir::spirv::StorageClass::StorageBuffer);
     };
+    auto makePtrToArray = [&](mlir::spirv::RuntimeArrayType arrTy) {
+      return makeStorageBufferPtr(arrTy, 0);
+    };
 
-    auto netGlobal = sb.create<mlir::spirv::GlobalVariableOp>(
-        loc, makeStructPtr(netArrType, {0}), "net",
+    Type netPtrType = makePtrToArray(netArrType);
+    Type pairsPtrType = makePtrToArray(pairsArrType);
+
+    sb.create<mlir::spirv::GlobalVariableOp>(
+        loc, netPtrType, "net",
         /*descriptorSet=*/0, /*binding=*/0);
-    auto queueGlobal = sb.create<mlir::spirv::GlobalVariableOp>(
-        loc, makeStructPtr(queueArrType, {0}), "queue",
+    sb.create<mlir::spirv::GlobalVariableOp>(
+        loc, pairsPtrType, "pairs",
         /*descriptorSet=*/0, /*binding=*/1);
-    // state struct: i32(al, offset0), i64(hd, offset16), i64(tl, offset24), i32(active, offset32), i32(lock, offset36)
-    SmallVector<mlir::spirv::StructType::OffsetInfo> stateOffsets = {0, 16, 24, 32, 36};
-    auto stateStructType = mlir::spirv::StructType::get(
-        {i32Type, i64Type, i64Type, i32Type, i32Type}, stateOffsets);
-    auto stateGlobal = sb.create<mlir::spirv::GlobalVariableOp>(
-        loc, mlir::spirv::PointerType::get(stateStructType, mlir::spirv::StorageClass::StorageBuffer),
-        "state", /*descriptorSet=*/0, /*binding=*/2);
-    auto histGlobal = sb.create<mlir::spirv::GlobalVariableOp>(
-        loc, makeStructPtr(histArrType, {0}), "history",
-        /*descriptorSet=*/0, /*binding=*/3);
 
-    // Entry point function (empty body — placeholder kernel)
+    SmallVector<mlir::spirv::StructType::OffsetInfo> stateOffsets = {0, 4};
+    auto stateStructType = mlir::spirv::StructType::get(
+        {i32Type, i32Type}, stateOffsets);
+    Type statePtrType = mlir::spirv::PointerType::get(
+        stateStructType, mlir::spirv::StorageClass::StorageBuffer);
+    sb.create<mlir::spirv::GlobalVariableOp>(
+        loc, statePtrType, "state",
+        /*descriptorSet=*/0, /*binding=*/2);
+
+    Type i32PtrSSBO = mlir::spirv::PointerType::get(
+        i32Type, mlir::spirv::StorageClass::StorageBuffer);
+
+    // GlobalInvocationId built-in variable
+    auto vec3I32 = mlir::VectorType::get(3, i32Type);
+    Type gidPtrType = mlir::spirv::PointerType::get(
+        vec3I32, mlir::spirv::StorageClass::Input);
+    auto gidVar = sb.create<mlir::spirv::GlobalVariableOp>(
+        loc, gidPtrType, "gl_GlobalInvocationID");
+    gidVar->setAttr("built_in",
+        mlir::StringAttr::get(ctx, "GlobalInvocationId"));
+
     auto func = sb.create<mlir::spirv::FuncOp>(loc, "pic_kernel",
         FunctionType::get(ctx, {}, {}));
 
     SmallVector<Attribute> iface = {
         FlatSymbolRefAttr::get(ctx, "net"),
-        FlatSymbolRefAttr::get(ctx, "queue"),
+        FlatSymbolRefAttr::get(ctx, "pairs"),
         FlatSymbolRefAttr::get(ctx, "state"),
-        FlatSymbolRefAttr::get(ctx, "history"),
+        FlatSymbolRefAttr::get(ctx, "gl_GlobalInvocationID"),
     };
     sb.create<mlir::spirv::EntryPointOp>(loc,
         mlir::spirv::ExecutionModel::GLCompute, func, iface);
-    SmallVector<int32_t> ls = {1, 1, 1};
+    SmallVector<int32_t> wgs = {256, 1, 1};
     sb.create<mlir::spirv::ExecutionModeOp>(loc, func,
-        mlir::spirv::ExecutionMode::LocalSize, ls);
+        mlir::spirv::ExecutionMode::LocalSize, wgs);
 
-    // Entry block with just a return
+// Build kernel body: compute values in entry block, use structured selection for writes
     Block *entry = func.addEntryBlock();
     OpBuilder eb(entry, entry->end());
+
+    auto makeSSBOLoad = [&](OpBuilder &b, Value basePtr, Value index) -> Value {
+      Type i32Ptr = mlir::spirv::PointerType::get(
+          i32Type, mlir::spirv::StorageClass::StorageBuffer);
+      auto elemPtr = b.create<mlir::spirv::AccessChainOp>(loc, i32Ptr,
+          basePtr, ValueRange{
+              b.create<mlir::spirv::ConstantOp>(loc, i32Type, b.getI32IntegerAttr(0)),
+              index});
+      return b.create<mlir::spirv::LoadOp>(loc, elemPtr);
+    };
+
+    auto makeSSBOStore = [&](OpBuilder &b, Value basePtr, Value index, Value val) {
+      Type i32Ptr = mlir::spirv::PointerType::get(
+          i32Type, mlir::spirv::StorageClass::StorageBuffer);
+      auto elemPtr = b.create<mlir::spirv::AccessChainOp>(loc, i32Ptr,
+          basePtr, ValueRange{
+              b.create<mlir::spirv::ConstantOp>(loc, i32Type, b.getI32IntegerAttr(0)),
+              index});
+      b.create<mlir::spirv::StoreOp>(loc, elemPtr, val);
+    };
+
+    Value netPtr = eb.create<mlir::spirv::AddressOfOp>(loc, netPtrType,
+        FlatSymbolRefAttr::get(ctx, "net"));
+    Value pairsPtr = eb.create<mlir::spirv::AddressOfOp>(loc, pairsPtrType,
+        FlatSymbolRefAttr::get(ctx, "pairs"));
+    Value statePtr = eb.create<mlir::spirv::AddressOfOp>(loc, statePtrType,
+        FlatSymbolRefAttr::get(ctx, "state"));
+    Value gidVarPtr = eb.create<mlir::spirv::AddressOfOp>(loc, gidPtrType,
+        FlatSymbolRefAttr::get(ctx, "gl_GlobalInvocationID"));
+
+    Value gidVec = eb.create<mlir::spirv::LoadOp>(loc, gidVarPtr);
+    Value id = eb.create<mlir::spirv::CompositeExtractOp>(loc, i32Type, gidVec,
+        eb.getI32ArrayAttr({0}));
+
+    Value c0 = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(0));
+    Value c1 = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(1));
+    Value c2 = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(2));
+    Value c3 = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(3));
+    Value c4 = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(4));
+    Value c24 = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(24));
+    Value c30 = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(30));
+    Value c0x3F = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(0x3F));
+
+    Value numPairsPtr = eb.create<mlir::spirv::AccessChainOp>(loc, i32PtrSSBO,
+        statePtr, ValueRange{c0});
+    Value numPairs = eb.create<mlir::spirv::LoadOp>(loc, numPairsPtr);
+
+    Value oob = eb.create<mlir::spirv::ULessThanOp>(loc, eb.getI1Type(), numPairs, id);
+    Value notOob = eb.create<mlir::spirv::LogicalNotOp>(loc, eb.getI1Type(), oob);
+
+    Value idTimes2 = eb.create<mlir::spirv::IMulOp>(loc, i32Type, id, c2);
+    Value idTimes2Plus1 = eb.create<mlir::spirv::IAddOp>(loc, i32Type, idTimes2, c1);
+    Value nodeA = makeSSBOLoad(eb, pairsPtr, idTimes2);
+    Value nodeB = makeSSBOLoad(eb, pairsPtr, idTimes2Plus1);
+
+    Value nodeATimes4 = eb.create<mlir::spirv::IMulOp>(loc, i32Type, nodeA, c4);
+    Value nodeBTimes4 = eb.create<mlir::spirv::IMulOp>(loc, i32Type, nodeB, c4);
+    Value metaA = makeSSBOLoad(eb, netPtr,
+        eb.create<mlir::spirv::IAddOp>(loc, i32Type, nodeATimes4, c3));
+    Value metaB = makeSSBOLoad(eb, netPtr,
+        eb.create<mlir::spirv::IAddOp>(loc, i32Type, nodeBTimes4, c3));
+
+    Value typeA = eb.create<mlir::spirv::BitwiseAndOp>(loc, i32Type,
+        eb.create<mlir::spirv::ShiftRightArithmeticOp>(loc, i32Type, metaA, c24), c0x3F);
+    Value typeB = eb.create<mlir::spirv::BitwiseAndOp>(loc, i32Type,
+        eb.create<mlir::spirv::ShiftRightArithmeticOp>(loc, i32Type, metaB, c24), c0x3F);
+
+    Value polA = eb.create<mlir::spirv::BitwiseAndOp>(loc, i32Type,
+        eb.create<mlir::spirv::ShiftRightArithmeticOp>(loc, i32Type, metaA, c30), c3);
+    Value polB = eb.create<mlir::spirv::BitwiseAndOp>(loc, i32Type,
+        eb.create<mlir::spirv::ShiftRightArithmeticOp>(loc, i32Type, metaB, c30), c3);
+
+    Value tCON = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(1));
+    Value tDES = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(2));
+
+    Value isConA = eb.create<mlir::spirv::IEqualOp>(loc, eb.getI1Type(), typeA, tCON);
+    Value isConB = eb.create<mlir::spirv::IEqualOp>(loc, eb.getI1Type(), typeB, tCON);
+    Value isDesA = eb.create<mlir::spirv::IEqualOp>(loc, eb.getI1Type(), typeA, tDES);
+    Value isDesB = eb.create<mlir::spirv::IEqualOp>(loc, eb.getI1Type(), typeB, tDES);
+    Value isAnnPair = eb.create<mlir::spirv::LogicalOrOp>(loc, eb.getI1Type(),
+        eb.create<mlir::spirv::LogicalAndOp>(loc, eb.getI1Type(), isConA, isDesB),
+        eb.create<mlir::spirv::LogicalAndOp>(loc, eb.getI1Type(), isDesA, isConB));
+
+    Value shouldAnnihilate = eb.create<mlir::spirv::LogicalAndOp>(
+        loc, eb.getI1Type(), notOob, isAnnPair);
+
+    // Load aux port values available for both paths
+    Value p1A = makeSSBOLoad(eb, netPtr, eb.create<mlir::spirv::IAddOp>(loc, i32Type, nodeATimes4, c1));
+    Value p2A = makeSSBOLoad(eb, netPtr, eb.create<mlir::spirv::IAddOp>(loc, i32Type, nodeATimes4, c2));
+    Value p1B = makeSSBOLoad(eb, netPtr, eb.create<mlir::spirv::IAddOp>(loc, i32Type, nodeBTimes4, c1));
+    Value p2B = makeSSBOLoad(eb, netPtr, eb.create<mlir::spirv::IAddOp>(loc, i32Type, nodeBTimes4, c2));
+
+    // Compute link targets
+    auto computeTarget = [&](OpBuilder &b, Value port) -> Value {
+      Value c2Local = b.create<mlir::spirv::ConstantOp>(loc, i32Type, b.getI32IntegerAttr(2));
+      Value targetNode = b.create<mlir::spirv::ShiftRightArithmeticOp>(loc, i32Type, port, c2Local);
+      Value targetPort = b.create<mlir::spirv::BitwiseAndOp>(loc, i32Type, port, c3);
+      return b.create<mlir::spirv::IAddOp>(loc, i32Type,
+          b.create<mlir::spirv::IMulOp>(loc, i32Type, targetNode, c4), targetPort);
+    };
+    Value tA1 = computeTarget(eb, p1A);
+    Value tA2 = computeTarget(eb, p2A);
+    Value tB1 = computeTarget(eb, p1B);
+    Value tB2 = computeTarget(eb, p2B);
+
+    // Structured selection: if (shouldAnnihilate) { write links }
+    mlir::spirv::SelectionOp::createIfThen(loc, shouldAnnihilate,
+        [&](OpBuilder &ifBuilder) {
+          makeSSBOStore(ifBuilder, netPtr, tA1, p1B);
+          makeSSBOStore(ifBuilder, netPtr, tB1, p1A);
+          makeSSBOStore(ifBuilder, netPtr, tA2, p2B);
+          makeSSBOStore(ifBuilder, netPtr, tB2, p2A);
+        }, eb);
+
     eb.create<mlir::spirv::ReturnOp>(loc);
 
-    // Remove original worker_thread since logic is now in SPIR-V kernel
     workerFunc.erase();
 #else
     llvm::outs() << "Info: SPIR-V dialect headers not available; PicRuntimeToSPIRVPass skipped.\n";

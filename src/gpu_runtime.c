@@ -384,7 +384,7 @@ void pic_gpu_dispatch(int32_t* netPtr, int32_t* activePairsPtr, int32_t numPairs
     VkDescriptorBufferInfo bufferInfos[3];
     bufferInfos[0].buffer = bufferNet; bufferInfos[0].offset = 0; bufferInfos[0].range = netBufferSize;
     bufferInfos[1].buffer = bufferPairs; bufferInfos[1].offset = 0; bufferInfos[1].range = requiredPairsBufferSize;
-    bufferInfos[2].buffer = bufferNumPairs; bufferInfos[2].offset = 0; bufferInfos[2].range = sizeof(int32_t);
+    bufferInfos[2].buffer = bufferNumPairs; bufferInfos[2].offset = 0; bufferInfos[2].range = 2 * sizeof(int32_t);
 
     VkWriteDescriptorSet descriptorWrites[3];
     for (int i = 0; i < 3; i++) {
