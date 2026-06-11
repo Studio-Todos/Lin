@@ -8,8 +8,8 @@ Welcome to the documentation for **Lin**, which serves as a general-purpose, het
 
 Lin takes heavy inspiration from the Red/Rebol syntax family, [Daslang](https://daslang.io/), Microsoft's Verona project, and the unified algebra system while aiming for unparalleled runtime performance through a novel compiler backend. By compiling directly to a Reversible Interaction Net model and generating highly optimized LLVM IR (leveraging MLIR), Lin code evaluates via a lock-free, addressable 128-bit atomic array—enabling massive parallelization across CPU threads and GPU cores with zero locks. Because everything lowers to interaction nets, **everything that can run in parallel *will* run in parallel.** Because every rewrite is reversible, **every optimization path remains open.**
 
-> [!WARNING]
-> This is experimental software. Primarily built with AI. Use at your own risk.
+> [!NOTE]
+> This is an experimental language actively developed with the help of AI tooling; expect breaking changes as the language matures.
 
 ## Goals
 
