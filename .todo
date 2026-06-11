@@ -2,7 +2,7 @@
 # Format: [ ] pending  [/] in progress  [x] done
 # Tiers: 🔴 blocking  🟡 important  🟢 nice-to-have
 
-# Architecture reference (PICR — Reversible Polarized Interaction Combinators):
+# Architecture reference (PICR — Polarized Interaction Combinators Reversible):
 #   pic.graph  → abstract combinator graph (γ⁺ γ⁻ δ H L ω R + boundaries)
 #   pic.reduce → scheduling-aware reduction ops (annihilate/dup/uncompute/log_state/
 #                                                 fire_op/reverse_vector/log_bond)

@@ -1,6 +1,6 @@
 # Architecture
 
-Lin's architecture is built to support a groundbreaking execution model: **massively parallel optimal evaluation via Reversible Polarized Interaction Combinators (PICR)**. It shifts away from traditional sequential execution, transforming code into a highly concurrent, reversible graph that resolves optimally across CPU, General Purpose GPU, and high-performance Shaders.
+Lin's architecture is built to support a groundbreaking execution model: **massively parallel optimal evaluation via Polarized Interaction Combinators Reversible (PICR)**. It shifts away from traditional sequential execution, transforming code into a highly concurrent, reversible graph that resolves optimally across CPU, General Purpose GPU, and high-performance Shaders.
 
 To lower the language, the compiler translates an optimized, compile-time Interaction Net into an MLIR dialect representing a flat, pre-allocated memory array, which is then compiled directly into native machine code.
 
@@ -17,7 +17,7 @@ The addition of **reversibility** is a first-class design goal, not a bolt-on: e
 1. **Frontend Parsing:**
    - Source files (`.lin`) are parsed by a custom C11 lexer and parser.
    - The parser constructs an Abstract Syntax Tree (AST).
-2. **Lowering to MLIR (Reversible Polarized Interaction Combinators):**
+2. **Lowering to MLIR (Polarized Interaction Combinators Reversible):**
    - The AST is walked and lowered into an MLIR representation (`pic.graph` dialect).
    - This models the program as a set of Interaction Net Agents and Links.
    - Every agent emitted carries directional polarity; the graph is reversible by construction.
@@ -34,7 +34,7 @@ The addition of **reversibility** is a first-class design goal, not a bolt-on: e
 
 ---
 
-# **PICR:** Reversible Polarized Interaction Combinators
+# **PICR:** Polarized Interaction Combinators Reversible
 
 PICR extends classical Polarized Interaction Combinators (PIC) with a single foundational constraint: **no graph rewrite may reduce the total information entropy of the graph.** Every destructive step must either store its structural delta in a local boundary history log, or be paired with an explicit inverse routing pathway.
 

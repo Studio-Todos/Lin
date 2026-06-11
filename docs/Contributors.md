@@ -52,8 +52,8 @@ ninja check-linc
 
 - `src/`: Core C/C++ source code. Contains the parser (`Parser.c`), AST definition, compiler driver (`main.cpp`), and C-to-MLIR lowering logic (`Lowering.c`). The codebase is primarily written in C, utilizing C++ strictly where necessary to interface with MLIR and LLVM APIs.
 - `include/lin/`: Headers for the parser and lowering modules.
-- `lib/dialect/`: TableGen definitions (`.td` files) and C++ implementations for the `pic.graph`, `pic.reduce`, and `pic.runtime` MLIR dialects. These form the Polarized Interaction Combinators graph rules.
-- `lib/runtime/`: C runtime implementation (linked with compiled `.line` Lin binaries).
+- `lib/dialect/`: TableGen definitions (`.td` files) and C++ implementations for the `pic.graph`, `pic.reduce`, and `pic.runtime` MLIR dialects. These form the Polarized Interaction Combinators Reversible graph rules.
+- `src/gpu_runtime.c`: C runtime implementation (Vulkan/SPIR-V GPU support, linked with compiled `.line` Lin binaries).
 - `test/`: `lit` test configuration and `.lin` test files.
 
 ## Contribution Guidelines
