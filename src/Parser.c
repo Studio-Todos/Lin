@@ -469,7 +469,7 @@ static AstNode* parseGroupingExpr(Parser *parser) {
         // If followed by anything else (expressions), it's a function call.
         const char *p = parser->lexer.current;
         while (*p == ' ' || *p == '\n' || *p == '\t' || *p == '\r') p++;
-        bool isGroupingExpr = (*p == '/' || *p == '.' || *p == ')' || *p == ']' || *p == ',');
+        bool isGroupingExpr = (*p == '/' || *p == '.' || *p == ']' || *p == ',');
 
         if (isGroupingExpr) {
             AstNode *expr = parseExpression(parser);
