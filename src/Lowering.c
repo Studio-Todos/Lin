@@ -11,6 +11,7 @@
 static void sanitizeMlirName(char *name) {
     for (char *p = name; *p; p++) {
         if (*p == '-') *p = '_';
+        if (*p == '?') *p = '_';
     }
 }
 

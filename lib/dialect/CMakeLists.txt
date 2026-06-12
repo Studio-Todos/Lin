@@ -29,7 +29,11 @@ add_mlir_dialect_library(PicDialects
   PicReduceDialect.cpp
   PicRuntimeDialect.cpp
   PicDialectsCAPI.cpp
-  LoweringPasses.cpp
+  Pass_PicGraphToReduce.cpp
+  Pass_PicReduceToRuntime.cpp
+  Pass_PicReduceLowering.cpp
+  Pass_PicRuntimeToLLVM.cpp
+  Pass_PicRuntimeToSPIRV.cpp
 
 
   DEPENDS
@@ -42,6 +46,7 @@ add_mlir_dialect_library(PicDialects
   MLIRLLVMDialect
   MLIRSCFToControlFlow
   MLIRFuncToLLVM
+  MLIRArithToLLVM
   MLIRArithToLLVM
   MLIRGPUDialect
   MLIRSPIRVDialect

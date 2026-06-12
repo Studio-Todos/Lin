@@ -66,14 +66,14 @@
         - [x] Kernel uses atomic fetch-add on arena pointer instead of malloc
         - [ ] Express arena as memref in pic.reduce (not LLVM globals)
 
-[/] C3. ω GPU eligibility check at mlir-op registration time 🟡
+[!] C3. ω GPU eligibility check at mlir-op registration time 🟢
         # Architecture constraint: GPU payloads may only use SPIR-V-legal dialects.
-        # Status: basic dialect legality check exists (LoweringPasses.cpp:1713-1724) but
-        # uses a blocklist (llvm/pic_runtime/pic_graph) instead of the spec's allowlist.
+        # Status: blocklist (llvm/pic_runtime/pic_graph) replaced with GPU-legal
+        # allowlist (arith, math, func, cf, memref, scf, vector, index) at line 2136.
         # No cpu_only flag in rule table; no auto-classification; no @cpu override.
         # See Architecture.md "CPU/GPU Unified Execution Model" §3.
         - [x] Dialect legality check runs when dispatch=="gpu" is tagged on an op
-        - [ ] Use GPU-legal allowlist (arith, math, index, vector, memref) instead of blocklist
+        - [x] Use GPU-legal allowlist (arith, math, func, cf, memref, scf, vector, index) instead of blocklist
         - [ ] Add cpu_only flag to rule table entry (needs A2b 5-field expansion)
         - [ ] Auto-classify all ops at registration time (not just tagged ones)
         - [ ] Support @cpu override annotation
@@ -106,7 +106,7 @@
         - [x] worker_thread contains redex dispatch, polarity decode, rule lookup, rules
         - [x] Emit pic.reduce dialect ops (annihilate, duplicate, erase, fire_op, ...)
         - [x] Make PicRuntimeToLLVMPass a thin mechanical conversion only
-- [x] Create PicRuntimeToSPIRVPass for GPU target
+- [x] Create PicRuntimeToSPIRVPass for GPU target (supports RVEC, ERA, DUP, ANN rules)
          - Unblocks: item 31 (unified pipeline), 21b (multi-threading)
 
 [ ] A1c. Node type encodings are hardcoded C++ constants 🔴
@@ -309,6 +309,18 @@
         - Support nested paths: `engine/world/bodies/1`
         - ✅ Works with arrays and blocks
 
+[x] 6b. Computed path access `expr/(expr)` 🟡
+        # Parser: Added support for computed indices via `/(expression)` syntax
+        # Enables dynamic array access: `arr/(add idx 1)`
+        - Parser: handle `/(` as computed index in parseIdentifierExpr, parseExpression, parseGroupingExpr
+        - Added `computed_index` field to AST_FIELD_ACCESS struct
+
+[x] 6c. Disambiguate grouped expressions from function calls 🔴
+        # Parser: `(coeffs/1)` inside `(print (coeffs/1))` was misparsed as
+        # function call `coeffs(1)` instead of grouping with path access.
+        # parseGroupingExpr now peeks ahead — if followed by `/`, `.`, `)`
+        # it's treated as a grouping expression, not a call.
+
 [x] 7. Data Blocks vs. Code Blocks
         - Parser: Distinguish between block as statement-list vs. block as data-literal
         - Lowering: For data blocks, emit a linked structure of Pair agents in the graph
@@ -353,6 +365,11 @@
         - ✅ Enabling Step: Fixed double-dereference and malloc size bugs
         - ✅ Resolved worker thread segfault during closure application
         - ✅ test/test_closure.lin compiles and runs cleanly (exit 0)
+
+[x] 11b. Sanitize `?` in MLIR function names 🟡
+        # Lowering.c: sanitizeMlirName() replaces `?` with `_` in addition to
+        # existing `-` → `_` conversion. Functions like `aabb-overlaps?` 
+        # become `aabb_overlaps_` for MLIR compatibility.
 
 [x] 12. Binary operators via std library
         - All 12 operators (+, -, *, /, <, >, <=, >=, ==, !=, &&, ||) work
@@ -436,12 +453,14 @@
 ## 🔵 Architecture — Long-Term
 
 [/] 19. Unified CPU/GPU reduction pipeline via pic.reduce
-        # Partial: SPIR-V target exists in main.cpp via standard MLIR passes (GPUToSPIRV,
-        # MemRefToSPIRV, ConvertArithToSPIRV, etc.) — NOT a dedicated PicRuntimeToSPIRVPass.
-        # Unified pic.reduce pass emits pic.runtime directly (not pic.reduce dialect).
-        # See item 31 for the umbrella tracking item.
+        # CPU: standard PicRuntimeToLLVMPass → LLVM IR. GPU: dedicated PicRuntimeToSPIRVPass
+        # with expanded SPIR-V kernel handling all base rules (RVEC, ERA, DUP, ANN).
+        # The GPU worker_thread dispatches ALL popped pairs to pic_gpu_dispatch_helper
+        # (not just GPU-tagged ops). CPU path unchanged.
         - [x] CPU path via PicRuntimeToLLVMPass + standard LLVM lowering
-        - [x] GPU path via generic GPU pipeline in main.cpp (not pic.reduce specific)
+        - [x] GPU path via PicRuntimeToSPIRVPass with multi-rule kernel
+        - [x] GPU worker_thread dispatches all pairs to GPU kernel via pic_gpu_dispatch_helper
+        - [x] Expanded SPIR-V kernel handles: RVEC, ERA, DUP, ANN rules
         - [ ] Dedicated PicRuntimeToSPIRVPass as thin mechanical conversion
         - Target: CPU (std LLVM), general GPU (Vulkan/SPIR-V), shader GPU (perf)
 
@@ -553,9 +572,10 @@
           - Requires robust string processing, file I/O, and MLIR bindings in Lin
           - Goal: A self-hosting compiler that leverages Lin's own parallel reversible runtime
 
-[ ] 31. Unified CPU/GPU reduction pipeline via pic.reduce 🔴
-          # Umbrella item. Completed by finishing A1b + A2b + A3b + A4b.
-          # The strategy: one pic.reduce pass, two thin conversion passes.
+[/] 31. Unified CPU/GPU reduction pipeline via pic.reduce 🟡
+          # Progress: PicRuntimeToSPIRVPass expanded with all base rules (RVEC, ERA, DUP, ANN),
+          # GPU worker_thread dispatches ALL pairs to GPU via pic_gpu_dispatch_helper.
+          # CPU path unchanged. Remaining: mechanical pic.reduce→pic.runtime conversion.
           #
           #   pic.reduce (scf + arith + memref)
           #      └─> PicRuntimeToLLVMPass   → LLVM IR  → CPU binary
@@ -565,8 +585,11 @@
           # and all PICR ops) is written once in pic.reduce and shared by both targets.
           # The conversion passes are mechanical: pic_runtime.alloc_node → llvm.call malloc
           # on CPU, → spirv.AccessChain on GPU. No reduction logic is duplicated.
-          - A1b: implement PicReduceToRuntimePass with scf/arith/memref (see A1b)
-          - A2b: rule table as memref, portable across CPU and GPU (see A2b)
+          - [~] A1b: PicReduceToRuntimePass emits pic.runtime + pic.reduce marker ops (see A1b)
+          - [~] A2b: rule table as LLVM globals (memref version prototyped, needs conversion pass) (see A2b)
+          - [x] SPIR-V pass expanded: RVEC, ERA, DUP, ANN rules implemented
+          - [x] GPU worker_thread dispatches all pairs to GPU kernel
+          - [x] C3: GPU allowlist (arith, math, func, cf, memref, scf, vector, index)
           - A3b: fix meta-word encoding and duplication rule in target-independent ops (A3b)
           - A4b: atomic queue via memref.atomic_rmw, safe under MPMC (see A4b)
           - Add PicRuntimeToSPIRVPass as a thin sibling of PicRuntimeToLLVMPass

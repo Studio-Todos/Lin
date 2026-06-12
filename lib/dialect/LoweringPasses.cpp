@@ -511,6 +511,22 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
         return builder.create<arith::OrIOp>(loc, i32Type, sh, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(p)));
     };
 
+    if (enableGPU) {
+        // GPU path: dispatch all pairs to GPU kernel via pic_gpu_dispatch_helper.
+        // The SPIR-V kernel (pic_kernel in PicRuntimeToSPIRVPass) handles all base
+        // rules (annihilate, duplicate, erase, r-vector). User ops are dispatched
+        // inline after GPU returns.
+        if (!module.lookupSymbol<func::FuncOp>("pic_gpu_dispatch_helper")) {
+            OpBuilder modB(module.getBodyRegion());
+            modB.setInsertionPointToEnd(module.getBody());
+            auto helperTy = modB.getFunctionType({i32Type, i32Type, i64Type}, {});
+            auto helper = modB.create<func::FuncOp>(loc, "pic_gpu_dispatch_helper", helperTy);
+            helper.setPrivate();
+        }
+        builder.create<func::CallOp>(loc, TypeRange{}, "pic_gpu_dispatch_helper",
+            ValueRange{bodyNodeA, bodyNodeB, stateArg});
+        builder.create<cf::BranchOp>(loc, lHead);
+    } else {
     Value metaA = builder.create<pic::runtime::GetPortOp>(loc, i32Type, bodyNodeA, builder.getI8IntegerAttr(3));
     Value metaB = builder.create<pic::runtime::GetPortOp>(loc, i32Type, bodyNodeB, builder.getI8IntegerAttr(3));
 
@@ -600,6 +616,7 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     builder.setInsertionPointToStart(dupPath);
     builder.create<mlir::pic::reduce::DuplicateOp>(loc, bodyNodeA, bodyNodeB, stateArg);
     builder.create<cf::BranchOp>(loc, lHead);
+    }
 
     // ==========================================
     // lEnd
@@ -2036,6 +2053,7 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
                     addDecl("abort", "llvm.func @abort()");
                     addDecl("time", "llvm.func @time(!llvm.ptr) -> i64");
                     addDecl("sleep", "llvm.func @sleep(i32) -> i32");
+addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
                     for (auto &d : existingDecls) {
                         auto atPos = d.find("@");
                         if (atPos != std::string::npos) {
@@ -2127,8 +2145,13 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
                         tempFunc.walk([&](Operation *op) {
                             if (auto* dialect = op->getDialect()) {
                                 StringRef dialectName = dialect->getNamespace();
-                                if (dialectName == "llvm" || dialectName == "pic_runtime" || dialectName == "pic_graph") {
-                                    op->emitError() << "Operation '" << op->getName() << "' in registry op '" << label << "' is illegal on GPU!";
+                                // GPU-legal allowlist per PIC spec: only arith, math, func, cf,
+                                // memref, scf, vector, index are allowed on GPU.
+                                if (dialectName != "arith" && dialectName != "math" &&
+                                    dialectName != "func" && dialectName != "cf" &&
+                                    dialectName != "memref" && dialectName != "scf" &&
+                                    dialectName != "vector" && dialectName != "index") {
+                                    op->emitError() << "Operation '" << op->getName() << "' in registry op '" << label << "' is illegal on GPU (not in GPU-legal allowlist)!";
                                     llvm::errs() << "GPU Compile Error: Operation '" << op->getName() << "' in registry op '" << label << "' is illegal on GPU!\n";
                                     abort();
                                 }
@@ -2888,7 +2911,8 @@ struct PicRuntimeToSPIRVPass : public PassWrapper<PicRuntimeToSPIRVPass, Operati
         mlir::spirv::Version::V_1_5,
         ArrayRef<mlir::spirv::Capability>{
             mlir::spirv::Capability::Shader,
-            mlir::spirv::Capability::Int64},
+            mlir::spirv::Capability::Int64,
+            mlir::spirv::Capability::AtomicStorage},
         ArrayRef<mlir::spirv::Extension>{},
         ctx);
     spirvModule->setAttr("vce_triple", vce);
@@ -2919,6 +2943,7 @@ struct PicRuntimeToSPIRVPass : public PassWrapper<PicRuntimeToSPIRVPass, Operati
         loc, pairsPtrType, "pairs",
         /*descriptorSet=*/0, /*binding=*/1);
 
+    // State struct: {numPairs, al}
     SmallVector<mlir::spirv::StructType::OffsetInfo> stateOffsets = {0, 4};
     auto stateStructType = mlir::spirv::StructType::get(
         {i32Type, i32Type}, stateOffsets);
@@ -2955,7 +2980,6 @@ struct PicRuntimeToSPIRVPass : public PassWrapper<PicRuntimeToSPIRVPass, Operati
     sb.create<mlir::spirv::ExecutionModeOp>(loc, func,
         mlir::spirv::ExecutionMode::LocalSize, wgs);
 
-// Build kernel body: compute values in entry block, use structured selection for writes
     Block *entry = func.addEntryBlock();
     OpBuilder eb(entry, entry->end());
 
@@ -3001,18 +3025,22 @@ struct PicRuntimeToSPIRVPass : public PassWrapper<PicRuntimeToSPIRVPass, Operati
     Value c30 = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(30));
     Value c0x3F = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(0x3F));
 
+    // Read numPairs from state[0] (this SSBO is shared CPU↔GPU; host writes numPairs)
     Value numPairsPtr = eb.create<mlir::spirv::AccessChainOp>(loc, i32PtrSSBO,
         statePtr, ValueRange{c0});
     Value numPairs = eb.create<mlir::spirv::LoadOp>(loc, numPairsPtr);
 
+    // OOB check: thread id < numPairs
     Value oob = eb.create<mlir::spirv::ULessThanOp>(loc, eb.getI1Type(), numPairs, id);
     Value notOob = eb.create<mlir::spirv::LogicalNotOp>(loc, eb.getI1Type(), oob);
 
+    // Read pair nodes from pairs[id*2], pairs[id*2+1]
     Value idTimes2 = eb.create<mlir::spirv::IMulOp>(loc, i32Type, id, c2);
     Value idTimes2Plus1 = eb.create<mlir::spirv::IAddOp>(loc, i32Type, idTimes2, c1);
     Value nodeA = makeSSBOLoad(eb, pairsPtr, idTimes2);
     Value nodeB = makeSSBOLoad(eb, pairsPtr, idTimes2Plus1);
 
+    // Decode node types from meta word at net[node*4+3]
     Value nodeATimes4 = eb.create<mlir::spirv::IMulOp>(loc, i32Type, nodeA, c4);
     Value nodeBTimes4 = eb.create<mlir::spirv::IMulOp>(loc, i32Type, nodeB, c4);
     Value metaA = makeSSBOLoad(eb, netPtr,
@@ -3030,9 +3058,14 @@ struct PicRuntimeToSPIRVPass : public PassWrapper<PicRuntimeToSPIRVPass, Operati
     Value polB = eb.create<mlir::spirv::BitwiseAndOp>(loc, i32Type,
         eb.create<mlir::spirv::ShiftRightArithmeticOp>(loc, i32Type, metaB, c30), c3);
 
-    Value tCON = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(1));
-    Value tDES = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(2));
+    // Node type constants matching PicrNodeType enum
+    Value tCON  = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(1));
+    Value tDES  = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(2));
+    Value tDUP  = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(3));
+    Value tERA  = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(4));
+    Value tRVEC = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(8));
 
+    // Type classification for each rule
     Value isConA = eb.create<mlir::spirv::IEqualOp>(loc, eb.getI1Type(), typeA, tCON);
     Value isConB = eb.create<mlir::spirv::IEqualOp>(loc, eb.getI1Type(), typeB, tCON);
     Value isDesA = eb.create<mlir::spirv::IEqualOp>(loc, eb.getI1Type(), typeA, tDES);
@@ -3041,16 +3074,25 @@ struct PicRuntimeToSPIRVPass : public PassWrapper<PicRuntimeToSPIRVPass, Operati
         eb.create<mlir::spirv::LogicalAndOp>(loc, eb.getI1Type(), isConA, isDesB),
         eb.create<mlir::spirv::LogicalAndOp>(loc, eb.getI1Type(), isDesA, isConB));
 
-    Value shouldAnnihilate = eb.create<mlir::spirv::LogicalAndOp>(
-        loc, eb.getI1Type(), notOob, isAnnPair);
+    Value isDupA   = eb.create<mlir::spirv::IEqualOp>(loc, eb.getI1Type(), typeA, tDUP);
+    Value isDupB   = eb.create<mlir::spirv::IEqualOp>(loc, eb.getI1Type(), typeB, tDUP);
+    Value isDupPair = eb.create<mlir::spirv::LogicalOrOp>(loc, eb.getI1Type(), isDupA, isDupB);
 
-    // Load aux port values available for both paths
+    Value isEraA   = eb.create<mlir::spirv::IEqualOp>(loc, eb.getI1Type(), typeA, tERA);
+    Value isEraB   = eb.create<mlir::spirv::IEqualOp>(loc, eb.getI1Type(), typeB, tERA);
+    Value isEraPair = eb.create<mlir::spirv::LogicalOrOp>(loc, eb.getI1Type(), isEraA, isEraB);
+
+    Value isRvecA  = eb.create<mlir::spirv::IEqualOp>(loc, eb.getI1Type(), typeA, tRVEC);
+    Value isRvecB  = eb.create<mlir::spirv::IEqualOp>(loc, eb.getI1Type(), typeB, tRVEC);
+    Value isRvecPair = eb.create<mlir::spirv::LogicalOrOp>(loc, eb.getI1Type(), isRvecA, isRvecB);
+
+    // Load aux port values (available for all paths)
     Value p1A = makeSSBOLoad(eb, netPtr, eb.create<mlir::spirv::IAddOp>(loc, i32Type, nodeATimes4, c1));
     Value p2A = makeSSBOLoad(eb, netPtr, eb.create<mlir::spirv::IAddOp>(loc, i32Type, nodeATimes4, c2));
     Value p1B = makeSSBOLoad(eb, netPtr, eb.create<mlir::spirv::IAddOp>(loc, i32Type, nodeBTimes4, c1));
     Value p2B = makeSSBOLoad(eb, netPtr, eb.create<mlir::spirv::IAddOp>(loc, i32Type, nodeBTimes4, c2));
 
-    // Compute link targets
+    // Compute target net offset for a port value: ((port >> 2) * 4) + (port & 3)
     auto computeTarget = [&](OpBuilder &b, Value port) -> Value {
       Value c2Local = b.create<mlir::spirv::ConstantOp>(loc, i32Type, b.getI32IntegerAttr(2));
       Value targetNode = b.create<mlir::spirv::ShiftRightArithmeticOp>(loc, i32Type, port, c2Local);
@@ -3058,18 +3100,112 @@ struct PicRuntimeToSPIRVPass : public PassWrapper<PicRuntimeToSPIRVPass, Operati
       return b.create<mlir::spirv::IAddOp>(loc, i32Type,
           b.create<mlir::spirv::IMulOp>(loc, i32Type, targetNode, c4), targetPort);
     };
-    Value tA1 = computeTarget(eb, p1A);
-    Value tA2 = computeTarget(eb, p2A);
-    Value tB1 = computeTarget(eb, p1B);
-    Value tB2 = computeTarget(eb, p2B);
 
-    // Structured selection: if (shouldAnnihilate) { write links }
-    mlir::spirv::SelectionOp::createIfThen(loc, shouldAnnihilate,
-        [&](OpBuilder &ifBuilder) {
-          makeSSBOStore(ifBuilder, netPtr, tA1, p1B);
-          makeSSBOStore(ifBuilder, netPtr, tB1, p1A);
-          makeSSBOStore(ifBuilder, netPtr, tA2, p2B);
-          makeSSBOStore(ifBuilder, netPtr, tB2, p2A);
+    // =====================================================================
+    // Multi-rule dispatch: sequential if-then blocks using SPIR-V structured
+    // control flow. Rules are mutually exclusive (one pair = one rule type).
+    // Priority order: RVEC > ERA > DUP > ANN (catch-all). Unmatched pairs
+    // (omega/OP nodes) are silently skipped for CPU dispatch.
+    // =====================================================================
+    // 1) R-Vector propagation
+    mlir::spirv::SelectionOp::createIfThen(loc,
+        eb.create<mlir::spirv::LogicalAndOp>(loc, eb.getI1Type(), notOob, isRvecPair),
+        [&](OpBuilder &b) {
+          Value otherP1 = b.create<mlir::spirv::SelectOp>(loc, i32Type, isRvecA, p1B, p1A);
+          Value otherP2 = b.create<mlir::spirv::SelectOp>(loc, i32Type, isRvecA, p2B, p2A);
+          Value rvecNode = b.create<mlir::spirv::SelectOp>(loc, i32Type, isRvecA, nodeA, nodeB);
+          Value rvecP0 = makeSSBOLoad(b, netPtr,
+              b.create<mlir::spirv::IAddOp>(loc, i32Type,
+                  b.create<mlir::spirv::IMulOp>(loc, i32Type, rvecNode, c4), c0));
+          makeSSBOStore(b, netPtr, computeTarget(b, otherP1), rvecP0);
+          makeSSBOStore(b, netPtr, computeTarget(b, otherP2), rvecP0);
+        }, eb);
+
+    // 2) Erasure
+    mlir::spirv::SelectionOp::createIfThen(loc,
+        eb.create<mlir::spirv::LogicalAndOp>(loc, eb.getI1Type(), notOob, isEraPair),
+        [&](OpBuilder &b) {
+          Value nonEraP1 = b.create<mlir::spirv::SelectOp>(loc, i32Type, isEraA, p1B, p1A);
+          Value nonEraP2 = b.create<mlir::spirv::SelectOp>(loc, i32Type, isEraA, p2B, p2A);
+          Value eraNode  = b.create<mlir::spirv::SelectOp>(loc, i32Type, isEraA, nodeA, nodeB);
+          Value eraP0    = makeSSBOLoad(b, netPtr,
+              b.create<mlir::spirv::IAddOp>(loc, i32Type,
+                  b.create<mlir::spirv::IMulOp>(loc, i32Type, eraNode, c4), c0));
+          makeSSBOStore(b, netPtr, computeTarget(b, nonEraP1), eraP0);
+          makeSSBOStore(b, netPtr, computeTarget(b, nonEraP2), eraP0);
+        }, eb);
+
+    // 3) Duplication (DUP node with any partner)
+    mlir::spirv::SelectionOp::createIfThen(loc,
+        eb.create<mlir::spirv::LogicalAndOp>(loc, eb.getI1Type(), notOob, isDupPair),
+        [&](OpBuilder &b) {
+          Value otherMeta = b.create<mlir::spirv::SelectOp>(loc, i32Type, isDupA, metaB, metaA);
+          Value auxA1 = b.create<mlir::spirv::SelectOp>(loc, i32Type, isDupA, p1B, p1A);
+          Value auxA2 = b.create<mlir::spirv::SelectOp>(loc, i32Type, isDupA, p2B, p2A);
+          Value auxB1 = b.create<mlir::spirv::SelectOp>(loc, i32Type, isDupA, p1A, p1B);
+          Value auxB2 = b.create<mlir::spirv::SelectOp>(loc, i32Type, isDupA, p2A, p2B);
+
+          // Atomic alloc: reserve 4 contiguous node indices from state[1]
+          Value alPtr = b.create<mlir::spirv::AccessChainOp>(loc, i32PtrSSBO, statePtr, ValueRange{c1});
+          Value four = b.create<mlir::spirv::ConstantOp>(loc, i32Type, b.getI32IntegerAttr(4));
+          auto scopeA = mlir::spirv::ScopeAttr::get(ctx, mlir::spirv::Scope::Device);
+          auto semA   = mlir::spirv::MemorySemanticsAttr::get(ctx, mlir::spirv::MemorySemantics::AcquireRelease);
+          Value base = b.create<mlir::spirv::AtomicIAddOp>(loc, i32Type, alPtr, scopeA, semA, four);
+          Value n1 = base;
+          Value n2 = b.create<mlir::spirv::IAddOp>(loc, i32Type, base, c1);
+          Value n3 = b.create<mlir::spirv::IAddOp>(loc, i32Type, base, c2);
+          Value n4 = b.create<mlir::spirv::IAddOp>(loc, i32Type, base, c3);
+
+          // Write meta to each new node
+          auto writeMeta = [&](OpBuilder &ob, Value nIdx) {
+            makeSSBOStore(ob, netPtr,
+                ob.create<mlir::spirv::IAddOp>(loc, i32Type,
+                    ob.create<mlir::spirv::IMulOp>(loc, i32Type, nIdx, c4), c3), otherMeta);
+          };
+          writeMeta(b, n1); writeMeta(b, n2); writeMeta(b, n3); writeMeta(b, n4);
+
+          // Self-referencing port helper: (nodeIdx * 4 + port)
+          auto makeSelfPort = [&](OpBuilder &ob, Value nIdx, int pNum) {
+            return ob.create<mlir::spirv::IAddOp>(loc, i32Type,
+                ob.create<mlir::spirv::IMulOp>(loc, i32Type, nIdx, c4),
+                ob.create<mlir::spirv::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(pNum)));
+          };
+
+          // Standard commutation wiring:
+          // a1.p1↔b1.p1, a1.p2↔b2.p1, a2.p1↔b1.p2, a2.p2↔b2.p2
+          // a1.p0↔auxB1, a2.p0↔auxB2, b1.p0↔auxA1, b2.p0↔auxA2
+          auto w = [&](Value nIdx, int p, Value val) {
+            makeSSBOStore(b, netPtr,
+                b.create<mlir::spirv::IAddOp>(loc, i32Type,
+                    b.create<mlir::spirv::IMulOp>(loc, i32Type, nIdx, c4),
+                    b.create<mlir::spirv::ConstantOp>(loc, i32Type, b.getI32IntegerAttr(p))), val);
+          };
+          w(n1, 1, makeSelfPort(b, n3, 1));
+          w(n1, 2, makeSelfPort(b, n4, 1));
+          w(n2, 1, makeSelfPort(b, n3, 2));
+          w(n2, 2, makeSelfPort(b, n4, 2));
+          w(n3, 1, makeSelfPort(b, n1, 1));
+          w(n3, 2, makeSelfPort(b, n2, 1));
+          w(n4, 1, makeSelfPort(b, n1, 2));
+          w(n4, 2, makeSelfPort(b, n2, 2));
+          w(n1, 0, auxB1);
+          w(n2, 0, auxB2);
+          w(n3, 0, auxA1);
+          w(n4, 0, auxA2);
+        }, eb);
+
+    // 4) Annihilation (CON ~ DES)
+    mlir::spirv::SelectionOp::createIfThen(loc,
+        eb.create<mlir::spirv::LogicalAndOp>(loc, eb.getI1Type(), notOob, isAnnPair),
+        [&](OpBuilder &b) {
+          Value tA1 = computeTarget(b, p1A);
+          Value tA2 = computeTarget(b, p2A);
+          Value tB1 = computeTarget(b, p1B);
+          Value tB2 = computeTarget(b, p2B);
+          makeSSBOStore(b, netPtr, tA1, p1B);
+          makeSSBOStore(b, netPtr, tB1, p1A);
+          makeSSBOStore(b, netPtr, tA2, p2B);
+          makeSSBOStore(b, netPtr, tB2, p2A);
         }, eb);
 
     eb.create<mlir::spirv::ReturnOp>(loc);
