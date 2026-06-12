@@ -161,7 +161,6 @@
             pkgs.gtest
             pkgs.spirv-tools
             pkgs.vulkan-headers
-            pkgs.glfw
             vulkan-loader
             vulkan-validation-layers
             pkgs.gcc

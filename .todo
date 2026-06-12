@@ -393,19 +393,6 @@
         - Compile to binary and execute in one step: linc run file.lin -o /tmp/bin
         - Prints exit code and stdout; requires pre-built binary path
 
-[x] 15b. `--link-libs` CLI flag 🟡
-        # New flag to pass extra linker flags when compiling Lin binaries.
-        # Usage: --link-libs "-lglfw -lGL"
-        # Enables linking external C libraries (GLFW, system libs, etc.)
-
-[x] 15c. Window system support via GLFW 🟡
-        # Added glfw_window.c — GLFW-based window with OpenGL framebuffer display
-        # Added std/window.lin — Lin standard library bindings for window ops:
-        #   create-window, window-should-close, poll-events, display-pixels, destroy-window
-        # Added pkgs.glfw to Nix flake devShell
-        # Pre-declared window function symbols in LoweringPasses.cpp
-        # Usage: linc build app.lin -o app --link-c glfw_window.c --link-libs "-lglfw -lGL"
-
 [x] 16. @gpu / @cpu per-function annotations
         - Parser: recognize @identifier before func/mlir-op declarations
         - Lowering: attach dispatch attr to γ⁺ / ω agents
