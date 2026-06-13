@@ -27,6 +27,11 @@ namespace {
 
 struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PicReduceToRuntimePass)
+
+  TargetBackend target = TargetBackend::CPU;
+  PicReduceToRuntimePass() : target(TargetBackend::CPU) {}
+  PicReduceToRuntimePass(TargetBackend target) : target(target) {}
+
   void runOnOperation() override {
     ModuleOp module = getOperation();
     OpBuilder builder(module.getContext());
@@ -146,8 +151,11 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     Block *nonRvecCase = wFunc.addBlock();
     builder.create<cf::CondBranchOp>(loc, hasRvec, rvecCase, nonRvecCase);
 
+    StringAttr gpuFlag = (target == TargetBackend::GPU) ? builder.getStringAttr("gpu") : StringAttr();
+    StringAttr cpuFlag = (target == TargetBackend::GPU) ? builder.getStringAttr("cpu") : StringAttr();
+
     builder.setInsertionPointToStart(rvecCase);
-    builder.create<mlir::pic::reduce::ReverseVectorOp>(loc, bodyNodeA, bodyNodeB, stateArg);
+    builder.create<mlir::pic::reduce::ReverseVectorOp>(loc, bodyNodeA, bodyNodeB, stateArg, gpuFlag);
     builder.create<cf::BranchOp>(loc, lHead);
 
     builder.setInsertionPointToStart(nonRvecCase);
@@ -160,7 +168,7 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     builder.create<cf::CondBranchOp>(loc, hasEra, eraCase, checkDispatch);
 
     builder.setInsertionPointToStart(eraCase);
-    builder.create<mlir::pic::reduce::EraseOp>(loc, bodyNodeA, bodyNodeB, stateArg);
+    builder.create<mlir::pic::reduce::EraseOp>(loc, bodyNodeA, bodyNodeB, stateArg, gpuFlag);
     builder.create<cf::BranchOp>(loc, lHead);
 
     builder.setInsertionPointToStart(checkDispatch);
@@ -170,18 +178,12 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     Value hasRuleB = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, implB, c0_i32);
     Value hasDispatch = builder.create<arith::OrIOp>(loc, hasRuleA, hasRuleB);
 
-    Value opNode = builder.create<arith::SelectOp>(loc, hasRuleA, bodyNodeA, bodyNodeB);
-    Value valNode = builder.create<arith::SelectOp>(loc, hasRuleA, bodyNodeB, bodyNodeA);
-    Value valLabel = builder.create<arith::SelectOp>(loc, hasRuleA, labelB, labelA);
-    Value opLabel = builder.create<arith::SelectOp>(loc, hasRuleA, labelA, labelB);
-    Value impl = builder.create<arith::SelectOp>(loc, hasRuleA, implA, implB);
-
     Block *dispatchCase = wFunc.addBlock();
     Block *genericCase = wFunc.addBlock();
     builder.create<cf::CondBranchOp>(loc, hasDispatch, dispatchCase, genericCase);
 
     builder.setInsertionPointToStart(dispatchCase);
-    builder.create<mlir::pic::reduce::FireOpOp>(loc, bodyNodeA, bodyNodeB, stateArg);
+    builder.create<mlir::pic::reduce::FireOpOp>(loc, bodyNodeA, bodyNodeB, stateArg, cpuFlag);
     builder.create<cf::BranchOp>(loc, lHead);
 
     builder.setInsertionPointToStart(genericCase);
@@ -194,11 +196,11 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     builder.create<cf::CondBranchOp>(loc, isAnn, annPath, dupPath);
 
     builder.setInsertionPointToStart(annPath);
-    builder.create<mlir::pic::reduce::AnnihilateOp>(loc, bodyNodeA, bodyNodeB, stateArg);
+    builder.create<mlir::pic::reduce::AnnihilateOp>(loc, bodyNodeA, bodyNodeB, stateArg, gpuFlag);
     builder.create<cf::BranchOp>(loc, lHead);
 
     builder.setInsertionPointToStart(dupPath);
-    builder.create<mlir::pic::reduce::DuplicateOp>(loc, bodyNodeA, bodyNodeB, stateArg);
+    builder.create<mlir::pic::reduce::DuplicateOp>(loc, bodyNodeA, bodyNodeB, stateArg, gpuFlag);
     builder.create<cf::BranchOp>(loc, lHead);
 
     // ==========================================
@@ -211,4 +213,4 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
 
 } // namespace
 
-std::unique_ptr<Pass> createPicReduceToRuntimePass() { return std::make_unique<PicReduceToRuntimePass>(); }
+std::unique_ptr<Pass> createPicReduceToRuntimePass(TargetBackend target) { return std::make_unique<PicReduceToRuntimePass>(target); }

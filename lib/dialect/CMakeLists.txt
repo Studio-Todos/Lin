@@ -34,7 +34,6 @@ add_mlir_dialect_library(PicDialects
   Pass_PicReduceLowering.cpp
   Pass_PicRuntimeToLLVM.cpp
   Pass_PicRuntimeToSPIRV.cpp
-  Pass_PicRuntimeGPUHelper.cpp
 
 
   DEPENDS

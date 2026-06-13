@@ -36,7 +36,6 @@ static Value genInlineDispatch(OpBuilder &builder, Location loc, Value impl, Val
     Block *currentBlock = builder.getInsertionBlock();
 
     for (const auto &op : userOps) {
-        if (op.dispatch == "gpu") continue;
 
         Block *matchBlock = funcOp.addBlock();
         Block *nextBlock = funcOp.addBlock();
@@ -77,6 +76,10 @@ static Value genInlineDispatch(OpBuilder &builder, Location loc, Value impl, Val
 struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, OperationPass<ModuleOp>> {
 
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PicReduceLoweringPass)
+
+  TargetBackend target = TargetBackend::CPU;
+  PicReduceLoweringPass() : target(TargetBackend::CPU) {}
+  PicReduceLoweringPass(TargetBackend target) : target(target) {}
 
   void runOnOperation() override {
     ModuleOp module = getOperation();
@@ -385,23 +388,6 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
                     }
 
                     func::FuncOp tempFunc = parsedSnippet ? parsedSnippet->lookupSymbol<func::FuncOp>("temp") : nullptr;
-                    if (dispatch == "gpu" && tempFunc) {
-                        tempFunc.walk([&](Operation *op) {
-                            if (auto* dialect = op->getDialect()) {
-                                StringRef dialectName = dialect->getNamespace();
-                                // GPU-legal allowlist per PIC spec: only arith, math, func, cf,
-                                // memref, scf, vector, index are allowed on GPU.
-                                if (dialectName != "arith" && dialectName != "math" &&
-                                    dialectName != "func" && dialectName != "cf" &&
-                                    dialectName != "memref" && dialectName != "scf" &&
-                                    dialectName != "vector" && dialectName != "index") {
-                                    op->emitError() << "Operation '" << op->getName() << "' in registry op '" << label << "' is illegal on GPU (not in GPU-legal allowlist)!";
-                                    llvm::errs() << "GPU Compile Error: Operation '" << op->getName() << "' in registry op '" << label << "' is illegal on GPU!\n";
-                                    abort();
-                                }
-                            }
-                        });
-                    }
                     if (tempFunc && !tempFunc.getBody().empty()) {
                         IRMapping mapper;
                         OpBuilder bBody = OpBuilder::atBlockBegin(fEntry);
@@ -610,10 +596,29 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
           return builder.create<arith::OrIOp>(loc, i32Type, sh, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(p)));
       };
 
+      auto handleGpuDispatch = [&](Value nA, Value nB, Value sA) -> bool {
+          auto flag = op->getAttrOfType<StringAttr>("dispatch_flag");
+          if (flag && flag.getValue() == "gpu") {
+              if (!module.lookupSymbol("pic_gpu_dispatch_helper")) {
+                  OpBuilder mb(module.getBodyRegion());
+                  auto helperTy = builder.getFunctionType({i32Type, i32Type, i64Type}, {});
+                  auto helperFunc = mb.create<func::FuncOp>(loc, "pic_gpu_dispatch_helper", helperTy);
+                  helperFunc.setPrivate();
+              }
+              builder.create<func::CallOp>(loc, TypeRange{}, "pic_gpu_dispatch_helper", ValueRange{nA, nB, sA});
+              builder.create<cf::BranchOp>(loc, lHead);
+              op->erase();
+              branchOp->erase();
+              return true;
+          }
+          return false;
+      };
+
       if (auto rvecOp = dyn_cast<mlir::pic::reduce::ReverseVectorOp>(op)) {
           Value nodeA = rvecOp.getNodeA();
           Value nodeB = rvecOp.getNodeB();
           Value stateArg = rvecOp.getState();
+          if (handleGpuDispatch(nodeA, nodeB, stateArg)) continue;
 
           Value metaA = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(3));
           Value metaB = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeB, builder.getI8IntegerAttr(3));
@@ -668,6 +673,7 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
           Value nodeA = eraOp.getNodeA();
           Value nodeB = eraOp.getNodeB();
           Value stateArg = eraOp.getState();
+          if (handleGpuDispatch(nodeA, nodeB, stateArg)) continue;
 
           Value metaA = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(3));
           Value metaB = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeB, builder.getI8IntegerAttr(3));
@@ -713,6 +719,7 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
           Value nodeA = fireOp.getNodeA();
           Value nodeB = fireOp.getNodeB();
           Value stateArg = fireOp.getState();
+          if (handleGpuDispatch(nodeA, nodeB, stateArg)) continue;
 
           Value metaA = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(3));
           Value metaB = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeB, builder.getI8IntegerAttr(3));
@@ -755,13 +762,6 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
           }
 
           Value isGpu = builder.create<arith::ConstantOp>(loc, i1Type, builder.getBoolAttr(false));
-          for (auto &op : userOps) {
-              if (op.dispatch == "gpu") {
-                  Value hashConst = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(op.hash));
-                  Value cmp = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, impl, hashConst);
-                  isGpu = builder.create<arith::OrIOp>(loc, isGpu, cmp);
-              }
-          }
 
           Block *doUnary = funcOp.addBlock();
           Block *checkBinary = funcOp.addBlock();
@@ -941,6 +941,7 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
           Value nodeA = annOp.getNodeA();
           Value nodeB = annOp.getNodeB();
           Value stateArg = annOp.getState();
+          if (handleGpuDispatch(nodeA, nodeB, stateArg)) continue;
 
           Value hWord0A = builder.create<pic::runtime::GetHistoryOp>(loc, i64Type, nodeA, builder.getI8IntegerAttr(0));
           Value inBoundaryA = builder.create<arith::AndIOp>(loc, hWord0A, c0x100000000_i64);
@@ -1021,6 +1022,7 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
           Value nodeA = dupOp.getNodeA();
           Value nodeB = dupOp.getNodeB();
           Value stateArg = dupOp.getState();
+          if (handleGpuDispatch(nodeA, nodeB, stateArg)) continue;
 
           Value metaA = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(3));
           Value metaB = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeB, builder.getI8IntegerAttr(3));
@@ -1133,4 +1135,4 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
 
 } // namespace
 
-std::unique_ptr<Pass> createPicReduceLoweringPass() { return std::make_unique<PicReduceLoweringPass>(); }
+std::unique_ptr<Pass> createPicReduceLoweringPass(TargetBackend target) { return std::make_unique<PicReduceLoweringPass>(target); }

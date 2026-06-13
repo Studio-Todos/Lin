@@ -28,9 +28,9 @@ namespace {
 
 struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PicRuntimeToLLVMPass)
-  bool enableGPU;
+  TargetBackend target;
   std::string spirvPath;
-  PicRuntimeToLLVMPass(bool enableGPU, std::string spirvPath) : enableGPU(enableGPU), spirvPath(spirvPath) {}
+  PicRuntimeToLLVMPass(TargetBackend target, std::string spirvPath) : target(target), spirvPath(spirvPath) {}
 
   void runOnOperation() override {
     ModuleOp module = getOperation();
@@ -975,7 +975,7 @@ std::string base = op.label.substr(0, op.label.size() - 2);
         OpBuilder b(module.getBodyRegion());
         auto fType = LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(builder.getContext()), {i32Type, i32Type, i64Type});
         auto f = b.create<LLVM::LLVMFuncOp>(module.getLoc(), "pic_gpu_dispatch_helper", fType);
-        if (!enableGPU) return;
+        if (target != TargetBackend::GPU) return;
 
         auto *entry = f.addEntryBlock();
         Value nodeA = entry->getArgument(0);
@@ -1080,7 +1080,7 @@ std::string base = op.label.substr(0, op.label.size() - 2);
         auto sA = [&](int i, Value v) { builder.create<LLVM::StoreOp>(entry.getLoc(), v, builder.create<LLVM::GEPOp>(entry.getLoc(), ptrType, ptrType, as, ValueRange{builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(i))})); };
         
         Value activePtr = builder.create<LLVM::CallOp>(entry.getLoc(), ptrType, "malloc", ValueRange{builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(8))}).getResult();
-        Value numThreadsConst = enableGPU
+        Value numThreadsConst = target == TargetBackend::GPU
             ? builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(1))
             : builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(4));
         builder.create<LLVM::StoreOp>(entry.getLoc(), numThreadsConst, activePtr);
@@ -1092,7 +1092,7 @@ std::string base = op.label.substr(0, op.label.size() - 2);
         builder.create<func::CallOp>(entry.getLoc(), TypeRange{}, entry.getSymName(), ValueRange{builder.create<LLVM::PtrToIntOp>(entry.getLoc(), i64Type, as)});
         
         {
-            Value numThreadsAlloca = enableGPU
+            Value numThreadsAlloca = target == TargetBackend::GPU
                 ? builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(1))
                 : builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(4));
             Value threads = builder.create<LLVM::AllocaOp>(entry.getLoc(), ptrType, i64Type, numThreadsAlloca);
@@ -1101,7 +1101,7 @@ std::string base = op.label.substr(0, op.label.size() - 2);
             auto wFuncConst = builder.create<func::ConstantOp>(entry.getLoc(), wFuncType, FlatSymbolRefAttr::get(builder.getContext(), "worker_thread"));
             Value wAddr = builder.create<UnrealizedConversionCastOp>(entry.getLoc(), TypeRange{ptrType}, ValueRange(static_cast<Value>(wFuncConst.getResult()))).getResult(0);
             
-            int numThreads = enableGPU ? 1 : 4;
+            int numThreads = target == TargetBackend::GPU ? 1 : 4;
             for (int i = 0; i < numThreads; ++i) {
                 Value idx = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(i));
                 Value tPtr = builder.create<LLVM::GEPOp>(entry.getLoc(), ptrType, i64Type, threads, ValueRange{idx});
@@ -1116,7 +1116,7 @@ std::string base = op.label.substr(0, op.label.size() - 2);
                 builder.create<LLVM::CallOp>(entry.getLoc(), i32Type, "pthread_join", ValueRange{tVal, retValPtr});
             }
         }
-        if (enableGPU) {
+        if (target == TargetBackend::GPU) {
             auto cleanupFty = LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(module.getContext()), {});
             auto cleanupFunc = module.lookupSymbol<LLVM::LLVMFuncOp>("pic_gpu_cleanup");
             if (!cleanupFunc) {
@@ -1141,4 +1141,4 @@ std::string base = op.label.substr(0, op.label.size() - 2);
 };
 } // namespace
 
-std::unique_ptr<Pass> createPicRuntimeToLLVMPass(bool enableGPU, std::string spirvPath) { return std::make_unique<PicRuntimeToLLVMPass>(enableGPU, spirvPath); }
+std::unique_ptr<Pass> createPicRuntimeToLLVMPass(TargetBackend target, std::string spirvPath) { return std::make_unique<PicRuntimeToLLVMPass>(target, spirvPath); }
