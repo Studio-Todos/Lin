@@ -335,10 +335,11 @@ int main(int argc, char **argv) {
 #endif
       PassManager pm(&context);
       pm.addPass(createPicGraphToReducePass());
-      pm.addPass(createPicReduceToRuntimePass(enableGPU, outputBinary + ".spv"));
+      pm.addPass(createPicReduceToRuntimePass());
       pm.addPass(createPicReduceLoweringPass());
       pm.addPass(mlir::createConvertSCFToCFPass());
       if (enableGPU) {
+          pm.addPass(createPicRuntimeGPUHelperPass(enableGPU));
           pm.addPass(createPicRuntimeToSPIRVPass());
           pm.addPass(createPicRuntimeToLLVMPass(enableGPU, outputBinary + ".spv"));
       } else {

@@ -5,7 +5,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/Dialect/GPU/IR/GPUDialect.h"
+
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -27,9 +27,6 @@ namespace {
 
 struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PicReduceToRuntimePass)
-  bool enableGPU;
-  std::string spirvPath;
-  PicReduceToRuntimePass(bool enableGPU, std::string spirvPath) : enableGPU(enableGPU), spirvPath(spirvPath) {}
   void runOnOperation() override {
     ModuleOp module = getOperation();
     OpBuilder builder(module.getContext());
@@ -126,22 +123,6 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
         return builder.create<arith::OrIOp>(loc, i32Type, sh, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(p)));
     };
 
-    if (enableGPU) {
-        // GPU path: dispatch all pairs to GPU kernel via pic_gpu_dispatch_helper.
-        // The SPIR-V kernel (pic_kernel in PicRuntimeToSPIRVPass) handles all base
-        // rules (annihilate, duplicate, erase, r-vector). User ops are dispatched
-        // inline after GPU returns.
-        if (!module.lookupSymbol<func::FuncOp>("pic_gpu_dispatch_helper")) {
-            OpBuilder modB(module.getBodyRegion());
-            modB.setInsertionPointToEnd(module.getBody());
-            auto helperTy = modB.getFunctionType({i32Type, i32Type, i64Type}, {});
-            auto helper = modB.create<func::FuncOp>(loc, "pic_gpu_dispatch_helper", helperTy);
-            helper.setPrivate();
-        }
-        builder.create<func::CallOp>(loc, TypeRange{}, "pic_gpu_dispatch_helper",
-            ValueRange{bodyNodeA, bodyNodeB, stateArg});
-        builder.create<cf::BranchOp>(loc, lHead);
-    } else {
     Value metaA = builder.create<pic::runtime::GetPortOp>(loc, i32Type, bodyNodeA, builder.getI8IntegerAttr(3));
     Value metaB = builder.create<pic::runtime::GetPortOp>(loc, i32Type, bodyNodeB, builder.getI8IntegerAttr(3));
 
@@ -165,16 +146,10 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     Block *nonRvecCase = wFunc.addBlock();
     builder.create<cf::CondBranchOp>(loc, hasRvec, rvecCase, nonRvecCase);
 
-    // ==========================================
-    // rvecCase
-    // ==========================================
     builder.setInsertionPointToStart(rvecCase);
     builder.create<mlir::pic::reduce::ReverseVectorOp>(loc, bodyNodeA, bodyNodeB, stateArg);
     builder.create<cf::BranchOp>(loc, lHead);
 
-    // ==========================================
-    // nonRvecCase
-    // ==========================================
     builder.setInsertionPointToStart(nonRvecCase);
     Value isEraA = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelA, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("era"))));
     Value isEraB = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelB, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("era"))));
@@ -184,12 +159,10 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     Block *checkDispatch = wFunc.addBlock();
     builder.create<cf::CondBranchOp>(loc, hasEra, eraCase, checkDispatch);
 
-    // eraCase
     builder.setInsertionPointToStart(eraCase);
     builder.create<mlir::pic::reduce::EraseOp>(loc, bodyNodeA, bodyNodeB, stateArg);
     builder.create<cf::BranchOp>(loc, lHead);
 
-    // checkDispatch
     builder.setInsertionPointToStart(checkDispatch);
     Value implA = builder.create<func::CallOp>(loc, i32Type, "lookup_rule", ValueRange{labelA, labelB}).getResult(0);
     Value implB = builder.create<func::CallOp>(loc, i32Type, "lookup_rule", ValueRange{labelB, labelA}).getResult(0);
@@ -207,12 +180,10 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     Block *genericCase = wFunc.addBlock();
     builder.create<cf::CondBranchOp>(loc, hasDispatch, dispatchCase, genericCase);
 
-    // dispatchCase — registered user op fires through FireOpOp
     builder.setInsertionPointToStart(dispatchCase);
     builder.create<mlir::pic::reduce::FireOpOp>(loc, bodyNodeA, bodyNodeB, stateArg);
     builder.create<cf::BranchOp>(loc, lHead);
 
-    // genericCase  —  annihilation or duplication
     builder.setInsertionPointToStart(genericCase);
     Value labelsMatch = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelA, labelB);
     Value polsDiff = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, polA, polB);
@@ -222,16 +193,13 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     Block *dupPath = wFunc.addBlock();
     builder.create<cf::CondBranchOp>(loc, isAnn, annPath, dupPath);
 
-    // annPath
     builder.setInsertionPointToStart(annPath);
     builder.create<mlir::pic::reduce::AnnihilateOp>(loc, bodyNodeA, bodyNodeB, stateArg);
     builder.create<cf::BranchOp>(loc, lHead);
 
-    // dupPath
     builder.setInsertionPointToStart(dupPath);
     builder.create<mlir::pic::reduce::DuplicateOp>(loc, bodyNodeA, bodyNodeB, stateArg);
     builder.create<cf::BranchOp>(loc, lHead);
-    }
 
     // ==========================================
     // lEnd
@@ -243,4 +211,4 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
 
 } // namespace
 
-std::unique_ptr<Pass> createPicReduceToRuntimePass(bool enableGPU, std::string spirvPath) { return std::make_unique<PicReduceToRuntimePass>(enableGPU, spirvPath); }
+std::unique_ptr<Pass> createPicReduceToRuntimePass() { return std::make_unique<PicReduceToRuntimePass>(); }
