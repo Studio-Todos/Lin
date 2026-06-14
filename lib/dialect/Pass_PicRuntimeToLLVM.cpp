@@ -40,7 +40,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
     for (auto func : module.getOps<func::FuncOp>()) {
         if (auto labelAttr = func->getAttrOfType<StringAttr>("lin.original_label")) {
             std::string label = labelAttr.getValue().str();
-            userOps.push_back({opcodeForLabel(label), label, func.getSymName().str(), (int)func.getNumArguments(), {}, ""});
+            userOps.push_back({opcodeForLabel(label), label, func.getSymName().str(), (int)func.getNumArguments(), {}});
         }
     }
     

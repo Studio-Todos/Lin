@@ -112,7 +112,6 @@ struct UserOp {
     std::string funcName;
     int numArgs;
     SmallVector<std::string> argTypes;
-    std::string dispatch;
 };
 
 enum PicrNodeType {
