@@ -6,7 +6,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
-#include "mlir/Dialect/GPU/IR/GPUDialect.h"
+
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -28,9 +28,9 @@ namespace {
 
 struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PicRuntimeToLLVMPass)
-  bool enableGPU;
+  TargetBackend target;
   std::string spirvPath;
-  PicRuntimeToLLVMPass(bool enableGPU, std::string spirvPath) : enableGPU(enableGPU), spirvPath(spirvPath) {}
+  PicRuntimeToLLVMPass(TargetBackend target, std::string spirvPath) : target(target), spirvPath(spirvPath) {}
 
   void runOnOperation() override {
     ModuleOp module = getOperation();
@@ -40,7 +40,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
     for (auto func : module.getOps<func::FuncOp>()) {
         if (auto labelAttr = func->getAttrOfType<StringAttr>("lin.original_label")) {
             std::string label = labelAttr.getValue().str();
-            userOps.push_back({opcodeForLabel(label), label, func.getSymName().str(), (int)func.getNumArguments(), {}, ""});
+            userOps.push_back({opcodeForLabel(label), label, func.getSymName().str(), (int)func.getNumArguments(), {}});
         }
     }
     
@@ -931,61 +931,6 @@ std::string base = op.label.substr(0, op.label.size() - 2);
     Value wNet = getArg(wState, 0); Value wQueue = getArg(wState, 1); Value wHead = getArg(wState, 2); Value wTail = getArg(wState, 3); Value al = getArg(wState, 4); Value wHistoryNet = getArg(wState, 5);
     */
 
-    auto genGpuDispatchHelper = [&]() {
-        OpBuilder b(module.getBodyRegion());
-        auto fType = LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(builder.getContext()), {i32Type, i32Type, i64Type});
-        auto f = b.create<LLVM::LLVMFuncOp>(module.getLoc(), "pic_gpu_dispatch_helper", fType);
-        Block *entry = f.addEntryBlock();
-        Value nodeA = entry->getArgument(0);
-        Value nodeB = entry->getArgument(1);
-        Value dState = entry->getArgument(2);
-        OpBuilder ob(entry, entry->end());
-
-        if (enableGPU) {
-            Value two32 = ob.create<LLVM::ConstantOp>(module.getLoc(), i32Type, ob.getI32IntegerAttr(2));
-            Value pairBuf = ob.create<LLVM::AllocaOp>(module.getLoc(), ptrType, i32Type, two32);
-            
-            Value zeroIdx = ob.create<LLVM::ConstantOp>(module.getLoc(), i64Type, ob.getI64IntegerAttr(0));
-            Value ptr0 = ob.create<LLVM::GEPOp>(module.getLoc(), ptrType, i32Type, pairBuf, zeroIdx);
-            ob.create<LLVM::StoreOp>(module.getLoc(), nodeA, ptr0);
-            
-            Value oneIdx = ob.create<LLVM::ConstantOp>(module.getLoc(), i64Type, ob.getI64IntegerAttr(1));
-            Value ptr1 = ob.create<LLVM::GEPOp>(module.getLoc(), ptrType, i32Type, pairBuf, oneIdx);
-            ob.create<LLVM::StoreOp>(module.getLoc(), nodeB, ptr1);
-
-            Value oZero = ob.create<LLVM::ConstantOp>(module.getLoc(), i32Type, ob.getI32IntegerAttr(0));
-            Value dStatePtr = ob.create<LLVM::IntToPtrOp>(module.getLoc(), ptrType, dState);
-            Value gepNet = ob.create<LLVM::GEPOp>(module.getLoc(), ptrType, ptrType, dStatePtr, ValueRange{oZero});
-            Value dNet = ob.create<LLVM::LoadOp>(module.getLoc(), ptrType, gepNet);
-
-            auto gpuDispatchFty = LLVM::LLVMFunctionType::get(
-                LLVM::LLVMVoidType::get(ob.getContext()),
-                {ptrType, ptrType, i32Type, ptrType, ptrType}
-            );
-            auto gpuDispatchFunc = module.lookupSymbol<LLVM::LLVMFuncOp>("pic_gpu_dispatch");
-            if (!gpuDispatchFunc) {
-                OpBuilder moduleBuilder(module.getBodyRegion());
-                gpuDispatchFunc = moduleBuilder.create<LLVM::LLVMFuncOp>(module.getLoc(), "pic_gpu_dispatch", gpuDispatchFty);
-            }
-            
-            Value one32 = ob.create<LLVM::ConstantOp>(module.getLoc(), i32Type, ob.getI32IntegerAttr(1));
-            Value oFour = ob.create<LLVM::ConstantOp>(module.getLoc(), i32Type, ob.getI32IntegerAttr(4));
-            Value gepAl = ob.create<LLVM::GEPOp>(module.getLoc(), ptrType, ptrType, dStatePtr, ValueRange{oFour});
-            Value alPtrVal = ob.create<LLVM::LoadOp>(module.getLoc(), ptrType, gepAl);
-            Value pathPtr = ob.create<LLVM::AddressOfOp>(module.getLoc(), ptrType, "GPU_SPIRV_PATH");
-            ob.create<LLVM::CallOp>(module.getLoc(), TypeRange{}, "pic_gpu_dispatch", ValueRange{dNet, pairBuf, one32, alPtrVal, pathPtr});
-        }
-
-        ob.create<LLVM::ReturnOp>(module.getLoc(), ValueRange{});
-    };
-    
-    if (module.lookupSymbol("pic_gpu_dispatch_helper")) {
-        if (auto decl = module.lookupSymbol<func::FuncOp>("pic_gpu_dispatch_helper")) {
-            decl.erase();
-        }
-        genGpuDispatchHelper();
-    }
-
     module.walk([&](Operation *op) {
         if (op->getName().getStringRef() == "lin.coerce") {
             Location loc = op->getLoc();
@@ -1025,6 +970,59 @@ std::string base = op.label.substr(0, op.label.size() - 2);
             op->erase();
         }
     });
+
+    auto genGpuDispatchHelper = [&]() {
+        OpBuilder b(module.getBodyRegion());
+        auto fType = LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(builder.getContext()), {i32Type, i32Type, i64Type});
+        auto f = b.create<LLVM::LLVMFuncOp>(module.getLoc(), "pic_gpu_dispatch_helper", fType);
+        if (target != TargetBackend::GPU) return;
+
+        auto *entry = f.addEntryBlock();
+        Value nodeA = entry->getArgument(0);
+        Value nodeB = entry->getArgument(1);
+        Value dState = entry->getArgument(2);
+        OpBuilder ob(entry, entry->end());
+
+        Value two32 = ob.create<LLVM::ConstantOp>(module.getLoc(), i32Type, ob.getI32IntegerAttr(2));
+        Value pairBuf = ob.create<LLVM::AllocaOp>(module.getLoc(), ptrType, i32Type, two32);
+        
+        Value zeroIdx = ob.create<LLVM::ConstantOp>(module.getLoc(), i64Type, ob.getI64IntegerAttr(0));
+        Value ptr0 = ob.create<LLVM::GEPOp>(module.getLoc(), ptrType, i32Type, pairBuf, zeroIdx);
+        ob.create<LLVM::StoreOp>(module.getLoc(), nodeA, ptr0);
+        
+        Value oneIdx = ob.create<LLVM::ConstantOp>(module.getLoc(), i64Type, ob.getI64IntegerAttr(1));
+        Value ptr1 = ob.create<LLVM::GEPOp>(module.getLoc(), ptrType, i32Type, pairBuf, oneIdx);
+        ob.create<LLVM::StoreOp>(module.getLoc(), nodeB, ptr1);
+
+        Value oZero = ob.create<LLVM::ConstantOp>(module.getLoc(), i32Type, ob.getI32IntegerAttr(0));
+        Value dStatePtr = ob.create<LLVM::IntToPtrOp>(module.getLoc(), ptrType, dState);
+        Value gepNet = ob.create<LLVM::GEPOp>(module.getLoc(), ptrType, ptrType, dStatePtr, ValueRange{oZero});
+        Value dNet = ob.create<LLVM::LoadOp>(module.getLoc(), ptrType, gepNet);
+
+        auto gpuDispatchFty = LLVM::LLVMFunctionType::get(
+            LLVM::LLVMVoidType::get(ob.getContext()),
+            {ptrType, ptrType, i32Type, ptrType, ptrType}
+        );
+        auto gpuDispatchFunc = module.lookupSymbol<LLVM::LLVMFuncOp>("pic_gpu_dispatch");
+        if (!gpuDispatchFunc) {
+            OpBuilder moduleBuilder(module.getBodyRegion());
+            gpuDispatchFunc = moduleBuilder.create<LLVM::LLVMFuncOp>(module.getLoc(), "pic_gpu_dispatch", gpuDispatchFty);
+        }
+        
+        Value one32 = ob.create<LLVM::ConstantOp>(module.getLoc(), i32Type, ob.getI32IntegerAttr(1));
+        Value oFour = ob.create<LLVM::ConstantOp>(module.getLoc(), i32Type, ob.getI32IntegerAttr(4));
+        Value gepAl = ob.create<LLVM::GEPOp>(module.getLoc(), ptrType, ptrType, dStatePtr, ValueRange{oFour});
+        Value alPtrVal = ob.create<LLVM::LoadOp>(module.getLoc(), ptrType, gepAl);
+        Value pathPtr = ob.create<LLVM::AddressOfOp>(module.getLoc(), ptrType, "GPU_SPIRV_PATH");
+        ob.create<LLVM::CallOp>(module.getLoc(), TypeRange{}, "pic_gpu_dispatch", ValueRange{dNet, pairBuf, one32, alPtrVal, pathPtr});
+
+        ob.create<LLVM::ReturnOp>(module.getLoc(), ValueRange{});
+    };
+    
+    if (auto decl = module.lookupSymbol<func::FuncOp>("pic_gpu_dispatch_helper")) {
+            decl.erase();
+        }
+    genGpuDispatchHelper();
 
 
 
@@ -1082,7 +1080,7 @@ std::string base = op.label.substr(0, op.label.size() - 2);
         auto sA = [&](int i, Value v) { builder.create<LLVM::StoreOp>(entry.getLoc(), v, builder.create<LLVM::GEPOp>(entry.getLoc(), ptrType, ptrType, as, ValueRange{builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(i))})); };
         
         Value activePtr = builder.create<LLVM::CallOp>(entry.getLoc(), ptrType, "malloc", ValueRange{builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(8))}).getResult();
-        Value numThreadsConst = enableGPU
+        Value numThreadsConst = target == TargetBackend::GPU
             ? builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(1))
             : builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(4));
         builder.create<LLVM::StoreOp>(entry.getLoc(), numThreadsConst, activePtr);
@@ -1093,44 +1091,32 @@ std::string base = op.label.substr(0, op.label.size() - 2);
         sA(0, net); sA(1, q); sA(2, hd); sA(3, tl); sA(4, alL); sA(5, history_net); sA(6, activePtr); sA(7, lockPtr);
         builder.create<func::CallOp>(entry.getLoc(), TypeRange{}, entry.getSymName(), ValueRange{builder.create<LLVM::PtrToIntOp>(entry.getLoc(), i64Type, as)});
         
-        if (enableGPU) {
-            Value one32 = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(1));
-            Value threads = builder.create<LLVM::AllocaOp>(entry.getLoc(), ptrType, i64Type, one32);
-            Value threadAttr = builder.create<LLVM::ZeroOp>(entry.getLoc(), ptrType);
-            auto wFuncType = builder.getFunctionType({i64Type}, {i64Type});
-            auto wFuncConst = builder.create<func::ConstantOp>(entry.getLoc(), wFuncType, FlatSymbolRefAttr::get(builder.getContext(), "worker_thread"));
-            Value wAddr = builder.create<UnrealizedConversionCastOp>(entry.getLoc(), TypeRange{ptrType}, ValueRange(static_cast<Value>(wFuncConst.getResult()))).getResult(0);
-
-            Value idx0 = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(0));
-            Value tPtr = builder.create<LLVM::GEPOp>(entry.getLoc(), ptrType, i64Type, threads, ValueRange{idx0});
-            builder.create<LLVM::CallOp>(entry.getLoc(), i32Type, "pthread_create", ValueRange{tPtr, threadAttr, wAddr, as});
-
-            Value retValPtr = builder.create<LLVM::ZeroOp>(entry.getLoc(), ptrType);
-            Value tVal = builder.create<LLVM::LoadOp>(entry.getLoc(), i64Type, tPtr);
-            builder.create<LLVM::CallOp>(entry.getLoc(), i32Type, "pthread_join", ValueRange{tVal, retValPtr});
-        } else {
-            Value four = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(4));
-            Value threads = builder.create<LLVM::AllocaOp>(entry.getLoc(), ptrType, i64Type, four);
+        {
+            Value numThreadsAlloca = target == TargetBackend::GPU
+                ? builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(1))
+                : builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(4));
+            Value threads = builder.create<LLVM::AllocaOp>(entry.getLoc(), ptrType, i64Type, numThreadsAlloca);
             Value threadAttr = builder.create<LLVM::ZeroOp>(entry.getLoc(), ptrType);
             auto wFuncType = builder.getFunctionType({i64Type}, {i64Type});
             auto wFuncConst = builder.create<func::ConstantOp>(entry.getLoc(), wFuncType, FlatSymbolRefAttr::get(builder.getContext(), "worker_thread"));
             Value wAddr = builder.create<UnrealizedConversionCastOp>(entry.getLoc(), TypeRange{ptrType}, ValueRange(static_cast<Value>(wFuncConst.getResult()))).getResult(0);
             
-            for (int i = 0; i < 4; ++i) {
+            int numThreads = target == TargetBackend::GPU ? 1 : 4;
+            for (int i = 0; i < numThreads; ++i) {
                 Value idx = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(i));
                 Value tPtr = builder.create<LLVM::GEPOp>(entry.getLoc(), ptrType, i64Type, threads, ValueRange{idx});
                 builder.create<LLVM::CallOp>(entry.getLoc(), i32Type, "pthread_create", ValueRange{tPtr, threadAttr, wAddr, as});
             }
             
             Value retValPtr = builder.create<LLVM::ZeroOp>(entry.getLoc(), ptrType);
-            for (int i = 0; i < 4; ++i) {
+            for (int i = 0; i < numThreads; ++i) {
                 Value idx = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(i));
                 Value tPtr = builder.create<LLVM::GEPOp>(entry.getLoc(), ptrType, i64Type, threads, ValueRange{idx});
                 Value tVal = builder.create<LLVM::LoadOp>(entry.getLoc(), i64Type, tPtr);
                 builder.create<LLVM::CallOp>(entry.getLoc(), i32Type, "pthread_join", ValueRange{tVal, retValPtr});
             }
         }
-        if (enableGPU) {
+        if (target == TargetBackend::GPU) {
             auto cleanupFty = LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(module.getContext()), {});
             auto cleanupFunc = module.lookupSymbol<LLVM::LLVMFuncOp>("pic_gpu_cleanup");
             if (!cleanupFunc) {
@@ -1141,34 +1127,6 @@ std::string base = op.label.substr(0, op.label.size() - 2);
             builder.create<LLVM::CallOp>(entry.getLoc(), TypeRange{}, "pic_gpu_cleanup", ValueRange{});
         }
         builder.create<LLVM::ReturnOp>(entry.getLoc(), ValueRange{builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(0))});
-    }
-
-    if (enableGPU) {
-        OpBuilder b(module.getBodyRegion());
-        auto fType = b.getFunctionType({}, {});
-        auto f = b.create<func::FuncOp>(module.getLoc(), "pic", fType);
-        Block *entry = f.addEntryBlock();
-        b.setInsertionPointToStart(entry);
-        
-        Value oneIdx = b.create<arith::ConstantIndexOp>(module.getLoc(), 1);
-        auto launchOp = b.create<gpu::LaunchOp>(
-            module.getLoc(),
-            oneIdx, oneIdx, oneIdx,
-            oneIdx, oneIdx, oneIdx,
-            /*dynamicSharedMemorySize=*/nullptr,
-            /*asyncTokenType=*/Type{},
-            /*asyncDependencies=*/ValueRange{},
-            /*workgroupAttributions=*/TypeRange{},
-            /*privateAttributions=*/TypeRange{},
-            /*clusterSizeX=*/nullptr,
-            /*clusterSizeY=*/nullptr,
-            /*clusterSizeZ=*/nullptr
-        );
-        b.setInsertionPointToStart(&launchOp.getBody().front());
-        b.create<gpu::TerminatorOp>(module.getLoc());
-        
-        b.setInsertionPointAfter(launchOp);
-        b.create<func::ReturnOp>(module.getLoc());
     }
 
     SmallVector<Operation*> castsToErase;
@@ -1183,4 +1141,4 @@ std::string base = op.label.substr(0, op.label.size() - 2);
 };
 } // namespace
 
-std::unique_ptr<Pass> createPicRuntimeToLLVMPass(bool enableGPU, std::string spirvPath) { return std::make_unique<PicRuntimeToLLVMPass>(enableGPU, spirvPath); }
+std::unique_ptr<Pass> createPicRuntimeToLLVMPass(TargetBackend target, std::string spirvPath) { return std::make_unique<PicRuntimeToLLVMPass>(target, spirvPath); }

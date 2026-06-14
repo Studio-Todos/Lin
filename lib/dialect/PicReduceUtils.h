@@ -101,13 +101,17 @@ static uint32_t opcodeForLabel(StringRef label) {
   return (hash & 0xFFFFFF) ? (hash & 0xFFFFFF) : 1u;
 }
 
+enum class TargetBackend {
+    CPU,
+    GPU
+};
+
 struct UserOp {
     uint32_t hash;
     std::string label;
     std::string funcName;
     int numArgs;
     SmallVector<std::string> argTypes;
-    std::string dispatch;
 };
 
 enum PicrNodeType {

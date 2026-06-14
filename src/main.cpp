@@ -335,15 +335,13 @@ int main(int argc, char **argv) {
 #endif
       PassManager pm(&context);
       pm.addPass(createPicGraphToReducePass());
-      pm.addPass(createPicReduceToRuntimePass(enableGPU, outputBinary + ".spv"));
-      pm.addPass(createPicReduceLoweringPass());
+      pm.addPass(createPicReduceToRuntimePass(enableGPU ? TargetBackend::GPU : TargetBackend::CPU));
+      pm.addPass(createPicReduceLoweringPass(enableGPU ? TargetBackend::GPU : TargetBackend::CPU));
       pm.addPass(mlir::createConvertSCFToCFPass());
       if (enableGPU) {
           pm.addPass(createPicRuntimeToSPIRVPass());
-          pm.addPass(createPicRuntimeToLLVMPass(enableGPU, outputBinary + ".spv"));
-      } else {
-          pm.addPass(createPicRuntimeToLLVMPass(enableGPU, outputBinary + ".spv"));
       }
+      pm.addPass(createPicRuntimeToLLVMPass(enableGPU ? TargetBackend::GPU : TargetBackend::CPU, outputBinary + ".spv"));
 
       if (mlir::failed(pm.run(module))) {
           std::cerr << "Lowering and outlining pass failed.\n";

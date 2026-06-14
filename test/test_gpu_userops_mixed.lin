@@ -1,0 +1,16 @@
+// RUN: %linc build %s -o %t && %t
+// RUN: %linc build %s --gpu -o %t_gpu && test -s %t_gpu.spv && spirv-val %t_gpu.spv
+
+import "std/math.lin"
+import "std/io.lin"
+
+test_userop_mixed: func [
+    dummy [i32!]
+    return: [i32!]
+][
+    x: (add 7 8)
+    y: (mul x 3)
+    y
+]
+
+(test_userop_mixed 0)

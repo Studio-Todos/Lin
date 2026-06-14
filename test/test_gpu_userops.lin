@@ -1,0 +1,30 @@
+// RUN: %linc build %s -o %t && %t
+// RUN: %linc build %s --gpu -o %t_gpu && test -s %t_gpu.spv && spirv-val %t_gpu.spv
+
+import "std/math.lin"
+import "std/io.lin"
+
+test_userops: func [
+    argc [i32!]
+    return: [i32!]
+][
+    either (neq (add 3 4) 7) [
+        1
+    ][
+        either (neq (sub 10 3) 7) [
+            2
+        ][
+            either (neq (mul 3 4) 12) [
+                3
+            ][
+                either (neq (div 12 3) 4) [
+                    4
+                ][
+                    0
+                ]
+            ]
+        ]
+    ]
+]
+
+(print_i32 (test_userops 0))

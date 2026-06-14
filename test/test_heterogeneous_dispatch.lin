@@ -1,4 +1,18 @@
-// RUN: %linc build %s -o %t_het && test -s %t_het.spv && spirv-val %t_het.spv
+// RUN: %linc build %s -o %t_het | FileCheck %s
+// RUN: %linc build %s --gpu -o %t_gpu | FileCheck %s --check-prefix=GPU
+// RUN: test -s %t_gpu.spv
+// RUN: spirv-val %t_gpu.spv
+
+// CHECK: Parsing Source:
+// CHECK: gpu_func: func [
+// CHECK: cpu_func: func [
+// CHECK: test_main: func [
+
+// GPU: Parsing Source:
+// GPU: gpu_func: func [
+// GPU: cpu_func: func [
+// GPU: test_main: func [
+
 import "std/math.lin"
 import "std/io.lin"
 

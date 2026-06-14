@@ -135,7 +135,6 @@ struct UserOp {
     std::string funcName;
     int numArgs;
     SmallVector<std::string> argTypes;
-    std::string dispatch;
 };
 
 enum PicrNodeType {
@@ -640,7 +639,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
     for (auto func : module.getOps<func::FuncOp>()) {
         if (auto labelAttr = func->getAttrOfType<StringAttr>("lin.original_label")) {
             std::string label = labelAttr.getValue().str();
-            userOps.push_back({opcodeForLabel(label), label, func.getSymName().str(), (int)func.getNumArguments(), {}, ""});
+            userOps.push_back({opcodeForLabel(label), label, func.getSymName().str(), (int)func.getNumArguments(), {}});
         }
     }
     
@@ -1792,7 +1791,6 @@ static Value genInlineDispatch(OpBuilder &builder, Location loc, Value impl, Val
     Block *currentBlock = builder.getInsertionBlock();
 
     for (const auto &op : userOps) {
-        if (op.dispatch == "gpu") continue;
 
         Block *matchBlock = funcOp.addBlock();
         Block *nextBlock = funcOp.addBlock();
@@ -1916,10 +1914,6 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
                 // Generate a specialized func.func wrapper for this mlir-op
                 std::string funcName = "user_op_" + label;
                 replaceAll(funcName, "-", "_");
-                std::string dispatch = "";
-                if (auto dispAttr = op->getAttrOfType<StringAttr>("dispatch")) {
-                    dispatch = dispAttr.getValue().str();
-                }
                 
                 int numArgs = 0;
                 if (argsAttr) {
@@ -2141,23 +2135,6 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
                     }
 
                     func::FuncOp tempFunc = parsedSnippet ? parsedSnippet->lookupSymbol<func::FuncOp>("temp") : nullptr;
-                    if (dispatch == "gpu" && tempFunc) {
-                        tempFunc.walk([&](Operation *op) {
-                            if (auto* dialect = op->getDialect()) {
-                                StringRef dialectName = dialect->getNamespace();
-                                // GPU-legal allowlist per PIC spec: only arith, math, func, cf,
-                                // memref, scf, vector, index are allowed on GPU.
-                                if (dialectName != "arith" && dialectName != "math" &&
-                                    dialectName != "func" && dialectName != "cf" &&
-                                    dialectName != "memref" && dialectName != "scf" &&
-                                    dialectName != "vector" && dialectName != "index") {
-                                    op->emitError() << "Operation '" << op->getName() << "' in registry op '" << label << "' is illegal on GPU (not in GPU-legal allowlist)!";
-                                    llvm::errs() << "GPU Compile Error: Operation '" << op->getName() << "' in registry op '" << label << "' is illegal on GPU!\n";
-                                    abort();
-                                }
-                            }
-                        });
-                    }
                     if (tempFunc && !tempFunc.getBody().empty()) {
                         IRMapping mapper;
                         OpBuilder bBody = OpBuilder::atBlockBegin(fEntry);
@@ -2266,7 +2243,7 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
                         bTerm.create<func::ReturnOp>(module.getLoc(), zeroRet);
                     }
                 }
-                userOps.push_back({opcodeForLabel(label), label, funcName, (int)numArgs, argTypes, dispatch});
+                userOps.push_back({opcodeForLabel(label), label, funcName, (int)numArgs, argTypes});
             }
         }
     }
@@ -2510,35 +2487,11 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
               }
           }
 
-          Value isGpu = builder.create<arith::ConstantOp>(loc, i1Type, builder.getBoolAttr(false));
-          for (auto &op : userOps) {
-              if (op.dispatch == "gpu") {
-                  Value hashConst = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(op.hash));
-                  Value cmp = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, impl, hashConst);
-                  isGpu = builder.create<arith::OrIOp>(loc, isGpu, cmp);
-              }
-          }
-
           Block *doUnary = funcOp.addBlock();
           Block *checkBinary = funcOp.addBlock();
           builder.create<cf::CondBranchOp>(loc, isUnary, doUnary, checkBinary);
 
           builder.setInsertionPointToStart(doUnary);
-          Block *gpuBranch = funcOp.addBlock();
-          Block *cpuBranch = funcOp.addBlock();
-          builder.create<cf::CondBranchOp>(loc, isGpu, gpuBranch, cpuBranch);
-
-          builder.setInsertionPointToStart(gpuBranch);
-          if (!module.lookupSymbol("pic_gpu_dispatch_helper")) {
-              OpBuilder mb(module.getBodyRegion());
-              auto helperTy = builder.getFunctionType({i32Type, i32Type, i64Type}, {});
-              auto helperFunc = mb.create<func::FuncOp>(loc, "pic_gpu_dispatch_helper", helperTy);
-              helperFunc.setPrivate();
-          }
-          builder.create<func::CallOp>(loc, TypeRange{}, "pic_gpu_dispatch_helper", ValueRange{valNode, opNode, stateArg});
-          builder.create<cf::BranchOp>(loc, lHead);
-
-          builder.setInsertionPointToStart(cpuBranch);
           Value v0_64 = loadLiteralVal(valNode, valLabel);
           Value resVal = genInlineDispatch(builder, loc, impl, v0_64, c0_i32, stateArg, funcOp, userOps, c0_i64);
           Value opP_aux2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, opNode, builder.getI8IntegerAttr(2));
@@ -2590,21 +2543,6 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
           Value callArg0_64 = builder.create<arith::SelectOp>(loc, isCall, v0_64_bin, firstArg_64);
           Value callArg1_64 = builder.create<arith::SelectOp>(loc, isCall, valNode_aux2_64, v0_64_bin);
 
-          Block *gpuBranchBin = funcOp.addBlock();
-          Block *cpuBranchBin = funcOp.addBlock();
-          builder.create<cf::CondBranchOp>(loc, isGpu, gpuBranchBin, cpuBranchBin);
-
-          builder.setInsertionPointToStart(gpuBranchBin);
-          if (!module.lookupSymbol("pic_gpu_dispatch_helper")) {
-              OpBuilder mb(module.getBodyRegion());
-              auto helperTy = builder.getFunctionType({i32Type, i32Type, i64Type}, {});
-              auto helperFunc = mb.create<func::FuncOp>(loc, "pic_gpu_dispatch_helper", helperTy);
-              helperFunc.setPrivate();
-          }
-          builder.create<func::CallOp>(loc, TypeRange{}, "pic_gpu_dispatch_helper", ValueRange{valNode, opNode, stateArg});
-          builder.create<cf::BranchOp>(loc, lHead);
-
-          builder.setInsertionPointToStart(cpuBranchBin);
           Value resValBin = genInlineDispatch(builder, loc, impl, callArg0_64, callArg1_64, stateArg, funcOp, userOps, c0_i64);
           Value callArg1_32 = builder.create<arith::SelectOp>(loc, isCall, valNode_aux2, v0);
           Value isSameBin = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, resValBin, callArg1_32);
