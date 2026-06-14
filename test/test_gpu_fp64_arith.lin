@@ -1,0 +1,33 @@
+// RUN: %linc build %s -o test_fp64_bin | FileCheck %s
+// RUN: %linc build %s --gpu -o test_fp64_bin_gpu | FileCheck %s --check-prefix=GPU
+// RUN: test -s test_fp64_bin_gpu.spv
+// RUN: spirv-val test_fp64_bin_gpu.spv
+
+// CHECK: Parsing Source:
+// CHECK: test_fp64_arith: func [
+// CHECK: Generated MLIR (before lowering):
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "fadd64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "fsub64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "fmul64", polarity = "-"}>
+// CHECK: "pic_graph.agent"() <{agentType = "omega", label = "fdiv64", polarity = "-"}>
+
+// GPU: Parsing Source:
+// GPU: test_fp64_arith: func [
+// GPU: Generated MLIR (before lowering):
+// GPU: "pic_graph.agent"() <{agentType = "omega", label = "fadd64", polarity = "-"}>
+// GPU: "pic_graph.agent"() <{agentType = "omega", label = "fsub64", polarity = "-"}>
+// GPU: "pic_graph.agent"() <{agentType = "omega", label = "fmul64", polarity = "-"}>
+// GPU: "pic_graph.agent"() <{agentType = "omega", label = "fdiv64", polarity = "-"}>
+
+import "std/math.lin"
+
+test_fp64_arith: func [
+    n [f64!]
+    return: [f64!]
+][
+    (fadd64 n n)
+    (fsub64 n n)
+    (fmul64 n n)
+    (fdiv64 n n)
+    n
+]

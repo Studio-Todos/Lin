@@ -26,6 +26,7 @@
 #include <set>
 #include <algorithm>
 #include <sstream>
+#include <optional>
 #include <unordered_map>
 #include <map>
 
@@ -58,7 +59,8 @@ struct PicRuntimeToSPIRVPass : public PassWrapper<PicRuntimeToSPIRVPass, Operati
         ArrayRef<mlir::spirv::Capability>{
             mlir::spirv::Capability::Shader,
             mlir::spirv::Capability::Int64,
-            mlir::spirv::Capability::AtomicStorage},
+            mlir::spirv::Capability::AtomicStorage,
+            mlir::spirv::Capability::Float64},
         ArrayRef<mlir::spirv::Extension>{},
         ctx);
     spirvModule->setAttr("vce_triple", vce);
@@ -353,6 +355,130 @@ struct PicRuntimeToSPIRVPass : public PassWrapper<PicRuntimeToSPIRVPass, Operati
           makeSSBOStore(b, netPtr, tA2, p2B);
           makeSSBOStore(b, netPtr, tB2, p2A);
         }, eb);
+
+    // 5) GPU-capable user ops (OP type nodes)
+    struct GpuUserOpInfo {
+        uint32_t hash;
+        enum OpKind { Add, Sub, Mul, SDiv, AddF, SubF, MulF, DivF };
+        OpKind kind;
+        bool isFloat;
+        unsigned bitWidth;
+    };
+    std::vector<GpuUserOpInfo> gpuUserOps;
+    if (auto gpuOpsAttr = module->getAttrOfType<DictionaryAttr>("pic.gpu_user_ops")) {
+        for (auto entry : gpuOpsAttr) {
+            StringRef labelName = entry.getName();
+            StringRef mlirText = entry.getValue().cast<StringAttr>().getValue();
+            uint32_t hash = opcodeForLabel(labelName);
+            auto payloadModule = parseSourceString<ModuleOp>(mlirText, ctx);
+            if (!payloadModule) continue;
+            auto tempFunc = payloadModule->lookupSymbol<func::FuncOp>("temp");
+            if (!tempFunc || tempFunc.getBody().empty()) continue;
+            std::optional<GpuUserOpInfo::OpKind> kind;
+            bool isFloat = false;
+            unsigned bitWidth = 32;
+            tempFunc.walk([&](Operation *walkOp) {
+                if (walkOp->hasTrait<OpTrait::IsTerminator>()) return;
+                if (isa<func::FuncOp>(walkOp)) return;
+                if (isa<arith::TruncIOp>(walkOp) || isa<arith::ExtUIOp>(walkOp) ||
+                    isa<arith::BitcastOp>(walkOp)) return;
+                if (isa<arith::ConstantOp>(walkOp)) return;
+                Type resultType = walkOp->getResult(0).getType();
+                if (resultType.isF32()) { isFloat = true; bitWidth = 32; }
+                if (resultType.isF64()) { isFloat = true; bitWidth = 64; }
+                if (resultType.isSignlessInteger(64)) bitWidth = 64;
+                if (isa<arith::AddIOp>(walkOp)) { kind = GpuUserOpInfo::Add; } else
+                if (isa<arith::SubIOp>(walkOp)) { kind = GpuUserOpInfo::Sub; } else
+                if (isa<arith::MulIOp>(walkOp)) { kind = GpuUserOpInfo::Mul; } else
+                if (isa<arith::DivSIOp>(walkOp)) { kind = GpuUserOpInfo::SDiv; } else
+                if (isa<arith::AddFOp>(walkOp)) { kind = GpuUserOpInfo::AddF; isFloat = true; } else
+                if (isa<arith::SubFOp>(walkOp)) { kind = GpuUserOpInfo::SubF; isFloat = true; } else
+                if (isa<arith::MulFOp>(walkOp)) { kind = GpuUserOpInfo::MulF; isFloat = true; } else
+                if (isa<arith::DivFOp>(walkOp)) { kind = GpuUserOpInfo::DivF; isFloat = true; }
+            });
+            if (kind) {
+                gpuUserOps.push_back({hash, *kind, isFloat, bitWidth});
+            }
+        }
+    }
+
+    if (!gpuUserOps.empty()) {
+        Value tOP = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(5));
+        Value isOpA = eb.create<mlir::spirv::IEqualOp>(loc, eb.getI1Type(), typeA, tOP);
+        Value isOpB = eb.create<mlir::spirv::IEqualOp>(loc, eb.getI1Type(), typeB, tOP);
+        Value isOpPair = eb.create<mlir::spirv::LogicalOrOp>(loc, eb.getI1Type(), isOpA, isOpB);
+
+        mlir::spirv::SelectionOp::createIfThen(loc,
+            eb.create<mlir::spirv::LogicalAndOp>(loc, eb.getI1Type(), notOob, isOpPair),
+            [&](OpBuilder &b) {
+              Value opNode = b.create<mlir::spirv::SelectOp>(loc, i32Type, isOpA, nodeA, nodeB);
+              Value valNode = b.create<mlir::spirv::SelectOp>(loc, i32Type, isOpA, nodeB, nodeA);
+              Value valMeta = b.create<mlir::spirv::SelectOp>(loc, i32Type, isOpA, metaB, metaA);
+              Value labelField = b.create<mlir::spirv::BitwiseAndOp>(loc, i32Type, valMeta,
+                  eb.create<mlir::spirv::ConstantOp>(loc, i32Type, b.getI32IntegerAttr(0xFFFFFF)));
+
+              Value valBase = b.create<mlir::spirv::IMulOp>(loc, i32Type, valNode, c4);
+              Value valP1 = makeSSBOLoad(b, netPtr,
+                  b.create<mlir::spirv::IAddOp>(loc, i32Type, valBase, c1));
+              Value valP2 = makeSSBOLoad(b, netPtr,
+                  b.create<mlir::spirv::IAddOp>(loc, i32Type, valBase, c2));
+
+              auto genOp = [&](GpuUserOpInfo &info) {
+                  auto makeArg = [&](Value portVal, bool isFloat, unsigned bw) -> Value {
+                      if (isFloat) {
+                          if (bw == 64)
+                              return b.create<mlir::spirv::BitcastOp>(loc, b.getF64Type(),
+                                  b.create<mlir::spirv::SConvertOp>(loc, b.getIntegerType(64), portVal));
+                          return b.create<mlir::spirv::BitcastOp>(loc, b.getF32Type(), portVal);
+                      }
+                      if (bw == 64)
+                          return b.create<mlir::spirv::SConvertOp>(loc, b.getIntegerType(64), portVal);
+                      return portVal;
+                  };
+                  auto makeResult = [&](Value result, bool isFloat, unsigned bw) -> Value {
+                      if (isFloat) {
+                          if (bw == 64)
+                              return b.create<mlir::spirv::UConvertOp>(loc, i32Type,
+                                  b.create<mlir::spirv::BitcastOp>(loc, b.getIntegerType(64), result));
+                          return b.create<mlir::spirv::BitcastOp>(loc, i32Type, result);
+                      }
+                      if (bw == 64)
+                          return b.create<mlir::spirv::UConvertOp>(loc, i32Type, result);
+                      return result;
+                  };
+
+                  Value arg1 = makeArg(valP1, info.isFloat, info.bitWidth);
+                  Value arg2 = makeArg(valP2, info.isFloat, info.bitWidth);
+                  Type baseType = info.isFloat
+                      ? Type(info.bitWidth == 64 ? b.getF64Type() : b.getF32Type())
+                      : Type(info.bitWidth == 64 ? b.getIntegerType(64) : i32Type);
+                  Value result;
+                  switch (info.kind) {
+                  case GpuUserOpInfo::Add:  result = b.create<mlir::spirv::IAddOp>(loc, baseType, arg1, arg2); break;
+                  case GpuUserOpInfo::Sub:  result = b.create<mlir::spirv::ISubOp>(loc, baseType, arg1, arg2); break;
+                  case GpuUserOpInfo::Mul:  result = b.create<mlir::spirv::IMulOp>(loc, baseType, arg1, arg2); break;
+                  case GpuUserOpInfo::SDiv: result = b.create<mlir::spirv::SDivOp>(loc, baseType, arg1, arg2); break;
+                  case GpuUserOpInfo::AddF: result = b.create<mlir::spirv::FAddOp>(loc, baseType, arg1, arg2); break;
+                  case GpuUserOpInfo::SubF: result = b.create<mlir::spirv::FSubOp>(loc, baseType, arg1, arg2); break;
+                  case GpuUserOpInfo::MulF: result = b.create<mlir::spirv::FMulOp>(loc, baseType, arg1, arg2); break;
+                  case GpuUserOpInfo::DivF: result = b.create<mlir::spirv::FDivOp>(loc, baseType, arg1, arg2); break;
+                  }
+                  Value result32 = makeResult(result, info.isFloat, info.bitWidth);
+
+                  Value opBase = b.create<mlir::spirv::IMulOp>(loc, i32Type, opNode, c4);
+                  makeSSBOStore(b, netPtr,
+                      b.create<mlir::spirv::IAddOp>(loc, i32Type, opBase, c1), result32);
+              };
+
+              for (auto &info : gpuUserOps) {
+                  Value hashConst = b.create<mlir::spirv::ConstantOp>(loc, i32Type, b.getI32IntegerAttr(info.hash));
+                  Value matches = b.create<mlir::spirv::IEqualOp>(loc, b.getI1Type(), labelField, hashConst);
+                  mlir::spirv::SelectionOp::createIfThen(loc, matches, [&](OpBuilder &sb) {
+                      genOp(info);
+                  }, b);
+              }
+            }, eb);
+    }
 
     eb.create<mlir::spirv::ReturnOp>(loc);
 
