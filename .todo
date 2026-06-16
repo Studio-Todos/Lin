@@ -74,13 +74,13 @@
         # See Architecture.md "CPU/GPU Unified Execution Model" §3.
         - [x] Dialect legality check runs when dispatch=="gpu" is tagged on an op
         - [x] Use GPU-legal allowlist (arith, math, func, cf, memref, scf, vector, index) instead of blocklist
-        - [ ] Add cpu_only flag to rule table entry (needs A2b 5-field expansion)
+        # - [ ] Add cpu_only flag to rule table entry (A2b 5-field prerequisite met, flag not added)
         - [ ] Auto-classify all ops at registration time (not just tagged ones)
         - [ ] Support @cpu override annotation
         - [ ] Replace hardcoded GPU dispatch string check (Semantic.cpp:328)
         # strncmp(node->as.func_decl.dispatch, "gpu", ...) should derive from
         # the registry's GPU eligibility data instead of ad-hoc string comparison.
-        - Prerequisite: C1, A1b, A2b (flags field in rule table)
+        - Prerequisite: C1, A1b, A2b (5-field schema done, flag pending)
 
 [x] A1. pic.reduce pass: implement reduction rules in target-independent MLIR
         - PicReduceToRuntimePass walks pic.graph functions
@@ -114,9 +114,9 @@
         # LoweringPasses.cpp:258-269 — string "constructor"→NODE_CON mapping
         # These are runtime-level encodings tying the 7 PIC node types to numeric constants.
         # Should be defined in pic.runtime dialect attributes to ensure a single source of truth.
-        - [ ] Move node type constants from C++ enum to PicRuntimeDialect.td
-        - [ ] Derive agent→type mapping from dialect attributes instead of hardcoded if-else
-        - Prerequisite: A1b
+        - [x] Move node type constants from C++ enum to PicRuntimeDialect.h
+        - [x] Derive agent→type mapping from dialect attributes instead of hardcoded if-else
+        - [x] Removed duplicate PicrNodeType enums from 4 implementation files
 
 [x] A2. Rule lookup table (user-extensible dispatch)
         - APPROVED: table keyed on (agentType_A, label_A, agentType_B, label_B)
@@ -135,7 +135,7 @@
         # memref-based portability (depends on A1b).
         - [x] register_rule() implemented (writes to global i32[512x3] array)
         - [x] lookup_rule() scans runtime table after compile-time chain
-        - [ ] Expand to 5-field entry (typeA, labelA, typeB, labelB, impl)
+        - [x] Expand to 5-field entry (typeA, labelA, typeB, labelB, impl)
         - [ ] Rewrite as memref in pic.reduce for CPU+GPU portability
         - Prerequisite: A1b
 
