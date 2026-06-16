@@ -131,50 +131,84 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         // Each conversion is a standalone function in
         // PicRuntimeToLLVMConversions.h — making this pass a thin
         // orchestrator that dispatches to the pattern library.
+        //
+        // The conversion functions no longer erase ops — the caller is
+        // responsible for replacement and erasure so that both the
+        // direct-dispatch path (here) and the RewritePattern path
+        // (PicRuntimeToLLVMConversionPatterns.h) can use them.
         // ============================================================
         for (auto* o : nodes) {
             OpBuilder ob(o);
-            convertAllocNodeOp(ob, cast<pic::runtime::AllocNodeOp>(o), stateArg, f);
+            auto op = cast<pic::runtime::AllocNodeOp>(o);
+            Value result = convertAllocNodeOp(ob, op, stateArg, f);
+            op.getResult().replaceAllUsesWith(result);
+            op.erase();
         }
         for (auto* o : setPorts) {
             OpBuilder ob(o);
-            convertSetPortOp(ob, cast<pic::runtime::SetPortOp>(o), stateArg);
+            auto op = cast<pic::runtime::SetPortOp>(o);
+            convertSetPortOp(ob, op, stateArg);
+            op.erase();
         }
         for (auto* o : getPorts) {
             OpBuilder ob(o);
-            convertGetPortOp(ob, cast<pic::runtime::GetPortOp>(o), stateArg);
+            auto op = cast<pic::runtime::GetPortOp>(o);
+            Value result = convertGetPortOp(ob, op, stateArg);
+            op.getResult().replaceAllUsesWith(result);
+            op.erase();
         }
         for (auto* o : getPortsDynamic) {
             OpBuilder ob(o);
-            convertGetPortDynamicOp(ob, cast<pic::runtime::GetPortDynamicOp>(o), stateArg);
+            auto op = cast<pic::runtime::GetPortDynamicOp>(o);
+            Value result = convertGetPortDynamicOp(ob, op, stateArg);
+            op.getResult().replaceAllUsesWith(result);
+            op.erase();
         }
         for (auto* o : links) {
             OpBuilder ob(o);
-            convertLinkOp(ob, cast<pic::runtime::LinkOp>(o), stateArg, f);
+            auto op = cast<pic::runtime::LinkOp>(o);
+            convertLinkOp(ob, op, stateArg, f);
+            op.erase();
         }
         for (auto* o : pushRedexs) {
             OpBuilder ob(o);
-            convertPushRedexOp(ob, cast<pic::runtime::PushRedexOp>(o), stateArg);
+            auto op = cast<pic::runtime::PushRedexOp>(o);
+            convertPushRedexOp(ob, op, stateArg);
+            op.erase();
         }
         for (auto* o : popRedexs) {
             OpBuilder ob(o);
-            convertPopRedexOp(ob, cast<pic::runtime::PopRedexOp>(o), stateArg, f);
+            auto op = cast<pic::runtime::PopRedexOp>(o);
+            auto results = convertPopRedexOp(ob, op, stateArg, f);
+            op.getResult(0).replaceAllUsesWith(results[0]);
+            op.getResult(1).replaceAllUsesWith(results[1]);
+            op.getResult(2).replaceAllUsesWith(results[2]);
+            op.erase();
         }
         for (auto* o : getHistorys) {
             OpBuilder ob(o);
-            convertGetHistoryOp(ob, cast<pic::runtime::GetHistoryOp>(o), stateArg);
+            auto op = cast<pic::runtime::GetHistoryOp>(o);
+            Value result = convertGetHistoryOp(ob, op, stateArg);
+            op.getResult().replaceAllUsesWith(result);
+            op.erase();
         }
         for (auto* o : setHistorys) {
             OpBuilder ob(o);
-            convertSetHistoryOp(ob, cast<pic::runtime::SetHistoryOp>(o), stateArg);
+            auto op = cast<pic::runtime::SetHistoryOp>(o);
+            convertSetHistoryOp(ob, op, stateArg);
+            op.erase();
         }
         for (auto* o : uncomputeSweeps) {
             OpBuilder ob(o);
-            convertUncomputeSweepOp(ob, cast<pic::runtime::UncomputeSweepOp>(o), stateArg, f);
+            auto op = cast<pic::runtime::UncomputeSweepOp>(o);
+            convertUncomputeSweepOp(ob, op, stateArg, f);
+            op.erase();
         }
         for (auto* o : checkpoints) {
             OpBuilder ob(o);
-            convertCheckpointBoundaryOp(ob, cast<pic::runtime::CheckpointBoundaryOp>(o), stateArg);
+            auto op = cast<pic::runtime::CheckpointBoundaryOp>(o);
+            convertCheckpointBoundaryOp(ob, op, stateArg);
+            op.erase();
         }
     });
 

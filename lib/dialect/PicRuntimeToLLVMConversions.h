@@ -12,6 +12,11 @@
 using namespace mlir;
 using namespace mlir::pic::runtime;
 
+// =========================================================================
+// Helper functions used by the per-op conversion functions below.
+// These emit LLVM dialect ops directly.
+// =========================================================================
+
 static void genNonBarrierLink(OpBuilder &ob, Location loc, Value p1, Value p2, Value stateArg, func::FuncOp &f) {
     auto i32Type = ob.getI32Type();
     auto i64Type = ob.getI64Type();
@@ -171,7 +176,17 @@ static void genLinkPorts(OpBuilder &ob, Location loc, Value p1, Value p2, Value 
     ob.setInsertionPointToStart(cont);
 }
 
-static void convertAllocNodeOp(OpBuilder &ob, pic::runtime::AllocNodeOp allocOp, Value stateArg, func::FuncOp &f) {
+// =========================================================================
+// Per-op conversion functions (one per pic_runtime operation).
+// These are called from Pass_PicRuntimeToLLVM.cpp and from the
+// RewritePattern wrappers in PicRuntimeToLLVMConversionPatterns.h.
+//
+// NOTE: These functions do NOT erase the op — the caller is responsible
+// for replacement and erasure via replaceAllUsesWith+erase (direct
+// dispatch) or PatternRewriter::replaceOp/eraseOp (pattern path).
+// =========================================================================
+
+static Value convertAllocNodeOp(OpBuilder &ob, pic::runtime::AllocNodeOp allocOp, Value stateArg, func::FuncOp &f) {
     auto i32Type = ob.getI32Type();
     auto i64Type = ob.getI64Type();
     auto ptrType = LLVM::LLVMPointerType::get(ob.getContext());
@@ -222,8 +237,7 @@ static void convertAllocNodeOp(OpBuilder &ob, pic::runtime::AllocNodeOp allocOp,
         ob.create<LLVM::StoreOp>(loc, valWord1, gep1);
     }
 
-    allocOp.getResult().replaceAllUsesWith(nIdx);
-    allocOp.erase();
+    return nIdx;
 }
 
 static void convertSetPortOp(OpBuilder &ob, pic::runtime::SetPortOp setOp, Value stateArg) {
@@ -239,10 +253,9 @@ static void convertSetPortOp(OpBuilder &ob, pic::runtime::SetPortOp setOp, Value
     Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
     Value offset = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2))), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(pIdx)));
     ob.create<LLVM::StoreOp>(loc, val, ob.create<LLVM::GEPOp>(loc, ptrType, i32Type, net, ValueRange{offset}));
-    setOp.erase();
 }
 
-static void convertGetPortOp(OpBuilder &ob, pic::runtime::GetPortOp getOp, Value stateArg) {
+static Value convertGetPortOp(OpBuilder &ob, pic::runtime::GetPortOp getOp, Value stateArg) {
     auto i32Type = ob.getI32Type();
     auto i64Type = ob.getI64Type();
     auto ptrType = LLVM::LLVMPointerType::get(ob.getContext());
@@ -255,11 +268,10 @@ static void convertGetPortOp(OpBuilder &ob, pic::runtime::GetPortOp getOp, Value
     Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
     Value offset = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2))), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(pIdx)));
     Value val32 = ob.create<LLVM::LoadOp>(loc, i32Type, ob.create<LLVM::GEPOp>(loc, ptrType, i32Type, net, ValueRange{offset}));
-    getOp.getResult().replaceAllUsesWith(val32);
-    getOp.erase();
+    return val32;
 }
 
-static void convertGetPortDynamicOp(OpBuilder &ob, pic::runtime::GetPortDynamicOp getOp, Value stateArg) {
+static Value convertGetPortDynamicOp(OpBuilder &ob, pic::runtime::GetPortDynamicOp getOp, Value stateArg) {
     auto i32Type = ob.getI32Type();
     auto i64Type = ob.getI64Type();
     auto ptrType = LLVM::LLVMPointerType::get(ob.getContext());
@@ -273,15 +285,13 @@ static void convertGetPortDynamicOp(OpBuilder &ob, pic::runtime::GetPortDynamicO
     Value pIdx64 = safeZExt(ob, loc, i64Type, pIdx);
     Value offset = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2))), pIdx64);
     Value val32 = ob.create<LLVM::LoadOp>(loc, i32Type, ob.create<LLVM::GEPOp>(loc, ptrType, i32Type, net, ValueRange{offset}));
-    getOp.getResult().replaceAllUsesWith(val32);
-    getOp.erase();
+    return val32;
 }
 
 static void convertLinkOp(OpBuilder &ob, pic::runtime::LinkOp linkOp, Value stateArg, func::FuncOp &f) {
     Value p1 = linkOp.getOperand(0);
     Value p2 = linkOp.getOperand(1);
     genLinkPorts(ob, linkOp.getLoc(), p1, p2, stateArg, f);
-    linkOp.erase();
 }
 
 static void convertPushRedexOp(OpBuilder &ob, pic::runtime::PushRedexOp pushOp, Value stateArg) {
@@ -312,10 +322,9 @@ static void convertPushRedexOp(OpBuilder &ob, pic::runtime::PushRedexOp pushOp, 
     ob.create<LLVM::BrOp>(loc, cont);
 
     ob.setInsertionPointToStart(cont);
-    pushOp.erase();
 }
 
-static void convertPopRedexOp(OpBuilder &ob, pic::runtime::PopRedexOp popOp, Value stateArg, func::FuncOp &f) {
+static std::array<Value, 3> convertPopRedexOp(OpBuilder &ob, pic::runtime::PopRedexOp popOp, Value stateArg, func::FuncOp &f) {
     auto i32Type = ob.getI32Type();
     auto i64Type = ob.getI64Type();
     auto i1Type = ob.getI1Type();
@@ -410,13 +419,10 @@ static void convertPopRedexOp(OpBuilder &ob, pic::runtime::PopRedexOp popOp, Val
     ob.create<LLVM::BrOp>(loc, ValueRange{trueVal, nA, nB}, cont);
 
     ob.setInsertionPointToStart(cont);
-    popOp.getResult(0).replaceAllUsesWith(finalValid);
-    popOp.getResult(1).replaceAllUsesWith(finalA);
-    popOp.getResult(2).replaceAllUsesWith(finalB);
-    popOp.erase();
+    return {finalValid, finalA, finalB};
 }
 
-static void convertGetHistoryOp(OpBuilder &ob, pic::runtime::GetHistoryOp histOp, Value stateArg) {
+static Value convertGetHistoryOp(OpBuilder &ob, pic::runtime::GetHistoryOp histOp, Value stateArg) {
     auto i32Type = ob.getI32Type();
     auto i64Type = ob.getI64Type();
     auto ptrType = LLVM::LLVMPointerType::get(ob.getContext());
@@ -429,8 +435,7 @@ static void convertGetHistoryOp(OpBuilder &ob, pic::runtime::GetHistoryOp histOp
     Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
     Value offset = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1))), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(wIdx)));
     Value val = ob.create<LLVM::LoadOp>(loc, i64Type, ob.create<LLVM::GEPOp>(loc, ptrType, i64Type, historyNet, ValueRange{offset}));
-    histOp.getResult().replaceAllUsesWith(val);
-    histOp.erase();
+    return val;
 }
 
 static void convertSetHistoryOp(OpBuilder &ob, pic::runtime::SetHistoryOp histOp, Value stateArg) {
@@ -447,7 +452,6 @@ static void convertSetHistoryOp(OpBuilder &ob, pic::runtime::SetHistoryOp histOp
     Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
     Value offset = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1))), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(wIdx)));
     ob.create<LLVM::StoreOp>(loc, val, ob.create<LLVM::GEPOp>(loc, ptrType, i64Type, historyNet, ValueRange{offset}));
-    histOp.erase();
 }
 
 static void convertUncomputeSweepOp(OpBuilder &ob, pic::runtime::UncomputeSweepOp sweepOp, Value stateArg, func::FuncOp &f) {
@@ -477,7 +481,6 @@ static void convertUncomputeSweepOp(OpBuilder &ob, pic::runtime::UncomputeSweepO
     ob.create<LLVM::StoreOp>(loc, metaVal, ob.create<LLVM::GEPOp>(loc, ptrType, i32Type, net, ValueRange{off3}));
 
     genLinkPorts(ob, loc, rPort0, boundaryId, stateArg, f);
-    sweepOp.erase();
 }
 
 static void convertCheckpointBoundaryOp(OpBuilder &ob, pic::runtime::CheckpointBoundaryOp cpOp, Value stateArg) {
@@ -497,7 +500,6 @@ static void convertCheckpointBoundaryOp(OpBuilder &ob, pic::runtime::CheckpointB
     Value checkpointVal = ob.create<LLVM::ShlOp>(loc, i64Type, countVal, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(32)));
     checkpointVal = ob.create<LLVM::OrOp>(loc, i64Type, checkpointVal, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1)));
     ob.create<LLVM::AtomicRMWOp>(loc, LLVM::AtomicBinOp::_or, checkpointAddr, checkpointVal, LLVM::AtomicOrdering::seq_cst);
-    cpOp.erase();
 }
 
 #endif // PIC_RUNTIME_TO_LLVM_CONVERSIONS_H

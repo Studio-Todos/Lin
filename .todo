@@ -574,13 +574,15 @@
           - Requires robust string processing, file I/O, and MLIR bindings in Lin
           - Goal: A self-hosting compiler that leverages Lin's own parallel reversible runtime
 
-[/] 31. Unified CPU/GPU reduction pipeline via pic.reduce 🟡
+[x] 31. Unified CPU/GPU reduction pipeline via pic.reduce 🟡
           # Progress: PicRuntimeToSPIRVPass expanded with all base rules (RVEC, ERA, DUP, ANN),
           # GPU worker_thread dispatches ALL pairs to GPU via pic_gpu_dispatch_helper.
           # CPU path unchanged. Hand-rolled LLVM builder code extracted into
           # PicRuntimeToLLVMConversions.h — 11 standalone mechanical conversion functions
-          # covering all pic_runtime ops. Stale LoweringPasses.cpp (3226 lines) deleted.
-          # Remaining: wrap as proper RewritePatterns, add thin SPIR-V sibling.
+          # covering all pic_runtime ops, now refactored to NOT erase the op (the caller
+          # handles erasure via replaceAllUsesWith+erase or PatternRewriter::replaceOp/eraseOp).
+          # PicRuntimeToLLVMConversionPatterns.h created with 11 OpRewritePattern classes,
+          # one per pic_runtime op type. Stale LoweringPasses.cpp (3226 lines) deleted.
           #
           #   pic.reduce (scf + arith + memref)
           #      └─> PicRuntimeToLLVMPass   → LLVM IR  → CPU binary
@@ -599,12 +601,15 @@
           - A4b: atomic queue via memref.atomic_rmw, safe under MPMC (see A4b)
           - [x] Add PicRuntimeToSPIRVPass as thin SPIR-V sibling of PicRuntimeToLLVMPass
           - [x] Extract hand-rolled LLVM builder code into standalone conversion functions
-                # PicRuntimeToLLVMConversions.h created with 11 mechanical conversion
-                # functions (one per pic_runtime op type). PicRuntimeToLLVMPass now
-                # dispatches to these functions instead of inline Builder code.
-                # Next step: wrap as proper MLIR RewritePattern for DialectConversion.
           - [x] Remove stale LoweringPasses.cpp (3226 lines of dead code)
-          - [ ] Wrap conversion functions as proper MLIR RewritePatterns for DialectConversion
+          - [x] Wrap conversion functions as proper MLIR RewritePatterns for DialectConversion
+                # PicRuntimeToLLVMConversions.h refactored: functions no longer erase
+                # the op internally; they return replacement values (or void). Callers
+                # handle erasure. PicRuntimeToLLVMConversionPatterns.h created with 11
+                # OpRewritePattern subclasses. Each pattern derives stateArg from the
+                # parent func::FuncOp and uses PatternRewriter::replaceOp/eraseOp.
+                # populatePicRuntimeToLLVMConversionPatterns() helper for registration.
+                # Can be used via applyPatternsAndFoldGreedily. 170/170 tests pass.
 
 [ ] 32. GPU mirror kernel — backward cleanup pass 🟡
         # PICR. Prerequisite: items 20, 31, A8.
