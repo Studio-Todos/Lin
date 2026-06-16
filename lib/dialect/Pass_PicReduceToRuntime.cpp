@@ -53,7 +53,7 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
         }
     };
 
-    declFunc("lookup_rule", i32Type, {i32Type, i32Type});
+    declFunc("lookup_rule", i32Type, {i32Type, i32Type, i32Type, i32Type});
     declFunc("get_num_args", i32Type, {i32Type});
     declFunc("is_gpu_op", i1Type, {i32Type});
     declFunc("dispatch_user_op", i64Type, {i32Type, i64Type, i64Type, i64Type, i64Type, i32Type, i32Type, i64Type});
@@ -172,8 +172,8 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     builder.create<cf::BranchOp>(loc, lHead);
 
     builder.setInsertionPointToStart(checkDispatch);
-    Value implA = builder.create<func::CallOp>(loc, i32Type, "lookup_rule", ValueRange{labelA, labelB}).getResult(0);
-    Value implB = builder.create<func::CallOp>(loc, i32Type, "lookup_rule", ValueRange{labelB, labelA}).getResult(0);
+    Value implA = builder.create<func::CallOp>(loc, i32Type, "lookup_rule", ValueRange{nodeTypeA, labelA, nodeTypeB, labelB}).getResult(0);
+    Value implB = builder.create<func::CallOp>(loc, i32Type, "lookup_rule", ValueRange{nodeTypeB, labelB, nodeTypeA, labelA}).getResult(0);
     Value hasRuleA = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, implA, c0_i32);
     Value hasRuleB = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, implB, c0_i32);
     Value hasDispatch = builder.create<arith::OrIOp>(loc, hasRuleA, hasRuleB);

@@ -613,7 +613,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         constexpr int kRuleTableSize = 512;
         if (!module.lookupSymbol("__pic_rule_table")) {
             OpBuilder gb(module.getBodyRegion());
-            auto tblTy = LLVM::LLVMArrayType::get(i32Type, kRuleTableSize * 3);
+            auto tblTy = LLVM::LLVMArrayType::get(i32Type, kRuleTableSize * 5);
             // A2b fix: ArrayAttr is NOT a valid LLVM IR constant initializer.
             // Use an initializer region with LLVM::ZeroOp to produce zeroinitializer.
             auto tblGlobal = gb.create<LLVM::GlobalOp>(
@@ -633,15 +633,16 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         }
         auto genRegisterRule = [&]() {
             OpBuilder b(module.getBodyRegion());
-            auto fType = LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(builder.getContext()), {i32Type, i32Type, i32Type});
+            auto fType = LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(builder.getContext()), {i32Type, i32Type, i32Type, i32Type, i32Type});
             auto f = b.create<LLVM::LLVMFuncOp>(module.getLoc(), "register_rule", fType);
             Block *entry = f.addEntryBlock();
             OpBuilder eb(entry, entry->end());
             Location loc = module.getLoc();
-            Value keyA = entry->getArgument(0);
-            Value keyB = entry->getArgument(1);
-            Value impl = entry->getArgument(2);
-            // cnt = __pic_rule_count; if cnt >= 512 return;
+            Value typeA = entry->getArgument(0);
+            Value keyA = entry->getArgument(1);
+            Value typeB = entry->getArgument(2);
+            Value keyB = entry->getArgument(3);
+            Value impl = entry->getArgument(4);
             Value cntPtr = eb.create<LLVM::AddressOfOp>(loc, ptrType, "__pic_rule_count");
             Value cnt = eb.create<LLVM::LoadOp>(loc, i32Type, cntPtr);
             Value maxN = eb.create<LLVM::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(kRuleTableSize));
@@ -649,21 +650,22 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             Block *overflow = f.addBlock();
             Block *store  = f.addBlock();
             eb.create<LLVM::CondBrOp>(loc, full, overflow, store);
-            // overflow block — just return
             OpBuilder ob(overflow, overflow->end());
             ob.create<LLVM::ReturnOp>(loc, ValueRange{});
-            // store block — write entry and bump count
             OpBuilder sb(store, store->end());
             Value tblPtr = sb.create<LLVM::AddressOfOp>(loc, ptrType, "__pic_rule_table");
-            Value three = sb.create<LLVM::ConstantOp>(loc, i32Type, sb.getI32IntegerAttr(3));
-            Value base  = sb.create<LLVM::MulOp>(loc, i32Type, cnt, three);
+            Value five = sb.create<LLVM::ConstantOp>(loc, i32Type, sb.getI32IntegerAttr(5));
+            Value base  = sb.create<LLVM::MulOp>(loc, i32Type, cnt, five);
             Value base64 = safeZExt(sb, loc, i64Type, base);
             Value off1   = sb.create<LLVM::AddOp>(loc, i64Type, base64, sb.create<LLVM::ConstantOp>(loc, i64Type, sb.getI64IntegerAttr(1)));
             Value off2   = sb.create<LLVM::AddOp>(loc, i64Type, base64, sb.create<LLVM::ConstantOp>(loc, i64Type, sb.getI64IntegerAttr(2)));
-            sb.create<LLVM::StoreOp>(loc, keyA, sb.create<LLVM::GEPOp>(loc, ptrType, i32Type, tblPtr, ValueRange{base64}));
-            sb.create<LLVM::StoreOp>(loc, keyB, sb.create<LLVM::GEPOp>(loc, ptrType, i32Type, tblPtr, ValueRange{off1}));
-            sb.create<LLVM::StoreOp>(loc, impl, sb.create<LLVM::GEPOp>(loc, ptrType, i32Type, tblPtr, ValueRange{off2}));
-            // ++__pic_rule_count
+            Value off3   = sb.create<LLVM::AddOp>(loc, i64Type, base64, sb.create<LLVM::ConstantOp>(loc, i64Type, sb.getI64IntegerAttr(3)));
+            Value off4   = sb.create<LLVM::AddOp>(loc, i64Type, base64, sb.create<LLVM::ConstantOp>(loc, i64Type, sb.getI64IntegerAttr(4)));
+            sb.create<LLVM::StoreOp>(loc, typeA, sb.create<LLVM::GEPOp>(loc, ptrType, i32Type, tblPtr, ValueRange{base64}));
+            sb.create<LLVM::StoreOp>(loc, keyA, sb.create<LLVM::GEPOp>(loc, ptrType, i32Type, tblPtr, ValueRange{off1}));
+            sb.create<LLVM::StoreOp>(loc, typeB, sb.create<LLVM::GEPOp>(loc, ptrType, i32Type, tblPtr, ValueRange{off2}));
+            sb.create<LLVM::StoreOp>(loc, keyB, sb.create<LLVM::GEPOp>(loc, ptrType, i32Type, tblPtr, ValueRange{off3}));
+            sb.create<LLVM::StoreOp>(loc, impl, sb.create<LLVM::GEPOp>(loc, ptrType, i32Type, tblPtr, ValueRange{off4}));
             Value newCnt = sb.create<LLVM::AddOp>(loc, i32Type, cnt, sb.create<LLVM::ConstantOp>(loc, i32Type, sb.getI32IntegerAttr(1)));
             sb.create<LLVM::StoreOp>(loc, newCnt, cntPtr);
             sb.create<LLVM::ReturnOp>(loc, ValueRange{});
@@ -672,11 +674,13 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         
         auto genLookupRule = [&]() {
             OpBuilder b(module.getBodyRegion());
-            auto fType = LLVM::LLVMFunctionType::get(i32Type, {i32Type, i32Type});
+            auto fType = LLVM::LLVMFunctionType::get(i32Type, {i32Type, i32Type, i32Type, i32Type});
             auto f = b.create<LLVM::LLVMFuncOp>(module.getLoc(), "lookup_rule", fType);
             Block *entry = f.addEntryBlock();
-            Value opArg = entry->getArgument(0);
-            Value typeArg = entry->getArgument(1);
+            Value typeArgA = entry->getArgument(0);
+            Value labelArgA = entry->getArgument(1);
+            Value typeArgB = entry->getArgument(2);
+            Value labelArgB = entry->getArgument(3);
             
             OpBuilder eb(entry, entry->end());
             Location loc = module.getLoc();
@@ -717,17 +721,23 @@ std::string base = op.label.substr(0, op.label.size() - 2);
                     }
                 }
                 
-                auto addRuleMatch = [&](uint32_t keyOp, uint32_t keyType, uint32_t valImpl) {
+                auto addRuleMatch = [&](uint32_t typeA, uint32_t keyOp, uint32_t typeB, uint32_t keyType, uint32_t valImpl) {
                     Block *currBlock = nextBlock;
                     Block *matchBlock = f.addBlock();
                     nextBlock = f.addBlock();
                     
                     OpBuilder cb(currBlock, currBlock->end());
-                    Value cOp = cb.create<LLVM::ConstantOp>(loc, i32Type, cb.getI32IntegerAttr(keyOp));
-                    Value cType = cb.create<LLVM::ConstantOp>(loc, i32Type, cb.getI32IntegerAttr(keyType));
-                    Value opMatch = cb.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, opArg, cOp);
-                    Value typeMatch = cb.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, typeArg, cType);
-                    Value cond = cb.create<LLVM::AndOp>(loc, opMatch, typeMatch);
+                    Value cTypeA = cb.create<LLVM::ConstantOp>(loc, i32Type, cb.getI32IntegerAttr(typeA));
+                    Value cLabelA = cb.create<LLVM::ConstantOp>(loc, i32Type, cb.getI32IntegerAttr(keyOp));
+                    Value cTypeB = cb.create<LLVM::ConstantOp>(loc, i32Type, cb.getI32IntegerAttr(typeB));
+                    Value cLabelB = cb.create<LLVM::ConstantOp>(loc, i32Type, cb.getI32IntegerAttr(keyType));
+                    Value matchA1 = cb.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, typeArgA, cTypeA);
+                    Value matchA2 = cb.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, labelArgA, cLabelA);
+                    Value matchA = cb.create<LLVM::AndOp>(loc, matchA1, matchA2);
+                    Value matchB1 = cb.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, typeArgB, cTypeB);
+                    Value matchB2 = cb.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, labelArgB, cLabelB);
+                    Value matchB = cb.create<LLVM::AndOp>(loc, matchB1, matchB2);
+                    Value cond = cb.create<LLVM::AndOp>(loc, matchA, matchB);
                     cb.create<LLVM::CondBrOp>(loc, cond, matchBlock, nextBlock);
                     
                     OpBuilder mb(matchBlock, matchBlock->end());
@@ -735,34 +745,29 @@ std::string base = op.label.substr(0, op.label.size() - 2);
                 };
                 
                 if (!opName.empty() && !typeName.empty()) {
-                    addRuleMatch(opcodeForLabel(opName), opcodeForLabel(typeName), opcodeForLabel(op.label));
-                    addRuleMatch(opcodeForLabel(op.label), opcodeForLabel(typeName), opcodeForLabel(op.label));
+                    addRuleMatch(NODE_OP, opcodeForLabel(opName), NODE_OP, opcodeForLabel(typeName), opcodeForLabel(op.label));
+                    addRuleMatch(NODE_OP, opcodeForLabel(op.label), NODE_OP, opcodeForLabel(typeName), opcodeForLabel(op.label));
                     if (!originalBase.empty() && originalBase[0] == 'f') {
-                        addRuleMatch(opcodeForLabel(originalBase), opcodeForLabel(typeName), opcodeForLabel(op.label));
+                        addRuleMatch(NODE_OP, opcodeForLabel(originalBase), NODE_OP, opcodeForLabel(typeName), opcodeForLabel(op.label));
                     }
                     if (typeName == "i64") {
-                        addRuleMatch(opcodeForLabel(op.label), opcodeForLabel("i32"), opcodeForLabel(op.label));
+                        addRuleMatch(NODE_OP, opcodeForLabel(op.label), NODE_OP, opcodeForLabel("i32"), opcodeForLabel(op.label));
                     }
                 }
-                addRuleMatch(opcodeForLabel(op.label), opcodeForLabel("call"), opcodeForLabel(op.label));
+                addRuleMatch(NODE_OP, opcodeForLabel(op.label), NODE_OP, opcodeForLabel("call"), opcodeForLabel(op.label));
             }
             
-            // A2b: after the compile-time chain, scan the runtime-registered rule table.
-            // This is a linear scan over __pic_rule_table[0..cnt-1] checking (keyA==opArg && keyB==typeArg).
-            Block *rtScanHead = nextBlock;  // fall-through from compile-time chain
-            Block *rtScanBody = f.addBlock(); // loop body (i < cnt check + compare)
-            Block *rtFound   = f.addBlock(); // match found
-            Block *rtMiss    = f.addBlock(); // no match
+            Block *rtScanHead = nextBlock;
+            Block *rtScanBody = f.addBlock();
+            Block *rtFound   = f.addBlock();
+            Block *rtMiss    = f.addBlock();
 
-            // rtScanHead: initialise i=0, jump into body
             {
                 OpBuilder hb(rtScanHead, rtScanHead->end());
-                // add loop counter as block arg to rtScanBody
                 rtScanBody->addArgument(i32Type, loc);
                 Value zero32rt = hb.create<LLVM::ConstantOp>(loc, i32Type, hb.getI32IntegerAttr(0));
                 hb.create<LLVM::BrOp>(loc, ValueRange{zero32rt}, rtScanBody);
             }
-            // rtScanBody: if i >= cnt → miss; else compare; if match → found; else i+1 → body
             {
                 Value iVal = rtScanBody->getArgument(0);
                 OpBuilder bb(rtScanBody, rtScanBody->end());
@@ -771,35 +776,38 @@ std::string base = op.label.substr(0, op.label.size() - 2);
                 Value done    = bb.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::sge, iVal, cntVal);
                 Block *cmpBlk = f.addBlock();
                 bb.create<LLVM::CondBrOp>(loc, done, rtMiss, cmpBlk);
-                // cmpBlk: load entry[i] and compare
                 OpBuilder cb2(cmpBlk, cmpBlk->end());
                 Value tblPtr2 = cb2.create<LLVM::AddressOfOp>(loc, ptrType, "__pic_rule_table");
-                Value three2  = cb2.create<LLVM::ConstantOp>(loc, i32Type, cb2.getI32IntegerAttr(3));
-                Value base2   = cb2.create<LLVM::MulOp>(loc, i32Type, iVal, three2);
+                Value five2  = cb2.create<LLVM::ConstantOp>(loc, i32Type, cb2.getI32IntegerAttr(5));
+                Value base2   = cb2.create<LLVM::MulOp>(loc, i32Type, iVal, five2);
                 Value base64_2 = safeZExt(cb2, loc, i64Type, base2);
                 Value off1_2   = cb2.create<LLVM::AddOp>(loc, i64Type, base64_2, cb2.create<LLVM::ConstantOp>(loc, i64Type, cb2.getI64IntegerAttr(1)));
                 Value off2_2   = cb2.create<LLVM::AddOp>(loc, i64Type, base64_2, cb2.create<LLVM::ConstantOp>(loc, i64Type, cb2.getI64IntegerAttr(2)));
-                Value entKeyA = cb2.create<LLVM::LoadOp>(loc, i32Type, cb2.create<LLVM::GEPOp>(loc, ptrType, i32Type, tblPtr2, ValueRange{base64_2}));
-                Value entKeyB = cb2.create<LLVM::LoadOp>(loc, i32Type, cb2.create<LLVM::GEPOp>(loc, ptrType, i32Type, tblPtr2, ValueRange{off1_2}));
-                Value entImpl = cb2.create<LLVM::LoadOp>(loc, i32Type, cb2.create<LLVM::GEPOp>(loc, ptrType, i32Type, tblPtr2, ValueRange{off2_2}));
-                Value matchA  = cb2.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, entKeyA, opArg);
-                Value matchB  = cb2.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, entKeyB, typeArg);
+                Value off3_2   = cb2.create<LLVM::AddOp>(loc, i64Type, base64_2, cb2.create<LLVM::ConstantOp>(loc, i64Type, cb2.getI64IntegerAttr(3)));
+                Value off4_2   = cb2.create<LLVM::AddOp>(loc, i64Type, base64_2, cb2.create<LLVM::ConstantOp>(loc, i64Type, cb2.getI64IntegerAttr(4)));
+                Value entTypeA = cb2.create<LLVM::LoadOp>(loc, i32Type, cb2.create<LLVM::GEPOp>(loc, ptrType, i32Type, tblPtr2, ValueRange{base64_2}));
+                Value entKeyA = cb2.create<LLVM::LoadOp>(loc, i32Type, cb2.create<LLVM::GEPOp>(loc, ptrType, i32Type, tblPtr2, ValueRange{off1_2}));
+                Value entTypeB = cb2.create<LLVM::LoadOp>(loc, i32Type, cb2.create<LLVM::GEPOp>(loc, ptrType, i32Type, tblPtr2, ValueRange{off2_2}));
+                Value entKeyB = cb2.create<LLVM::LoadOp>(loc, i32Type, cb2.create<LLVM::GEPOp>(loc, ptrType, i32Type, tblPtr2, ValueRange{off3_2}));
+                Value entImpl = cb2.create<LLVM::LoadOp>(loc, i32Type, cb2.create<LLVM::GEPOp>(loc, ptrType, i32Type, tblPtr2, ValueRange{off4_2}));
+                Value matchA1  = cb2.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, entTypeA, typeArgA);
+                Value matchA2  = cb2.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, entKeyA, labelArgA);
+                Value matchA   = cb2.create<LLVM::AndOp>(loc, matchA1, matchA2);
+                Value matchB1  = cb2.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, entTypeB, typeArgB);
+                Value matchB2  = cb2.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, entKeyB, labelArgB);
+                Value matchB   = cb2.create<LLVM::AndOp>(loc, matchB1, matchB2);
                 Value matched = cb2.create<LLVM::AndOp>(loc, matchA, matchB);
-                // pass impl along as block arg to rtFound
                 rtFound->addArgument(i32Type, loc);
                 Block *nextIter = f.addBlock();
                 cb2.create<LLVM::CondBrOp>(loc, matched, rtFound, ValueRange{entImpl}, nextIter, ValueRange{});
-                // nextIter: i + 1 → body
                 OpBuilder nb(nextIter, nextIter->end());
                 Value iPlusOne = nb.create<LLVM::AddOp>(loc, i32Type, iVal, nb.create<LLVM::ConstantOp>(loc, i32Type, nb.getI32IntegerAttr(1)));
                 nb.create<LLVM::BrOp>(loc, ValueRange{iPlusOne}, rtScanBody);
             }
-            // rtFound: return the impl from block arg
             {
                 OpBuilder fb(rtFound, rtFound->end());
                 fb.create<LLVM::ReturnOp>(loc, ValueRange{rtFound->getArgument(0)});
             }
-            // rtMiss: return 0
             {
                 OpBuilder fb(rtMiss, rtMiss->end());
                 Value zero = fb.create<LLVM::ConstantOp>(loc, i32Type, fb.getI32IntegerAttr(0));

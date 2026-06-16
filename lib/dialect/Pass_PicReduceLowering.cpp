@@ -758,15 +758,20 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
           Value polA = builder.create<arith::ShRUIOp>(loc, metaA, c30_i32);
           Value polB = builder.create<arith::ShRUIOp>(loc, metaB, c30_i32);
 
+          Value typeValA = builder.create<arith::ShRUIOp>(loc, metaA, c24_i32);
+          Value typeValB = builder.create<arith::ShRUIOp>(loc, metaB, c24_i32);
+          Value nodeTypeA = builder.create<arith::AndIOp>(loc, typeValA, c0x3F_i32);
+          Value nodeTypeB = builder.create<arith::AndIOp>(loc, typeValB, c0x3F_i32);
+
           if (!module.lookupSymbol("lookup_rule")) {
               OpBuilder mb(module.getBodyRegion());
-              auto lookupTy = builder.getFunctionType({i32Type, i32Type}, i32Type);
+              auto lookupTy = builder.getFunctionType({i32Type, i32Type, i32Type, i32Type}, i32Type);
               auto lookupFunc = mb.create<func::FuncOp>(loc, "lookup_rule", lookupTy);
               lookupFunc.setPrivate();
           }
 
-          Value implA = builder.create<func::CallOp>(loc, i32Type, "lookup_rule", ValueRange{labelA, labelB}).getResult(0);
-          Value implB = builder.create<func::CallOp>(loc, i32Type, "lookup_rule", ValueRange{labelB, labelA}).getResult(0);
+          Value implA = builder.create<func::CallOp>(loc, i32Type, "lookup_rule", ValueRange{nodeTypeA, labelA, nodeTypeB, labelB}).getResult(0);
+          Value implB = builder.create<func::CallOp>(loc, i32Type, "lookup_rule", ValueRange{nodeTypeB, labelB, nodeTypeA, labelA}).getResult(0);
           Value hasRuleA = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, implA, c0_i32);
 
           Value opNode = builder.create<arith::SelectOp>(loc, hasRuleA, nodeA, nodeB);
