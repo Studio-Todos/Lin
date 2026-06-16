@@ -23,6 +23,7 @@
 #include <map>
 
 using namespace mlir;
+using namespace mlir::pic::runtime;
 
 namespace {
 
@@ -140,18 +141,7 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
             }
         } else val = opcodeForLabel(label);
 
-        uint8_t nodeType = NODE_OP; // Default to omega/op
-        if (agentType == "constructor") nodeType = NODE_CON;
-        else if (agentType == "destructor") nodeType = NODE_DES;
-        else if (agentType == "gamma") {
-            if (polVal == 0) nodeType = NODE_CON;
-            else if (polVal == 1) nodeType = NODE_DES;
-        }
-        else if (agentType == "delta") nodeType = NODE_DUP;
-        else if (agentType == "epsilon") nodeType = NODE_ERA;
-        else if (agentType == "history" || agentType == "H") nodeType = NODE_HIS;
-        else if (agentType == "log_bond" || agentType == "L") nodeType = NODE_LOG;
-        else if (agentType == "reverse_vector" || agentType == "R") nodeType = NODE_RVEC;
+        uint8_t nodeType = nodeTypeForAgent(agentType, polVal);
         
         uint8_t allocType = (polVal << 6) | nodeType;
         Value valConst = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(val));

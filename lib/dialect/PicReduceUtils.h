@@ -7,6 +7,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "llvm/ADT/StringRef.h"
+#include "PicRuntimeDialect.h"
 #include <string>
 #include <vector>
 
@@ -112,17 +113,6 @@ struct UserOp {
     std::string funcName;
     int numArgs;
     SmallVector<std::string> argTypes;
-};
-
-enum PicrNodeType {
-    NODE_CON = 1,
-    NODE_DES = 2,
-    NODE_DUP = 3,
-    NODE_ERA = 4,
-    NODE_OP  = 5,
-    NODE_HIS = 6,
-    NODE_LOG = 7,
-    NODE_RVEC = 8
 };
 
 #endif // PIC_REDUCE_UTILS_H

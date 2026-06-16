@@ -31,6 +31,7 @@
 #include <map>
 
 using namespace mlir;
+using namespace mlir::pic::runtime;
 
 namespace {
 
@@ -137,16 +138,8 @@ struct UserOp {
     SmallVector<std::string> argTypes;
 };
 
-enum PicrNodeType {
-    NODE_CON = 1,
-    NODE_DES = 2,
-    NODE_DUP = 3,
-    NODE_ERA = 4,
-    NODE_OP  = 5,
-    NODE_HIS = 6,
-    NODE_LOG = 7,
-    NODE_RVEC = 8
-};
+// Node type constants sourced from PicRuntimeDialect.h (NodeType enum).
+// Use nodeTypeForAgent() for agentType string → NodeType mapping.
 
 struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PicGraphToReducePass)
@@ -262,18 +255,7 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
             }
         } else val = opcodeForLabel(label);
 
-        uint8_t nodeType = NODE_OP; // Default to omega/op
-        if (agentType == "constructor") nodeType = NODE_CON;
-        else if (agentType == "destructor") nodeType = NODE_DES;
-        else if (agentType == "gamma") {
-            if (polVal == 0) nodeType = NODE_CON;
-            else if (polVal == 1) nodeType = NODE_DES;
-        }
-        else if (agentType == "delta") nodeType = NODE_DUP;
-        else if (agentType == "epsilon") nodeType = NODE_ERA;
-        else if (agentType == "history" || agentType == "H") nodeType = NODE_HIS;
-        else if (agentType == "log_bond" || agentType == "L") nodeType = NODE_LOG;
-        else if (agentType == "reverse_vector" || agentType == "R") nodeType = NODE_RVEC;
+        uint8_t nodeType = nodeTypeForAgent(agentType, polVal);
         
         uint8_t allocType = (polVal << 6) | nodeType;
         Value valConst = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(val));
@@ -2996,12 +2978,12 @@ struct PicRuntimeToSPIRVPass : public PassWrapper<PicRuntimeToSPIRVPass, Operati
     Value polB = eb.create<mlir::spirv::BitwiseAndOp>(loc, i32Type,
         eb.create<mlir::spirv::ShiftRightArithmeticOp>(loc, i32Type, metaB, c30), c3);
 
-    // Node type constants matching PicrNodeType enum
-    Value tCON  = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(1));
-    Value tDES  = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(2));
-    Value tDUP  = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(3));
-    Value tERA  = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(4));
-    Value tRVEC = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(8));
+    // Node type constants sourced from PicRuntimeDialect.h (NodeType enum)
+    Value tCON  = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(NODE_CON));
+    Value tDES  = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(NODE_DES));
+    Value tDUP  = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(NODE_DUP));
+    Value tERA  = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(NODE_ERA));
+    Value tRVEC = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(NODE_RVEC));
 
     // Type classification for each rule
     Value isConA = eb.create<mlir::spirv::IEqualOp>(loc, eb.getI1Type(), typeA, tCON);

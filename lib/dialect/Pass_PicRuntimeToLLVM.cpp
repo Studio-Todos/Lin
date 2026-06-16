@@ -23,6 +23,7 @@
 #include <map>
 
 using namespace mlir;
+using namespace mlir::pic::runtime;
 
 namespace {
 

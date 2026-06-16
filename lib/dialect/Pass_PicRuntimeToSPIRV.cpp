@@ -31,6 +31,7 @@
 #include <map>
 
 using namespace mlir;
+using namespace mlir::pic::runtime;
 
 namespace {
 
@@ -206,12 +207,12 @@ struct PicRuntimeToSPIRVPass : public PassWrapper<PicRuntimeToSPIRVPass, Operati
     Value polB = eb.create<mlir::spirv::BitwiseAndOp>(loc, i32Type,
         eb.create<mlir::spirv::ShiftRightArithmeticOp>(loc, i32Type, metaB, c30), c3);
 
-    // Node type constants matching PicrNodeType enum
-    Value tCON  = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(1));
-    Value tDES  = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(2));
-    Value tDUP  = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(3));
-    Value tERA  = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(4));
-    Value tRVEC = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(8));
+    // Node type constants sourced from PicRuntimeDialect.h (NodeType enum)
+    Value tCON  = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(NODE_CON));
+    Value tDES  = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(NODE_DES));
+    Value tDUP  = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(NODE_DUP));
+    Value tERA  = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(NODE_ERA));
+    Value tRVEC = eb.create<mlir::spirv::ConstantOp>(loc, i32Type, eb.getI32IntegerAttr(NODE_RVEC));
 
     // Type classification for each rule
     Value isConA = eb.create<mlir::spirv::IEqualOp>(loc, eb.getI1Type(), typeA, tCON);

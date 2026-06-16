@@ -109,7 +109,7 @@
 - [x] Create PicRuntimeToSPIRVPass for GPU target (supports RVEC, ERA, DUP, ANN rules)
          - Unblocks: item 31 (unified pipeline), 21b (multi-threading)
 
-[ ] A1c. Node type encodings are hardcoded C++ constants 🔴
+[x] A1c. Node type encodings are hardcoded C++ constants 🔴
         # LoweringPasses.cpp:138-147 — enum PicrNodeType { NODE_CON=1, NODE_DES=2, ... }
         # LoweringPasses.cpp:258-269 — string "constructor"→NODE_CON mapping
         # These are runtime-level encodings tying the 7 PIC node types to numeric constants.
