@@ -351,17 +351,17 @@
 
 ## 🟡 Tier 2 — Language Completeness
 
-[ ] 10b. Linearity of principal ports is not statically enforced 🟡
+[x] 10b. Linearity of principal ports is not statically enforced 🟡
         # Invariant 1 from the spec. There is no pass that verifies every principal port
         # connects to exactly one wire. The current implementation relies on programmer
         # discipline in Lowering.c. Known violation: proj_N dangling p2 (see item 4d).
         # Known risk: env_free() links unconsumed vars to ε, but if a var is used more
         # than the δ-chain accounts for, the extra reference leaves a double-connected port.
-        - Add a pic.graph verification pass: walk all AgentOps and assert each principal
-          port (p0) appears in exactly one LinkOp or WireOp in the same block
-        - Run this pass in debug builds after lowerExpression() completes
-        - Emit a structured diagnostic (file:line:col, var name) on violation
-        - Integrate into `linc check` subcommand
+        - [x] Add a pic.graph verification pass: walk all AgentOps and assert each principal
+          port (p0) appears in at most one ActivePairOp in the same block
+        - [x] Run this pass in debug builds after lowerExpression() completes
+        - [x] Emit a structured diagnostic (file:line:col, var name) on violation
+        - [x] Integrate into `linc build` and `linc test` pipeline
 
 [x] 11. Closure / captured variable support
         - Thread outer-scope bindings into inner γ⁺ function agents via aux ports ✅
