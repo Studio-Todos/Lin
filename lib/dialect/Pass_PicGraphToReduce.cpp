@@ -47,6 +47,11 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
       auto i64Type = builder.getI64Type();
       DenseMap<Value, Value> valueToPort;
 
+      // A8: Track boundary clusters, node indices, and origins for B4 cycle
+      int nextBoundaryId = 1;
+      DenseMap<int, SmallVector<Value>> boundaryToNodes;
+      DenseMap<int, SmallVector<std::string>> boundaryOrigins;
+
       auto getInsertPoint = [&](Operation *o) -> Operation* {
           Operation *curr = o;
           while (auto parent = curr->getParentOfType<pic::graph::BoundaryOp>()) {
@@ -147,6 +152,25 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
         Value valConst = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(val));
         auto alloc = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, allocType, valConst, builder.getBoolAttr(insideBoundary));
         Value nodeIdx = alloc.getIndex();
+
+        // A8: collect node indices and origins per boundary cluster
+        if (insideBoundary) {
+            Operation *bp = op->getParentOp();
+            while (bp && bp != funcOp) {
+                if (bp->getName().getStringRef() == "pic_graph.boundary") break;
+                bp = bp->getParentOp();
+            }
+            if (bp) {
+                auto it = boundaryToNodes.find((intptr_t)bp);
+                if (it == boundaryToNodes.end()) {
+                    boundaryToNodes[(intptr_t)bp] = SmallVector<Value>{nodeIdx};
+                    boundaryOrigins[(intptr_t)bp] = SmallVector<std::string>{label.str()};
+                } else {
+                    it->second.push_back(nodeIdx);
+                    boundaryOrigins[(intptr_t)bp].push_back(label.str());
+                }
+            }
+        }
         
         if ((label == "num" || label == "i32" || label == "i64" || label == "f64" || label == "bool" || label == "str") && (op.getValue() || op.getStrVal())) {
             if (label == "str") {
@@ -231,6 +255,31 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
               builder.create<pic::runtime::LinkOp>(op.getLoc(), safeTrunc(pA), safeTrunc(pB));
           }
       });
+
+      // A8: Set origins attr on each BoundaryOp from collected labels
+      funcOp.walk([&](pic::graph::BoundaryOp boundaryOp) {
+          auto it = boundaryOrigins.find((intptr_t)boundaryOp.getOperation());
+          if (it != boundaryOrigins.end() && !it->second.empty()) {
+              SmallVector<Attribute> originAttrs;
+              for (auto &s : it->second)
+                  originAttrs.push_back(builder.getStringAttr(s));
+              boundaryOp->setAttr("origins", builder.getArrayAttr(originAttrs));
+          }
+      });
+
+      // A8: Emit consolidated checkpoint_boundary + uncompute_sweep ops for each boundary cluster
+      for (auto &kv : boundaryToNodes) {
+          auto &nodeValues = kv.second;
+          if (!nodeValues.empty()) {
+              int bId = nextBoundaryId++;
+              builder.setInsertionPointToStart(&funcOp.getBody().front());
+              builder.create<pic::runtime::CheckpointBoundaryOp>(
+                  funcOp.getLoc(), builder.getI32IntegerAttr(bId), nodeValues);
+              Value bIdVal = builder.create<arith::ConstantOp>(
+                  funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(bId));
+              builder.create<pic::runtime::UncomputeSweepOp>(funcOp.getLoc(), bIdVal);
+          }
+      }
 
       SmallVector<Operation*> toErase;
       funcOp.walk([&](pic::graph::LinkOp op) {

@@ -115,7 +115,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             stateArg = f.getArgument(f.getNumArguments() - 1);
         }
         
-        SmallVector<Operation*> nodes, setPorts, getPorts, getPortsDynamic, links, pushRedexs, popRedexs, getHistorys, setHistorys, uncomputeSweeps;
+        SmallVector<Operation*> nodes, setPorts, getPorts, getPortsDynamic, links, pushRedexs, popRedexs, getHistorys, setHistorys, uncomputeSweeps, checkpoints;
         f.walk([&](Operation *o) {
             StringRef opName = o->getName().getStringRef();
             if (opName == "pic_runtime.alloc_node") nodes.push_back(o);
@@ -128,6 +128,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             else if (opName == "pic_runtime.get_history") getHistorys.push_back(o);
             else if (opName == "pic_runtime.set_history") setHistorys.push_back(o);
             else if (opName == "pic_runtime.uncompute_sweep") uncomputeSweeps.push_back(o);
+            else if (opName == "pic_runtime.checkpoint_boundary") checkpoints.push_back(o);
         });
 
         auto nonBarrierLink = [&](OpBuilder &ob, Location loc, Value p1, Value p2, Value as) {
@@ -311,11 +312,10 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             
             store(0, makePort(0)); store(1, makePort(1)); store(2, makePort(2)); store(3, metaValueVal);
 
-            bool isInsideBoundary = allocOp.getInsideBoundary().value_or(false);
-            if (isInsideBoundary || typeVal == NODE_DUP) {
+            if (typeVal == NODE_DUP) {
                 Value historyNet = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(5))}));
                 Value hBase = ob.create<LLVM::ShlOp>(o->getLoc(), i64Type, nIdx64, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(1)));
-                Value valWord0 = ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(1ULL << 32)); // bit 0 = inside_boundary is set
+                Value valWord0 = ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(1ULL << 32));
                 
                 Value gep0 = ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, historyNet, ValueRange{hBase});
                 ob.create<LLVM::StoreOp>(o->getLoc(), valWord0, gep0);
@@ -323,8 +323,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 Value hBasePlus1 = ob.create<LLVM::AddOp>(o->getLoc(), hBase, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(1)));
                 Value gep1 = ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, historyNet, ValueRange{hBasePlus1});
                 
-                // If it is a DUP node, initialize the counter to 2.
-                Value valWord1 = ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(typeVal == NODE_DUP ? 2 : 0));
+                Value valWord1 = ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(2));
                 ob.create<LLVM::StoreOp>(o->getLoc(), valWord1, gep1);
             }
 
@@ -558,6 +557,21 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             Value nIdx64 = safeZExt(ob, o->getLoc(), i64Type, nIdx);
             Value offset = ob.create<LLVM::AddOp>(o->getLoc(), i64Type, ob.create<LLVM::ShlOp>(o->getLoc(), i64Type, nIdx64, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(1))), ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(wIdx)));
             ob.create<LLVM::StoreOp>(o->getLoc(), val, ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, historyNet, ValueRange{offset}));
+            o->erase();
+        }
+        for (auto* o : checkpoints) {
+            OpBuilder ob(o);
+            int boundaryId = o->getAttrOfType<IntegerAttr>("boundary_id").getInt();
+            Value as = ob.create<LLVM::IntToPtrOp>(o->getLoc(), ptrType, stateArg);
+            Value historyNet = ob.create<LLVM::LoadOp>(o->getLoc(), ptrType,
+                ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, ptrType, as,
+                    ValueRange{ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(5))}));
+            Value bId = ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(boundaryId));
+            Value checkpointAddr = ob.create<LLVM::GEPOp>(o->getLoc(), ptrType, i64Type, historyNet, ValueRange{bId});
+            Value countVal = ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(o->getNumOperands()));
+            Value checkpointVal = ob.create<LLVM::ShlOp>(o->getLoc(), i64Type, countVal, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(32)));
+            checkpointVal = ob.create<LLVM::OrOp>(o->getLoc(), i64Type, checkpointVal, ob.create<LLVM::ConstantOp>(o->getLoc(), i64Type, builder.getI64IntegerAttr(1)));
+            ob.create<LLVM::AtomicRMWOp>(o->getLoc(), LLVM::AtomicBinOp::_or, checkpointAddr, checkpointVal, LLVM::AtomicOrdering::seq_cst);
             o->erase();
         }
     });

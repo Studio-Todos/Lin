@@ -159,10 +159,13 @@
         - [x] Audit alloc_node: reconcile I8Attr:$type with the meta-word encoding
         - [x] Make type field the single source of truth (remove set_port(3, meta))
 
-[/] A4. Boundary [ ] lowering
-        - BoundaryOp lowering exists in PicReduceToRuntimePass (wiring of inputs/outputs)
+[x] A4. Boundary lowering ✅
+        - CheckpointBoundaryOp added to PicRuntimeDialect.td (boundary_id + node_indices)
+        - Pass_PicGraphToReduce.cpp: boundary cluster tracking, assigns IDs, emits CheckpointBoundaryOp
+        - LLVM lowering: atomic-OR of consolidated bitmask to history_net[boundaryId]
+        - Per-node isInsideBoundary history write path removed (DUP nodes still get per-node history)
         - B1: containment — effect bubbling via wire polarity (conceptual, in docs)
-        - B2: merge_boundary — PicReduce_MergeBoundaryOp defined in .td but NEVER emitted
+        - [x] B2: merge_boundary — replaced by consolidated CheckpointBoundaryOp (atomic OR)
         - B3: collapse deferred to runtime E-graph hashing
         - getNextBoundaryId() — NOT FOUND in codebase (referenced in .todo only)
 
@@ -218,17 +221,18 @@
         - Outside boundaries: ε erasure path kept as the fast non-logging fallback
         - Inside boundaries: R signal is emitted instead of ε when a branch becomes dead
 
-[/] A8. Boundary history log and B4 Reversible Boundary Cycle 🟡
-        # Prerequisite: A4, A5, A6, A7.
-        # Partial: UncomputeSweepOp + history net infrastructure exists (LoweringPasses.cpp:1184-1246,
-        # lines 1110-1123). However, PicGraph_BoundaryOp was NOT extended with history_log/origins
-        # fields as specified — history is managed via separate GetHistoryOp/SetHistoryOp instead.
-        # B4 cycle concept documented in Architecture.md but not explicitly labeled in code.
+[x] A8. Boundary history log and B4 Reversible Boundary Cycle ✅
+        # Completed: PicGraph_BoundaryOp extended with origins attr and history_log region.
+        # B4 cycle steps: Isolate (checkpoint) + Rollback (uncompute_sweep) emitted per boundary.
         - [x] pic_runtime.uncompute_sweep op defined and lowered
         - [x] History log storage as separate "history net" buffer for boundary nodes
         - [x] GetHistoryOp / SetHistoryOp for boundary node metadata
-        - [ ] Extend PicGraph_BoundaryOp with history_log region and origins attr
-        - [ ] Implement B4 cycle steps explicitly in pass pipeline
+        - [x] Extend PicGraph_BoundaryOp with history_log region and origins attr
+        - [x] Implement B4 cycle steps in pass pipeline:
+              - Isolate: CheckpointBoundaryOp emitted per boundary cluster
+              - Exfiltrate: existing boundary wiring (inputs/outputs)
+              - Rollback: UncomputeSweepOp emitted after each CheckpointBoundaryOp
+              - Dissolve: boundary ops erased after lowering (existing behavior)
 
 ## 🔴 Tier 1 — High-Level Syntax & Semantics (Linden Alignment)
 
