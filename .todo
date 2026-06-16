@@ -59,7 +59,7 @@
 
 [x] C2. Formalize host-allocated arena — no malloc inside kernels 🔴
         # Architecture constraint: GPU device code cannot call malloc/free.
-        # CONFIRMED: all mallocs happen once at host startup (LoweringPasses.cpp:3041-3053).
+        # CONFIRMED: all mallocs happen once at host startup in main() (Pass_PicRuntimeToLLVM.cpp).
         # Inside kernel: LLVM::AtomicRMWOp::add for arena allocation — zero malloc calls.
         # See Architecture.md "CPU/GPU Unified Execution Model" §2.
         - [x] All arena allocations (net, queue, alloc counter) happen on HOST before kernel launch
@@ -88,19 +88,17 @@
         - Handles boundary merge (B2)
 
 [x] A1b. PicReduceToRuntimePass bypasses pic.reduce dialect (emits pic.runtime directly) 🔴
-        # OBSOLETE CLAIM: the old description said "runOnOperation() is literally {}".
-        # This is OUTDATED — the pass body is now ~600 lines (LoweringPasses.cpp:380-977)
-        # with a full worker_thread implementation using scf+arith+memref dialects.
+        # The pass body is in Pass_PicReduceToRuntime.cpp (~200 lines) with
+        # worker_thread using scf+arith+memref for reduction dispatch.
         #
-        # REMAINING ISSUE: the pass goes directly from pic.graph → pic.runtime ops,
-        # SKIPPING the pic.reduce dialect entirely. Dialect ops (annihilate, duplicate,
-        # erase, fire_op, log_bond, reverse_vector) exist in PicReduceDialect.td but
-        # are never emitted by any pass. PicRuntimeToLLVMPass handles both the pic.reduce
-        # logic AND the LLVM mechanical conversion in one pass, violating target-independence.
+        # PicRuntimeToLLVMPass was refactored: hand-rolled LLVM builder code
+        # extracted into PicRuntimeToLLVMConversions.h (11 mechanical conversion
+        # functions). The pass now dispatches to these functions.
         #
-        # FIX: split PicReduceToRuntimePass to emit pic.reduce ops, then let
-        # PicRuntimeToLLVMPass be a thin mechanical conversion of pic.runtime -> llvm.*
-        # (and eventually PicRuntimeToSPIRVPass for GPU).
+        # REMAINING: lower PicReduceToRuntimePass to emit pic.reduce dialect ops
+        # (annihilate, duplicate, erase, fire_op, etc.) instead of going directly
+        # from pic.graph → pic.runtime. This would let PicRuntimeToLLVMPass be
+        # a purely mechanical conversion of pic.runtime → llvm.*
         - [x] Implement PicReduceToRuntimePass::runOnOperation() using scf+arith+memref
         - [x] Emit pic.runtime ops (alloc_node, link, push_redex) ✓
         - [x] worker_thread contains redex dispatch, polarity decode, rule lookup, rules
@@ -127,8 +125,7 @@
         - Same table, different lowering for CPU (LLVM) vs GPU (SPIR-V)
 
 [ ] A2b. Rule table capacity is hardcoded to 100 entries 🟡
-        # LoweringPasses.cpp — register_rule was a no-op stub; lookup_rule was a compile-time
-        # chain only. Fixed (picr-priority-work): register_rule now writes to a global
+        # Pass_PicRuntimeToLLVM.cpp — register_rule writes to a global
         # i32[512×3] array (zeroinitializer via LLVM::ZeroOp region); lookup_rule falls
         # through to a linear scan of the runtime table after the compile-time chain.
         # Remaining: full 5-field scheme (typeA, labelA, typeB, labelB, impl) and
@@ -190,7 +187,7 @@
         - R node: principal(*), aux(next) — propagates through a subgraph forcing each
           encountered node to execute its rewrite rule in reverse
         - Update PicGraphDialect.td and PicGraphDialect.cpp
-        - Update node encoding constants in LoweringPasses.cpp (NODE_HIS, NODE_LOG, NODE_RVEC)
+        - [x] Update node encoding constants in Pass_PicRuntimeToLLVM.cpp / PicRuntimeDialect.h (NODE_HIS, NODE_LOG, NODE_RVEC)
         - Add to A2 rule lookup table: default dispatch entries for H, L, R interactions
 
 [x] A6. Reversible Annihilation — L-bond deposition in pic.reduce ✅
@@ -276,7 +273,7 @@
 [x] 4. mlir-op full pipeline connection
         - PARSE:    AST_MLIR_OP captured correctly (name + interface + payload) ✅
         - LOWER:    lowerExpression emits RegistryOp(name, payload) + ω agent ✅
-        - REGISTRY: RegistryOp collection exists in LoweringPasses.cpp (STR_ only) ⚠️
+        - REGISTRY: RegistryOp collection exists in Pass_PicRuntimeToLLVM.cpp (STR_ only) ⚠️
                     Fix: extend to collect non-STR_ entries from mlir-op declarations
         - DISPATCH: switch-case payload cloning machinery exists and works ✅
                     (used by std lib ops; user ops just need to reach it)
@@ -414,7 +411,7 @@
         #
         # ⚠️ SPEC DEVIATION: Architecture.md definitively eliminates ε ("Why no ε?
         # In PICR, the History node (H) replaces it."). However the current implementation
-        # retains NODE_ERA=4 (LoweringPasses.cpp:131) and uses ε for the non-boundary GC
+        # retains NODE_ERA=4 and uses ε for the non-boundary GC
         # fast path (line 358). ε outside boundaries is also emitted in item 4d fix
         # (proj_N eraser). The long-term goal per spec is to eliminate ε entirely, but
         # the current approach uses ε as a pragmatic fast path where full reversibility
@@ -422,7 +419,7 @@
         - Outside boundaries: ε erasure propagation remains the fast GC path (parallel sweep)
         - Inside boundaries: H nodes + R signal handle GC via B4 cycle (A8) — no ε emitted
         - Arena reset after full reduction epoch for long-running programs
-          # Currently: LoweringPasses.cpp:1733-1744 mallocs 128MB for net and queue once
+          # Currently: Pass_PicRuntimeToLLVM.cpp mallocs 128MB for net and queue once
           # at startup and never resets. Long-running programs will OOM as the allocator
           # (atomic fetch-add on alL, line 1741) never wraps or reclaims.
         - GPU GC: thousands of R/ε nodes propagate simultaneously via gpu.launch
@@ -434,15 +431,15 @@
 [/] 18b. Remove compiler-hardcoded types and primitives
         # Partial: runtime register_rule() mechanism exists for type-directed dispatch.
         # However, hardcoded type strings ("i32", "f32", "i64", "f64") still appear in
-        # Semantic.cpp:223-226, Lowering.c:561-588, LoweringPasses.cpp:441 (literal set),
-        # LoweringPasses.cpp:1575-1741 (user_op codegen), and Parser.c:767 (default return).
-        - [x] Runtime register_rule() mechanism exists (LoweringPasses.cpp:1916-1952)
+        # Semantic.cpp:223-226, Lowering.c:561-588, Pass_PicRuntimeToLLVM.cpp (literal set),
+        # Pass_PicRuntimeToLLVM.cpp (user_op codegen), and Parser.c:767 (default return).
+        - [x] Runtime register_rule() mechanism exists (Pass_PicRuntimeToLLVM.cpp)
         - [ ] Remove hardcoded type strings from compile-time type dispatch (Semantic.cpp)
         - [ ] Remove hardcoded type defaults from Parser.c (line 767)
         - [ ] Make type tags fully user-definable via std library
         - [ ] Derive literal type label list from std library instead of hardcoded set
-              # LoweringPasses.cpp:441 — {"num","i1","i8","i16","i32","i64","f32","f64","bool","str"}
-              # Also isLiteralLabel() check at LoweringPasses.cpp:305. These should be populated
+              # Pass_PicRuntimeToLLVM.cpp — {"num","i1","i8","i16","i32","i64","f32","f64","bool","str"}
+              # Also isLiteralLabel() check in Pass_PicRuntimeToLLVM.cpp. These should be populated
               # from std/types.lin declarations at registry time.
         - [ ] Replace Binary op dispatch table (kBinVariants) with registry lookup
               # Semantic.cpp:166-177 — 10 generic ops × 4 type variants (i32/i64/f32/f64)
@@ -466,7 +463,8 @@
         - [x] GPU path via PicRuntimeToSPIRVPass with multi-rule kernel
         - [x] GPU worker_thread dispatches all pairs to GPU kernel via pic_gpu_dispatch_helper
         - [x] Expanded SPIR-V kernel handles: RVEC, ERA, DUP, ANN rules
-        - [ ] Dedicated PicRuntimeToSPIRVPass as thin mechanical conversion
+        - [x] Dedicated PicRuntimeToSPIRVPass as thin mechanical conversion (created)
+        - [x] Stale LoweringPasses.cpp removed (dead code cleanup)
         - Target: CPU (std LLVM), general GPU (Vulkan/SPIR-V), shader GPU (perf)
 
 [x] 20. 128-bit node layout audit + PICR history extension 🔴
@@ -474,11 +472,10 @@
         # Prerequisite for A5–A8, items 21, R6.
         #
         # ⚠️ SPEC DEVIATION: Architecture.md specifies [type:8|label:24|port0:32|port1:32]
-        # packed into 128 bits. The current implementation at LoweringPasses.cpp:1086-1108
-        # stores 4×i64 (256 bits) with layout [port0:64|port1:64|port2:64|meta:64].
+        # packed into 128 bits. The current implementation stores 4×i64 (256 bits).
         # The meta field encodes (type:8, label:24) in lower 32 bits. This is DOUBLE the
         # spec size and uses a different field order. See item 20c to reconcile.
-        # PICR extension second-word IS implemented (LoweringPasses.cpp:1110-1123).
+        # PICR extension second-word IS implemented.
         - [x] Second word for boundary nodes (history net) implemented
         - [x] Shrink node from 256-bit (4×i64) to 128-bit per spec
         - [x] Reorder fields to match spec: [type|label|port0|port1] packing
@@ -514,8 +511,8 @@
           backward signals demand it — origins attr provides the routing table for split
 
 [x] 21b. Single-threaded reduction — pthread_create is declared but never called 🟡
-        # LoweringPasses.cpp:318 — pthread_create and pthread_join are declared as LLVM
-        # function declarations. But in main() (line 1746), reduction is run synchronously
+        # Pass_PicRuntimeToLLVM.cpp — pthread_create and pthread_join are declared as LLVM
+        # function declarations. But in main(), reduction is run synchronously
         # via a single direct call to worker_thread(as). No threads are ever spawned.
         # The spec says: "any two active pairs with no shared nodes fire simultaneously."
         # The current runtime is single-threaded and thus provably non-parallel.
@@ -552,7 +549,7 @@
 
 [x] 26. Snippet Lowering & Type Stability
           - Isolated snippet parsing via temporary modules and filtered declarations ✅
-          - Implemented type-suffix inference (`_f32`, `_i64`) in `Lowering.c` and `LoweringPasses.cpp` ✅
+          - Implemented type-suffix inference (`_f32`, `_i64`) in `Lowering.c` and `Pass_PicRuntimeToLLVM.cpp` ✅
           - Added bitcasting layer to bridge generic `i32` ports with snippet types (`f32`, `i1`, `i64`) ✅
           - Deduplicated RegistryOps to prevent switch-case collisions in dispatcher ✅
 
@@ -580,7 +577,10 @@
 [/] 31. Unified CPU/GPU reduction pipeline via pic.reduce 🟡
           # Progress: PicRuntimeToSPIRVPass expanded with all base rules (RVEC, ERA, DUP, ANN),
           # GPU worker_thread dispatches ALL pairs to GPU via pic_gpu_dispatch_helper.
-          # CPU path unchanged. Remaining: mechanical pic.reduce→pic.runtime conversion.
+          # CPU path unchanged. Hand-rolled LLVM builder code extracted into
+          # PicRuntimeToLLVMConversions.h — 11 standalone mechanical conversion functions
+          # covering all pic_runtime ops. Stale LoweringPasses.cpp (3226 lines) deleted.
+          # Remaining: wrap as proper RewritePatterns, add thin SPIR-V sibling.
           #
           #   pic.reduce (scf + arith + memref)
           #      └─> PicRuntimeToLLVMPass   → LLVM IR  → CPU binary
@@ -597,9 +597,14 @@
           - [x] C3: GPU allowlist (arith, math, func, cf, memref, scf, vector, index)
           - A3b: fix meta-word encoding and duplication rule in target-independent ops (A3b)
           - A4b: atomic queue via memref.atomic_rmw, safe under MPMC (see A4b)
-          - Add PicRuntimeToSPIRVPass as a thin sibling of PicRuntimeToLLVMPass
-          - Retire the hand-rolled LLVM builder code in PicRuntimeToLLVMPass; keep only
-            the mechanical dialect conversion (pic_runtime.* → llvm.*)
+          - [x] Add PicRuntimeToSPIRVPass as thin SPIR-V sibling of PicRuntimeToLLVMPass
+          - [x] Extract hand-rolled LLVM builder code into standalone conversion functions
+                # PicRuntimeToLLVMConversions.h created with 11 mechanical conversion
+                # functions (one per pic_runtime op type). PicRuntimeToLLVMPass now
+                # dispatches to these functions instead of inline Builder code.
+                # Next step: wrap as proper MLIR RewritePattern for DialectConversion.
+          - [x] Remove stale LoweringPasses.cpp (3226 lines of dead code)
+          - [ ] Wrap conversion functions as proper MLIR RewritePatterns for DialectConversion
 
 [ ] 32. GPU mirror kernel — backward cleanup pass 🟡
         # PICR. Prerequisite: items 20, 31, A8.
@@ -656,9 +661,9 @@
         - Integrate souper-pass (https://github.com/Studio-Todos/souper-pass) as a standalone superoptimization LLVM pass
         - Retains accuracy constraints / specifications during superoptimization and translation
 
-## ⚠️  Known Failing Tests (as of 2026-06-02)
+## ⚠️  Known Failing Tests (as of 2026-06-16)
 
-All 167 regression tests are now passing successfully! (167/167, 100%)
+All 170 regression tests are now passing successfully! (170/170, 100%)
 6 new tests added in picr-priority-work branch:
   test/test_queue_safety.lin         (A4b — MPMC queue)
   test/test_dup_linearity.lin        (A3b — duplication port linearity)
