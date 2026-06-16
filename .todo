@@ -147,16 +147,17 @@
         - Simplified dispatch to just annihilation vs commutation
         - Now uses rule lookup table from A2
 
-[/] A3b. Polarity is stored in meta word bits [31:30] but decoded inconsistently 🟡
-        # Partial fix (picr-priority-work): the duplication commutation bug is fixed —
-        # new clone nodes are now allocated with placeholder self-ports instead of copying
-        # the original aux port values into both clones (violating port linearity).
-        # Remaining: full meta-word audit and alloc_node reconciliation (needs A1b).
+[x] A3b. Polarity is stored in meta word bits [31:30] but decoded inconsistently 🟡
+        # Fixed: all hardcoded alloc type magic numbers replaced with named constants
+        # (ALLOC_OP, ALLOC_ERA, ALLOC_RVEC, ALLOC_LOG) derived from NodeType enum.
+        # L-bond meta word bug fixed (was ERA type, now LOG type).
+        # Remaining: alloc_node I8Attr:$type reconciliation with meta-word encoding
+        # is now consistent — $type encodes (pol<<6)|nodeType, meta word stores
+        # (type<<24)|label, and all read paths decode via (meta>>24)&0x3F.
         - [x] Fix duplication commutation: new δ clones get placeholder ports (self-ports)
               that are immediately overwritten by linkPorts before any thread observes them
-        - [ ] Audit alloc_node: reconcile I8Attr:$type with the meta-word encoding
-        - [ ] Make type field the single source of truth (remove set_port(3, meta))
-        - Prerequisite: A1b
+        - [x] Audit alloc_node: reconcile I8Attr:$type with the meta-word encoding
+        - [x] Make type field the single source of truth (remove set_port(3, meta))
 
 [/] A4. Boundary [ ] lowering
         - BoundaryOp lowering exists in PicReduceToRuntimePass (wiring of inputs/outputs)
