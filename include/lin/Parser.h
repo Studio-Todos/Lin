@@ -141,6 +141,8 @@ typedef struct AstNode {
             int payload_len;
             const char *dispatch;
             int dispatch_len;
+            const char *inverse_payload;
+            int inverse_len;
         } mlir_op;
         struct { const char *path; int length; struct AstNode *module_block; } import_stmt;
         struct { const char *name; int name_len; struct AstNode *module_block; } module;

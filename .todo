@@ -47,8 +47,13 @@
 [x] 2b. `while` loop lowering — thunk-wrapped body
 [x] 3. Beta-reduction (function application at runtime)
 [x] 4. mlir-op full pipeline connection (parse→lower→registry→dispatch→runtime)
-[ ] 4b. mlir-op inverse payload support (optional `inverse:` block for clean algebraic reversal)
-       Prerequisite: A7
+[x] 4b. mlir-op inverse payload support (optional `inverse:` block for clean algebraic reversal)
+       [x] Parser: parse `inverse: { ... }` block after forward payload
+       [x] Ast: print inverse payload in AST dump
+       [x] Lowering: store `inverse_payload` attribute on RegistryOp
+       [x] Pass_PicReduceLowering: generate inverse_user_op_<label> func from inverse payload
+       [x] Pass_PicRuntimeToLLVM: UserOp.inverseFuncName construction
+       [x] Runtime: dispatch to inverse function during uncompute sweep
 [x] 4c. `add`/`either` no longer hardcoded as non-free-vars in findFreeVars
 [x] 4d. proj_N field access — ε eraser attached to unused p2 port
 [x] 5. Syntax migration: word-call removed, parentheses required

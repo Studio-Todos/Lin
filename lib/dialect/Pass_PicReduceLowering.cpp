@@ -31,7 +31,7 @@ using namespace mlir;
 
 namespace {
 
-static Value genInlineDispatch(OpBuilder &builder, Location loc, Value impl, Value val0, Value val1, Value stateArg, func::FuncOp funcOp, const std::vector<UserOp> &userOps, Value c0_i64) {
+static Value genInlineDispatch(OpBuilder &builder, Location loc, Value impl, Value val0, Value val1, Value stateArg, func::FuncOp funcOp, const std::vector<UserOp> &userOps, Value c0_i64, bool useInverse = false) {
     auto i32Type = builder.getI32Type();
     auto i64Type = builder.getI64Type();
 
@@ -41,6 +41,7 @@ static Value genInlineDispatch(OpBuilder &builder, Location loc, Value impl, Val
     Block *currentBlock = builder.getInsertionBlock();
 
     for (const auto &op : userOps) {
+        if (useInverse && op.inverseFuncName.empty()) continue;
 
         Block *matchBlock = funcOp.addBlock();
         Block *nextBlock = funcOp.addBlock();
@@ -61,15 +62,15 @@ static Value genInlineDispatch(OpBuilder &builder, Location loc, Value impl, Val
         while (callArgs.size() < (size_t)op.numArgs) {
             callArgs.push_back(c0_i64);
         }
-        
-        Value res = mb.create<func::CallOp>(loc, i64Type, op.funcName, callArgs).getResult(0);
+
+        const std::string &fn = useInverse ? op.inverseFuncName : op.funcName;
+        Value res = mb.create<func::CallOp>(loc, i64Type, fn, callArgs).getResult(0);
         Value res32 = mb.create<arith::TruncIOp>(loc, i32Type, res);
         mb.create<cf::BranchOp>(loc, mergeBlock, ValueRange{res32});
 
         currentBlock = nextBlock;
     }
 
-    // Default fallback block if no user op matches
     OpBuilder fb(currentBlock, currentBlock->end());
     Value c0_i32 = fb.create<arith::ConstantOp>(loc, i32Type, fb.getI32IntegerAttr(0));
     fb.create<cf::BranchOp>(loc, mergeBlock, ValueRange{c0_i32});
@@ -520,7 +521,165 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
                 }
                 SmallVector<std::string> targets = {"cpu"};
                 if (isGpuCapable) targets.push_back("gpu");
-                userOps.push_back(UserOp(opcodeForLabel(label), label, funcName, (int)numArgs, argTypes, targets, forcedTarget));
+                
+                StringAttr invPAttr = op->getAttrOfType<StringAttr>("inverse_payload");
+                std::string inverseFuncName;
+                if (invPAttr) {
+                    std::string invLabel = label;
+                    std::string invFuncName = "inverse_user_op_" + invLabel;
+                    replaceAll(invFuncName, "-", "_");
+                    inverseFuncName = invFuncName;
+                    
+                    auto existingInv = module.lookupSymbol<func::FuncOp>(invFuncName);
+                    if (!existingInv) {
+                        OpBuilder bMod(module.getBodyRegion());
+                        auto invType = builder.getFunctionType(SmallVector<Type>(numArgs, i64Type), i64Type);
+                        auto invFunc = bMod.create<func::FuncOp>(module.getLoc(), invFuncName, invType);
+                        invFunc.setPrivate();
+                        
+                        Block *invEntry = invFunc.addEntryBlock();
+                        OpBuilder bInv(invEntry, invEntry->begin());
+                        
+                        std::string invPayload = invPAttr.getValue().str();
+                        std::string invArgS = "";
+                        for (unsigned i = 0; i < argNamesList.size(); ++i) {
+                            std::string cleanName = argNamesList[i];
+                            size_t underscorePos = cleanName.rfind('_');
+                            if (underscorePos != std::string::npos && underscorePos > 0) {
+                                cleanName = cleanName.substr(0, underscorePos);
+                            }
+                            std::string mlirType = argTypes[i];
+                            if (!isValidMLIRType(mlirType)) mlirType = "i32";
+                            invArgS += cleanName + " : " + mlirType;
+                            if (i < argNamesList.size() - 1) invArgS += ", ";
+                        }
+                        
+                        std::string invDecls = "";
+                        for (auto &d : existingDecls) {
+                            auto atPos = d.find("@");
+                            if (atPos != std::string::npos) {
+                                auto parenPos = d.find("(", atPos);
+                                if (parenPos != std::string::npos) {
+                                    std::string sym = d.substr(atPos, parenPos - atPos);
+                                    if (invPayload.find(sym) != std::string::npos) invDecls += d + "\n";
+                                }
+                            }
+                        }
+                        
+                        OwningOpRef<ModuleOp> invTempModule = ModuleOp::create(module.getLoc());
+                        {
+                            OpBuilder b(invTempModule->getBodyRegion());
+                            IRMapping m;
+                            for (auto &op : module.getBody()->getOperations()) {
+                                if (isa<func::FuncOp>(op) || isa<LLVM::LLVMFuncOp>(op) || isa<LLVM::GlobalOp>(op)) {
+                                    b.clone(op, m);
+                                }
+                            }
+                        }
+                        
+                        std::string invSnippetDecls = "";
+                        auto invAddDecl = [&](std::string name, std::string fullDecl) {
+                            bool found = false;
+                            for (auto &d : existingDecls) {
+                                if (d.find("@" + name + "(") != std::string::npos || d.find("@\"" + name + "\"(") != std::string::npos) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (!found) invSnippetDecls += fullDecl + "\n";
+                        };
+                        invAddDecl("printf", "llvm.func @printf(!llvm.ptr, ...) -> i32");
+                        invAddDecl("putchar", "llvm.func @putchar(i32) -> i32");
+                        invAddDecl("getchar", "llvm.func @getchar() -> i32");
+                        invAddDecl("scanf", "llvm.func @scanf(!llvm.ptr, ...) -> i32");
+                        invAddDecl("malloc", "llvm.func @malloc(i64) -> !llvm.ptr");
+                        invAddDecl("free", "llvm.func @free(!llvm.ptr)");
+                        invAddDecl("strlen", "llvm.func @strlen(!llvm.ptr) -> i64");
+                        invAddDecl("strcmp", "llvm.func @strcmp(!llvm.ptr, !llvm.ptr) -> i32");
+                        invAddDecl("lin_print_str", "llvm.func @lin_print_str(i64) -> i64");
+                        invAddDecl("sin", "llvm.func @sin(f64) -> f64");
+                        invAddDecl("cos", "llvm.func @cos(f64) -> f64");
+                        invAddDecl("tan", "llvm.func @tan(f64) -> f64");
+                        invAddDecl("asin", "llvm.func @asin(f64) -> f64");
+                        invAddDecl("acos", "llvm.func @acos(f64) -> f64");
+                        invAddDecl("atan", "llvm.func @atan(f64) -> f64");
+                        invAddDecl("exp", "llvm.func @exp(f64) -> f64");
+                        invAddDecl("log", "llvm.func @log(f64) -> f64");
+                        invAddDecl("sqrt", "llvm.func @sqrt(f64) -> f64");
+                        invAddDecl("pow", "llvm.func @pow(f64, f64) -> f64");
+                        
+                        // Coerce arguments to their declared types
+                        for (unsigned i = 0; i < argNamesList.size(); ++i) {
+                            if (i < invFunc.getNumArguments()) {
+                                Value arg = invEntry->getArgument(i);
+                                std::string cleanName = argNamesList[i];
+                                size_t underscorePos = cleanName.rfind('_');
+                                if (underscorePos != std::string::npos && underscorePos > 0) {
+                                    cleanName = cleanName.substr(0, underscorePos);
+                                }
+                                std::string mlirType = argTypes[i];
+                                if (!isValidMLIRType(mlirType)) mlirType = "i32";
+                                if (mlirType == "f32") {
+                                    Value trunc = bInv.create<arith::TruncIOp>(module.getLoc(), builder.getI32Type(), arg);
+                                    arg = bInv.create<arith::BitcastOp>(module.getLoc(), builder.getF32Type(), trunc);
+                                } else if (mlirType == "f64") {
+                                    arg = bInv.create<arith::BitcastOp>(module.getLoc(), builder.getF64Type(), arg);
+                                } else if (mlirType == "i1") {
+                                    arg = bInv.create<arith::TruncIOp>(module.getLoc(), builder.getI1Type(), arg);
+                                } else if (mlirType == "i32") {
+                                    arg = bInv.create<arith::TruncIOp>(module.getLoc(), builder.getI32Type(), arg);
+                                }
+                                // i64 needs no coercion
+                            }
+                        }
+                        
+                        // Build temp module string with the inverse payload
+                        std::string invModuleStr = "module attributes {llvm.data_layout = \"e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128\"} {\n";
+                        invModuleStr += "  func.func @temp(" + invArgS + ") -> i64 {\n";
+                        invModuleStr += invSnippetDecls;
+                        invModuleStr += "    " + invPayload + "\n";
+                        invModuleStr += "    func.return %0 : i64\n";
+                        invModuleStr += "  }\n";
+                        invModuleStr += "}\n";
+                        
+                        auto invSnippet = parseSourceString<ModuleOp>(invModuleStr, module.getContext());
+                        if (!invSnippet) {
+                            llvm::errs() << "PARSE ERROR: Failed to parse inverse payload for " << label << "\n";
+                            llvm::errs() << "--- invModuleStr ---\n" << invModuleStr << "\n--- end ---\n";
+                            abort();
+                        }
+                        
+                        func::FuncOp invTempFunc = invSnippet->lookupSymbol<func::FuncOp>("temp");
+                            if (invTempFunc && !invTempFunc.getBody().empty()) {
+                                Block *invTempEntry = &invTempFunc.getBody().front();
+                                bInv.setInsertionPointToStart(invEntry);
+                                
+                                IRMapping invMap;
+                                for (unsigned i = 0; i < invFunc.getNumArguments(); ++i) {
+                                    invMap.map(invTempEntry->getArgument(i), invEntry->getArgument(i));
+                                }
+                                
+                                Value invResult = bInv.create<arith::ConstantOp>(module.getLoc(), i64Type, builder.getI64IntegerAttr(0));
+                                for (auto &op : *invTempEntry) {
+                                    if (!isa<func::ReturnOp>(op)) {
+                                        Operation *cloned = bInv.clone(op, invMap);
+                                        if (op.getNumResults() > 0) {
+                                            invResult = invMap.lookupOrDefault(op.getResult(0));
+                                        }
+                                    }
+                                }
+                                bInv.create<func::ReturnOp>(module.getLoc(), invResult);
+                            }
+                        
+                        if (invEntry->empty() || !invEntry->back().hasTrait<OpTrait::IsTerminator>()) {
+                            OpBuilder bTerm = OpBuilder::atBlockEnd(invEntry);
+                            Value zeroRet = bTerm.create<arith::ConstantOp>(module.getLoc(), i64Type, builder.getI64IntegerAttr(0));
+                            bTerm.create<func::ReturnOp>(module.getLoc(), zeroRet);
+                        }
+                    }
+                }
+                
+                userOps.push_back(UserOp(opcodeForLabel(label), label, funcName, (int)numArgs, argTypes, targets, forcedTarget, inverseFuncName));
             }
         }
     }
@@ -686,6 +845,26 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
           builder.create<pic::runtime::LinkOp>(loc, makePortVal(recNodeB, 1), neighborB1_32);
           builder.create<pic::runtime::LinkOp>(loc, makePortVal(recNodeB, 2), neighborB2_32);
           builder.create<pic::runtime::LinkOp>(loc, makePortVal(recNodeA, 0), makePortVal(recNodeB, 0));
+
+          // Inverse dispatch: if the reconstructed pair has a user-op with inverse
+          // payload, call the inverse function to compute original values.
+          Value metaRecA = builder.create<pic::runtime::GetPortOp>(loc, i32Type, recNodeA, builder.getI8IntegerAttr(3));
+          Value metaRecB = builder.create<pic::runtime::GetPortOp>(loc, i32Type, recNodeB, builder.getI8IntegerAttr(3));
+          Value typeRecA = builder.create<arith::ShRUIOp>(loc, metaRecA, c24_i32);
+          Value typeRecB = builder.create<arith::ShRUIOp>(loc, metaRecB, c24_i32);
+          Value ntA = builder.create<arith::AndIOp>(loc, typeRecA, c0x3F_i32);
+          Value ntB = builder.create<arith::AndIOp>(loc, typeRecB, c0x3F_i32);
+          Value lRecA = builder.create<arith::AndIOp>(loc, metaRecA, c0xFFFFFF_i32);
+          Value lRecB = builder.create<arith::AndIOp>(loc, metaRecB, c0xFFFFFF_i32);
+          Value impl = builder.create<func::CallOp>(loc, i32Type, "lookup_rule",
+              ValueRange{ntA, lRecA, ntB, lRecB}).getResult(0);
+          Value invResult = genInlineDispatch(builder, loc, impl,
+              builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0)),
+              builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0)),
+              stateArg, funcOp, userOps, c0_i64, true);
+          builder.create<pic::runtime::SetHistoryOp>(loc, tNode, builder.getI8IntegerAttr(1),
+              builder.create<arith::ExtUIOp>(loc, i64Type, invResult));
+
           builder.create<cf::BranchOp>(loc, lHead);
           
           builder.setInsertionPointToStart(rvecStdBlock);

@@ -747,7 +747,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         MlirNamedAttribute namesNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("arg_names")), namesAttr);
 
         int regAttrCount = 3;
-        MlirNamedAttribute attrs[4];
+        MlirNamedAttribute attrs[5];
         attrs[0] = nameNamedAttr;
         attrs[1] = payloadNamedAttr;
         attrs[2] = namesNamedAttr;
@@ -755,6 +755,11 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
             MlirAttribute dispatchAttr = mlirStringAttrGet(ctx, mlirStringRefCreate(expr->as.mlir_op.dispatch, expr->as.mlir_op.dispatch_len));
             attrs[3] = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("dispatch")), dispatchAttr);
             regAttrCount = 4;
+        }
+        if (expr->as.mlir_op.inverse_payload) {
+            MlirAttribute invPayloadAttr = mlirStringAttrGet(ctx, mlirStringRefCreate(expr->as.mlir_op.inverse_payload, expr->as.mlir_op.inverse_len));
+            attrs[regAttrCount] = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("inverse_payload")), invPayloadAttr);
+            regAttrCount++;
         }
         mlirOperationStateAddAttributes(&regState, regAttrCount, attrs);
 
