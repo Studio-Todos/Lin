@@ -25,6 +25,75 @@ using namespace mlir;
 
 namespace {
 
+static void createPicMemrefGlobals(ModuleOp module, OpBuilder &builder, TargetBackend target) {
+    auto loc = module.getLoc();
+    auto i64Type = builder.getI64Type();
+    auto i32Type = builder.getI32Type();
+    auto headTy = MemRefType::get({1}, i64Type);
+    if (!module.lookupSymbol("__pic_queue_head")) {
+        OpBuilder gb(module.getBodyRegion());
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({1}, i64Type), gb.getI64IntegerAttr(0));
+        gb.create<memref::GlobalOp>(loc, "__pic_queue_head",
+            gb.getStringAttr("private"), headTy,
+            initAttr, false, IntegerAttr{});
+    }
+    if (!module.lookupSymbol("__pic_queue_tail")) {
+        OpBuilder gb(module.getBodyRegion());
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({1}, i64Type), gb.getI64IntegerAttr(0));
+        gb.create<memref::GlobalOp>(loc, "__pic_queue_tail",
+            gb.getStringAttr("private"), headTy,
+            initAttr, false, IntegerAttr{});
+    }
+    if (!module.lookupSymbol("__pic_active_count")) {
+        OpBuilder gb(module.getBodyRegion());
+        int64_t initVal = (target == TargetBackend::GPU) ? 1 : 4;
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({1}, i64Type), gb.getI64IntegerAttr(initVal));
+        gb.create<memref::GlobalOp>(loc, "__pic_active_count",
+            gb.getStringAttr("private"), headTy,
+            initAttr, false, IntegerAttr{});
+    }
+    if (!module.lookupSymbol("__pic_lock")) {
+        OpBuilder gb(module.getBodyRegion());
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({1}, i64Type), gb.getI64IntegerAttr(0));
+        gb.create<memref::GlobalOp>(loc, "__pic_lock",
+            gb.getStringAttr("private"), headTy,
+            initAttr, false, IntegerAttr{});
+    }
+    // C2: Arena globals — replaces state struct fields [0] net, [1] q, [4] alL, [5] history_net
+    if (!module.lookupSymbol("__pic_net")) {
+        OpBuilder gb(module.getBodyRegion());
+        auto netTy = MemRefType::get({32000000}, i32Type);
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({32000000}, i32Type), gb.getI32IntegerAttr(0));
+        gb.create<memref::GlobalOp>(loc, "__pic_net",
+            gb.getStringAttr("private"), netTy,
+            initAttr, false, IntegerAttr{});
+    }
+    if (!module.lookupSymbol("__pic_history_net")) {
+        OpBuilder gb(module.getBodyRegion());
+        auto histTy = MemRefType::get({8000000}, i64Type);
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({8000000}, i64Type), gb.getI64IntegerAttr(0));
+        gb.create<memref::GlobalOp>(loc, "__pic_history_net",
+            gb.getStringAttr("private"), histTy,
+            initAttr, false, IntegerAttr{});
+    }
+    if (!module.lookupSymbol("__pic_queue")) {
+        OpBuilder gb(module.getBodyRegion());
+        auto queueTy = MemRefType::get({16000000}, i64Type);
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({16000000}, i64Type), gb.getI64IntegerAttr(0));
+        gb.create<memref::GlobalOp>(loc, "__pic_queue",
+            gb.getStringAttr("private"), queueTy,
+            initAttr, false, IntegerAttr{});
+    }
+    if (!module.lookupSymbol("__pic_allocator")) {
+        OpBuilder gb(module.getBodyRegion());
+        auto allocTy = MemRefType::get({}, i32Type);
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({}, i32Type), gb.getI32IntegerAttr(0));
+        gb.create<memref::GlobalOp>(loc, "__pic_allocator",
+            gb.getStringAttr("private"), allocTy,
+            initAttr, false, IntegerAttr{});
+    }
+}
+
 struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PicReduceToRuntimePass)
 
@@ -40,6 +109,8 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     Location loc = module.getLoc();
     auto i32Type = builder.getI32Type();
     auto i64Type = builder.getI64Type();
+
+    createPicMemrefGlobals(module, builder, target);
     auto i1Type = builder.getI1Type();
     auto i8Type = builder.getI8Type();
     auto f32Type = builder.getF32Type();
@@ -53,7 +124,7 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
         }
     };
 
-    declFunc("lookup_rule", i32Type, {i32Type, i32Type});
+    declFunc("lookup_rule", i32Type, {i32Type, i32Type, i32Type, i32Type});
     declFunc("get_num_args", i32Type, {i32Type});
     declFunc("is_gpu_op", i1Type, {i32Type});
     declFunc("dispatch_user_op", i64Type, {i32Type, i64Type, i64Type, i64Type, i64Type, i32Type, i32Type, i64Type});
@@ -89,7 +160,7 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     Value c0xFFFFFFFF00000000_i64 = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0xFFFFFFFF00000000ULL));
 
     std::vector<uint32_t> literalHashes;
-    for (const auto &lit : {"num", "i1", "i8", "i16", "i32", "i64", "f32", "f64", "bool", "str"}) {
+    for (const auto &lit : kAllLiteralTypes) {
         literalHashes.push_back(opcodeForLabel(lit));
     }
     module.walk([&](pic::graph::RegistryOp op) {
@@ -172,8 +243,8 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     builder.create<cf::BranchOp>(loc, lHead);
 
     builder.setInsertionPointToStart(checkDispatch);
-    Value implA = builder.create<func::CallOp>(loc, i32Type, "lookup_rule", ValueRange{labelA, labelB}).getResult(0);
-    Value implB = builder.create<func::CallOp>(loc, i32Type, "lookup_rule", ValueRange{labelB, labelA}).getResult(0);
+    Value implA = builder.create<func::CallOp>(loc, i32Type, "lookup_rule", ValueRange{nodeTypeA, labelA, nodeTypeB, labelB}).getResult(0);
+    Value implB = builder.create<func::CallOp>(loc, i32Type, "lookup_rule", ValueRange{nodeTypeB, labelB, nodeTypeA, labelA}).getResult(0);
     Value hasRuleA = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, implA, c0_i32);
     Value hasRuleB = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, implB, c0_i32);
     Value hasDispatch = builder.create<arith::OrIOp>(loc, hasRuleA, hasRuleB);

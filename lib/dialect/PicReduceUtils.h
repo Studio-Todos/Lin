@@ -7,10 +7,58 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "llvm/ADT/StringRef.h"
+#include "PicRuntimeDialect.h"
 #include <string>
 #include <vector>
+#include <array>
 
 using namespace mlir;
+
+inline constexpr const char* kAllLiteralTypes[] = {"num", "i1", "i8", "i16", "i32", "i64", "f32", "f64", "bool", "str"};
+inline constexpr size_t kNumLiteralTypes = 10;
+
+inline bool isKnownLiteralType(const std::string& label) {
+    for (auto lit : kAllLiteralTypes) {
+        if (label == lit) return true;
+    }
+    return false;
+}
+
+inline bool is64BitTypeLabel(const std::string& label) {
+    return label == "f64" || label == "i64" || label == "num";
+}
+
+inline bool isValidMLIRType(const std::string& type) {
+    return type == "i1" || type == "i8" || type == "i16" || type == "i32" || type == "i64" || type == "f32" || type == "f64" || type == "ptr";
+}
+
+static bool suffixToTypeName(const std::string& label, std::string& opName, std::string& typeName, std::string& originalBase) {
+    std::string suffix = "";
+    if (label.size() > 2) {
+        suffix = label.substr(label.size() - 2);
+    }
+    if (suffix == "64" || suffix == "32") {
+        std::string base = label.substr(0, label.size() - 2);
+        originalBase = base;
+        bool isFloat = (base[0] == 'f');
+        if (isFloat) {
+            base = base.substr(1);
+            typeName = (suffix == "64") ? "f64" : "f32";
+        } else {
+            typeName = (suffix == "64") ? "i64" : "i32";
+        }
+        if (base == "divs" || base == "divu") opName = "div";
+        else if (base == "rems" || base == "remu") opName = "rem";
+        else if (base == "slt") opName = "lt";
+        else if (base == "sgt") opName = "gt";
+        else if (base == "sle") opName = "le";
+        else if (base == "sge") opName = "ge";
+        else if (base == "neq") opName = "ne";
+        else opName = base;
+        return true;
+    }
+    return false;
+}
 
 static Value safeZExt(OpBuilder &b, Location loc, Type targetType, Value val) {
     if (!val || !val.getType().isa<IntegerType>()) return val;
@@ -112,17 +160,6 @@ struct UserOp {
     std::string funcName;
     int numArgs;
     SmallVector<std::string> argTypes;
-};
-
-enum PicrNodeType {
-    NODE_CON = 1,
-    NODE_DES = 2,
-    NODE_DUP = 3,
-    NODE_ERA = 4,
-    NODE_OP  = 5,
-    NODE_HIS = 6,
-    NODE_LOG = 7,
-    NODE_RVEC = 8
 };
 
 #endif // PIC_REDUCE_UTILS_H

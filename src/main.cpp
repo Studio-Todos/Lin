@@ -334,6 +334,7 @@ int main(int argc, char **argv) {
       llvm::outs().flush();
 #endif
       PassManager pm(&context);
+      pm.addPass(createPicGraphVerifyPass());
       pm.addPass(createPicGraphToReducePass());
       pm.addPass(createPicReduceToRuntimePass(enableGPU ? TargetBackend::GPU : TargetBackend::CPU));
       pm.addPass(createPicReduceLoweringPass(enableGPU ? TargetBackend::GPU : TargetBackend::CPU));
@@ -442,6 +443,7 @@ if (enableGPU) {
 
       PassManager pm2(&context);
       pm2.addPass(mlir::createConvertSCFToCFPass());
+      pm2.addPass(mlir::createFinalizeMemRefToLLVMConversionPass());
       pm2.addPass(mlir::createConvertControlFlowToLLVMPass());
       pm2.addPass(mlir::createConvertMathToLibmPass());
       pm2.addPass(mlir::createConvertMathToLLVMPass());

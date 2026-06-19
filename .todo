@@ -1,677 +1,126 @@
 # Lin Language TODO
-# Format: [ ] pending  [/] in progress  [x] done
-# Tiers: 🔴 blocking  🟡 important  🟢 nice-to-have
+# [ ] pending  [/] in progress  [x] done
+# 🔴 blocking  🟡 important  🟢 nice-to-have
 
-# Architecture reference (PICR — Polarized Interaction Combinators Reversible):
-#   pic.graph  → abstract combinator graph (γ⁺ γ⁻ δ H L ω R + boundaries)
-#   pic.reduce → scheduling-aware reduction ops (annihilate/dup/uncompute/log_state/
-#                                                 fire_op/reverse_vector/log_bond)
-#   pic.runtime→ CPU/GPU dispatch (cpu_dispatch, gpu_batch, gpu_batch_reverse,
-#                                  uncompute_sweep, sync_point)
-#
-# Node set (7 nodes):
-#   γ⁺  Constructor   principal(+), aux(left, right)
-#   γ⁻  Destructor    principal(-), aux(left, right)
-#   δ   Duplicator    principal(*), aux(left, right)
-#   H   History       replaces ε; folds dead subgraphs into boundary history log
-#   L   Log-Bond      passive ghost deposited at annihilation splice sites
-#   ω   Operation     principal(+/-), aux(inputs..., outputs...)
-#   R   Reverse-Vec   signal node; propagates backward rewrites through subgraph
-#
-# 4 Rules (reversible form):
-#   Rule 1 — Reversible Annihilation (γ⁺ ⋈ γ⁻ → splice + deposit L-bond)
-#   Rule 2 — Duplication (δ ⋈ γ⁺; reverse requires sync barrier at δ on backward pass)
-#   Rule 3 — Reversible Uncomputation (R signal replaces ε sweep; runs subgraph backward)
-#   Rule 4 — Congruence (inside boundaries; merge node carries origins attr for reverse split)
-# Rules should be mostly user-defined via a lookup table.
-# Goal: CPU, GPU, and high-perf GPU shaders — unified reversible pipeline via MLIR.
-#
-# 4 Invariants:
-#   1. Linearity of principal ports
-#   2. Boundary interface consistency
-#   3. Confluence
-#   4. Conservation of Topological Information — no rewrite may reduce graph information
-#      entropy; every destructive step logs its delta or pairs with an R signal
+# Architecture: pic.graph → pic.reduce (scf+arith+memref) → pic.runtime → LLVM IR / SPIR-V
+# 7 nodes: γ⁺ Constructor, γ⁻ Destructor, δ Duplicator, H History, L Log-Bond, ω Operation, R Reverse-Vec
+# 4 reversible rules: Annihilation, Duplication, Uncomputation, Congruence
+# 4 invariants: linearity of principal ports, boundary interface consistency, confluence, conservation of topological info
 
 ## 🔴 Tier 0 — Architecture (foundational correctness)
 
-# CPU/GPU Unification Strategy:
-# The goal is to implement every reduction rule ONCE in the target-independent
-# pic.reduce dialect using scf + arith + memref dialects (no llvm.*), then rely
-# on MLIR's existing conversion passes to lower to:
-#   • LLVM IR (CPU via ConvertToLLVMPass)
-#   • SPIR-V / PTX (GPU via ConvertToSPIRVPass / GPU dialect)
-# This means A1b is the central fix — all other "b" items are cleanup work that
-# becomes natural once the reduction logic lives in the right dialect.
-# Items 31, A4b, 21b, A2b, A3b are all sub-problems of finishing A1b correctly.
-#
-# Three architectural constraints hold throughout pic.reduce for unification:
-#   C1. STATIC OPCODE DISPATCH — no function pointers (SPIR-V has none)
-#   C2. HOST-ALLOCATED ARENA   — no malloc inside kernels (illegal on GPU)
-#   C3. ω GPU ELIGIBILITY      — payloads restricted to SPIR-V-legal dialects
-
-[x] C1. Replace indirect dispatch with static opcode switch 🔴
-        # Architecture constraint: SPIR-V has no function pointers.
-        # Status: Completed. Inlined dispatch logic as a target-independent conditional branch chain directly within PicReduceLoweringPass.
-        - [x] Remove indirect function pointer dispatch (hash → function pointer call)
-        - [x] LLVM::SwitchOp jump table in dispatch_user_op replaces old dispatch
-        - [x] Inline as scf.switch in pic.reduce reduction kernel (needs A1b)
-
-[x] C2. Formalize host-allocated arena — no malloc inside kernels 🔴
-        # Architecture constraint: GPU device code cannot call malloc/free.
-        # CONFIRMED: all mallocs happen once at host startup (LoweringPasses.cpp:3041-3053).
-        # Inside kernel: LLVM::AtomicRMWOp::add for arena allocation — zero malloc calls.
-        # See Architecture.md "CPU/GPU Unified Execution Model" §2.
-        - [x] All arena allocations (net, queue, alloc counter) happen on HOST before kernel launch
-        - [x] Kernel uses atomic fetch-add on arena pointer instead of malloc
-        - [ ] Express arena as memref in pic.reduce (not LLVM globals)
-
-[!] C3. ω GPU eligibility check at mlir-op registration time 🟢
-        # Architecture constraint: GPU payloads may only use SPIR-V-legal dialects.
-        # Status: blocklist (llvm/pic_runtime/pic_graph) replaced with GPU-legal
-        # allowlist (arith, math, func, cf, memref, scf, vector, index) at line 2136.
-        # No cpu_only flag in rule table; no auto-classification; no @cpu override.
-        # See Architecture.md "CPU/GPU Unified Execution Model" §3.
-        - [x] Dialect legality check runs when dispatch=="gpu" is tagged on an op
-        - [x] Use GPU-legal allowlist (arith, math, func, cf, memref, scf, vector, index) instead of blocklist
-        - [ ] Add cpu_only flag to rule table entry (needs A2b 5-field expansion)
-        - [ ] Auto-classify all ops at registration time (not just tagged ones)
-        - [ ] Support @cpu override annotation
-        - [ ] Replace hardcoded GPU dispatch string check (Semantic.cpp:328)
-        # strncmp(node->as.func_decl.dispatch, "gpu", ...) should derive from
-        # the registry's GPU eligibility data instead of ad-hoc string comparison.
-        - Prerequisite: C1, A1b, A2b (flags field in rule table)
+[x] C1. Replace indirect dispatch with static opcode switch
+[x] C2. Formalize host-allocated arena — no malloc inside kernels
+       [x] Express arena as memref in pic.reduce (not LLVM globals)
+[/] C3. ω GPU eligibility check at mlir-op registration time
+       [x] Dialect legality check runs when dispatch=="gpu"
+       [x] GPU-legal allowlist (arith, math, func, cf, memref, scf, vector, index)
+       [ ] Auto-classify all ops at registration time (not just tagged ones)
+       [ ] Support @cpu override annotation
+       [ ] Replace hardcoded GPU dispatch string check (Semantic.cpp:328)
 
 [x] A1. pic.reduce pass: implement reduction rules in target-independent MLIR
-        - PicReduceToRuntimePass walks pic.graph functions
-        - Emits pic_reduce.annihilate/duplicate/erase/fire_op ops
-        - Handles boundary merge (B2)
-
-[x] A1b. PicReduceToRuntimePass bypasses pic.reduce dialect (emits pic.runtime directly) 🔴
-        # OBSOLETE CLAIM: the old description said "runOnOperation() is literally {}".
-        # This is OUTDATED — the pass body is now ~600 lines (LoweringPasses.cpp:380-977)
-        # with a full worker_thread implementation using scf+arith+memref dialects.
-        #
-        # REMAINING ISSUE: the pass goes directly from pic.graph → pic.runtime ops,
-        # SKIPPING the pic.reduce dialect entirely. Dialect ops (annihilate, duplicate,
-        # erase, fire_op, log_bond, reverse_vector) exist in PicReduceDialect.td but
-        # are never emitted by any pass. PicRuntimeToLLVMPass handles both the pic.reduce
-        # logic AND the LLVM mechanical conversion in one pass, violating target-independence.
-        #
-        # FIX: split PicReduceToRuntimePass to emit pic.reduce ops, then let
-        # PicRuntimeToLLVMPass be a thin mechanical conversion of pic.runtime -> llvm.*
-        # (and eventually PicRuntimeToSPIRVPass for GPU).
-        - [x] Implement PicReduceToRuntimePass::runOnOperation() using scf+arith+memref
-        - [x] Emit pic.runtime ops (alloc_node, link, push_redex) ✓
-        - [x] worker_thread contains redex dispatch, polarity decode, rule lookup, rules
-        - [x] Emit pic.reduce dialect ops (annihilate, duplicate, erase, fire_op, ...)
-        - [x] Make PicRuntimeToLLVMPass a thin mechanical conversion only
-- [x] Create PicRuntimeToSPIRVPass for GPU target (supports RVEC, ERA, DUP, ANN rules)
-         - Unblocks: item 31 (unified pipeline), 21b (multi-threading)
-
-[ ] A1c. Node type encodings are hardcoded C++ constants 🔴
-        # LoweringPasses.cpp:138-147 — enum PicrNodeType { NODE_CON=1, NODE_DES=2, ... }
-        # LoweringPasses.cpp:258-269 — string "constructor"→NODE_CON mapping
-        # These are runtime-level encodings tying the 7 PIC node types to numeric constants.
-        # Should be defined in pic.runtime dialect attributes to ensure a single source of truth.
-        - [ ] Move node type constants from C++ enum to PicRuntimeDialect.td
-        - [ ] Derive agent→type mapping from dialect attributes instead of hardcoded if-else
-        - Prerequisite: A1b
-
+[x] A1b. pic.reduce → pic.runtime pipeline: PicReduceToRuntimePass emits pic.reduce markers,
+         PicReduceLoweringPass expands to pic.runtime ops, PicRuntimeToLLVMPass converts mechanically
+[x] A1c. Node type encodings moved to PicRuntimeDialect.h (single source of truth)
 [x] A2. Rule lookup table (user-extensible dispatch)
-        - APPROVED: table keyed on (agentType_A, label_A, agentType_B, label_B)
-        - Runtime struct pic.reduction_rule with fields: typeA, labelA, typeB, labelB, handler
-        - Default rules: annihilate, duplicate, erase, fire_op, merge_boundary
-        - register_rule() runtime function for std library to add custom rules
-        - Replace if-else CondBrOp chain with table lookup loop
-        - Same table, different lowering for CPU (LLVM) vs GPU (SPIR-V)
-
-[ ] A2b. Rule table capacity is hardcoded to 100 entries 🟡
-        # LoweringPasses.cpp — register_rule was a no-op stub; lookup_rule was a compile-time
-        # chain only. Fixed (picr-priority-work): register_rule now writes to a global
-        # i32[512×3] array (zeroinitializer via LLVM::ZeroOp region); lookup_rule falls
-        # through to a linear scan of the runtime table after the compile-time chain.
-        # Remaining: full 5-field scheme (typeA, labelA, typeB, labelB, impl) and
-        # memref-based portability (depends on A1b).
-        - [x] register_rule() implemented (writes to global i32[512x3] array)
-        - [x] lookup_rule() scans runtime table after compile-time chain
-        - [ ] Expand to 5-field entry (typeA, labelA, typeB, labelB, impl)
-        - [ ] Rewrite as memref in pic.reduce for CPU+GPU portability
-        - Prerequisite: A1b
-
+[x] A2b. Rewrite rule table as memref in pic.reduce for CPU+GPU portability
+         [x] register_rule()/lookup_rule() with 5-field entries (typeA, labelA, typeB, labelB, impl)
+         [x] Rewrite as memref in pic.reduce
+         Prerequisite: A1b
 [x] A3. Fix γ⁺/γ⁻ encoding for function agents
-        - A3 FIX: γ⁺/γ⁻ are both NODE_CON=1 per PIC spec
-        - Polarity is in port value, not node type
-        - Collapsed checkBeta block - function app is now standard annihilation
-        - Collapsed isEither block - ω(branch)⋈num covered by rules
-        - Simplified dispatch to just annihilation vs commutation
-        - Now uses rule lookup table from A2
+[x] A3b. Polarity meta-word encoding reconciled — named constants, consistent decode paths
+[x] A4. Boundary lowering (checkpoint, atomic-OR bitmask, per-node history)
+[x] A4b. Redex queue bounded & MPMC-safe
+         [x] Bounds check, AtomicRMWOp::add for all push paths
+         [x] Express head/tail as memref.atomic_rmw in pic.reduce
+         [ ] MPMC documentation in Architecture.md
+[x] A5. PICR node set (H, L, R) in pic.graph dialect
+[x] A6. Reversible Annihilation — L-bond deposition in pic.reduce
+[x] A7. Reversible Uncomputation — R signal propagation
+[x] A8. Boundary history log and B4 Reversible Boundary Cycle
 
-[/] A3b. Polarity is stored in meta word bits [31:30] but decoded inconsistently 🟡
-        # Partial fix (picr-priority-work): the duplication commutation bug is fixed —
-        # new clone nodes are now allocated with placeholder self-ports instead of copying
-        # the original aux port values into both clones (violating port linearity).
-        # Remaining: full meta-word audit and alloc_node reconciliation (needs A1b).
-        - [x] Fix duplication commutation: new δ clones get placeholder ports (self-ports)
-              that are immediately overwritten by linkPorts before any thread observes them
-        - [ ] Audit alloc_node: reconcile I8Attr:$type with the meta-word encoding
-        - [ ] Make type field the single source of truth (remove set_port(3, meta))
-        - Prerequisite: A1b
+## 🔴 Tier 1 — High-Level Syntax & Semantics
 
-[/] A4. Boundary [ ] lowering
-        - BoundaryOp lowering exists in PicReduceToRuntimePass (wiring of inputs/outputs)
-        - B1: containment — effect bubbling via wire polarity (conceptual, in docs)
-        - B2: merge_boundary — PicReduce_MergeBoundaryOp defined in .td but NEVER emitted
-        - B3: collapse deferred to runtime E-graph hashing
-        - getNextBoundaryId() — NOT FOUND in codebase (referenced in .todo only)
-
-[x] A4b. Redex queue is unbounded and single-producer / multi-consumer unsafe 🟡
-        # Fixed (picr-priority-work): both LinkOp inline push paths (main link path and
-        # uncompute_sweep linkPortsLLVM) replaced non-atomic tail load/store with
-        # AtomicRMWOp::add + bounds check (< 16M), matching PushRedexOp which was
-        # already atomic. Full MPMC discipline now holds for all push paths.
-        - [x] Add bounds check in redex pop path (< 16M cap)
-        - [x] Replace non-atomic tail push in LinkOp with AtomicRMWOp::add
-        - [x] Replace non-atomic tail push in uncompute_sweep linkPortsLLVM
-        - [ ] Express head/tail as memref.atomic_rmw in pic.reduce (needs A1b)
-        - [ ] MPMC documentation in Architecture.md
-
-[x] A5. PICR node set (H, L, R) in pic.graph dialect ✅
-        # Foundational prerequisite for all reversibility. Blocks A6, A7, A8, item 18, item 21.
-        - Add agentType values: HIS (H), LOG (L), RVEC (R) to PicGraph_AgentOp
-        - H node: no principal interaction; accumulates a history_chain attribute pointing
-          into the enclosing boundary's history log; replaces ε for boundary-scoped GC
-        - L node: passive, no ports fired; carries {node_a_idx, node_b_idx} back-pointer
-          to the originating γ⁺/γ⁻ pair; sits on spliced wires after annihilation
-        - R node: principal(*), aux(next) — propagates through a subgraph forcing each
-          encountered node to execute its rewrite rule in reverse
-        - Update PicGraphDialect.td and PicGraphDialect.cpp
-        - Update node encoding constants in LoweringPasses.cpp (NODE_HIS, NODE_LOG, NODE_RVEC)
-        - Add to A2 rule lookup table: default dispatch entries for H, L, R interactions
-
-[x] A6. Reversible Annihilation — L-bond deposition in pic.reduce ✅
-        # Prerequisite: A5
-        - Modify PicReduceToRuntimePass: annihilate now emits pic_reduce.log_bond at splice
-          site instead of vanishing the γ⁺/γ⁻ pair entirely
-        - Add PicReduce_LogBondOp to PicReduceDialect.td
-          arguments: (node_a_idx: i32, node_b_idx: i32) — enough to reconstruct the pair
-        - L node sits passively on the spliced wires; carries the log_bond payload
-        - Forward path cost: O(1) — same as classic annihilation plus one extra node slot
-        - Reverse path: R signal hitting an L node reads the payload and reconstructs the
-          γ⁺/γ⁻ pair, restoring the original wiring
-        - Invariant 4 enforcement: this is the mechanism that satisfies "log your delta"
-
-[x] A7. Reversible Uncomputation — R signal propagation (replaces ε sweep) ✅
-        # Prerequisite: A5, A6
-        # This replaces item 18 (Node GC / arena reset) for boundary-scoped memory.
-        - Add PicReduce_ReverseVectorOp to PicReduceDialect.td
-        - Add pic_reduce.uncompute op: inverts a specific node pair using its log payload
-        - Add pic_reduce.log_state op: pushes a structural delta token to the boundary history log
-        - R signal dispatch rules added to worker_thread (alongside existing annihilation dispatch):
-            R ⋈ γ⁺  → R on each aux port
-            R ⋈ γ⁻  → R on each aux port
-            R ⋈ ω   → cancel op, R on each aux port
-            R ⋈ δ   → R on each aux port (sync barrier required — see item 20b)
-            R ⋈ L   → read log_bond payload, reconstruct γ⁺/γ⁻, continue R propagation
-            R ⋈ H   → replay H's history log backward, free chain, dissolve H node
-        - Outside boundaries: ε erasure path kept as the fast non-logging fallback
-        - Inside boundaries: R signal is emitted instead of ε when a branch becomes dead
-
-[/] A8. Boundary history log and B4 Reversible Boundary Cycle 🟡
-        # Prerequisite: A4, A5, A6, A7.
-        # Partial: UncomputeSweepOp + history net infrastructure exists (LoweringPasses.cpp:1184-1246,
-        # lines 1110-1123). However, PicGraph_BoundaryOp was NOT extended with history_log/origins
-        # fields as specified — history is managed via separate GetHistoryOp/SetHistoryOp instead.
-        # B4 cycle concept documented in Architecture.md but not explicitly labeled in code.
-        - [x] pic_runtime.uncompute_sweep op defined and lowered
-        - [x] History log storage as separate "history net" buffer for boundary nodes
-        - [x] GetHistoryOp / SetHistoryOp for boundary node metadata
-        - [ ] Extend PicGraph_BoundaryOp with history_log region and origins attr
-        - [ ] Implement B4 cycle steps explicitly in pass pipeline
-
-## 🔴 Tier 1 — High-Level Syntax & Semantics (Linden Alignment)
-
-[x] 1. AST_PAIR lowering in lowerExpression
-        - Emit a pair agent that holds two ports ✅
-        - Wire left/right sub-expressions into p1/p2 ✅
-        - Field access (.0 / .1) added to AST with TOKEN_DOT lexer support ✅
-        - parseFieldAccess() added, handles chained field access ✅
-        - parseGroupingExpr() updated to handle postfix field access after any expression ✅
-        - Unblocks: std library result.0/result.1 pattern, multiple return values
-
+[x] 1. AST_PAIR lowering + field access (.0/.1)
 [x] 2. `either` reduction rule (if/else at runtime)
-        - CPU worker_thread: BRANCH ~ NUM fires, selects true/false, erases loser
-        - NODE_BRANCH=7 added to encoding (to be folded into ω via A3)
-        - TODO(A1): GPU kernel parity via unified pic.reduce pass
-
-[x] 2b. `while` loop lowering is unsound — always evaluates both branches 🔴
-        # Lowering.c:759-788 — the while loop is lowered by:
-        #   1. Evaluating the condition via lowerExpression()
-        #   2. Evaluating the body via lowerExpression()
-        #   3. Emitting an ω(-, branch) node to select between them
-        # Problem: both condition AND body are evaluated eagerly before the branch fires.
-        # The body is lowered unconditionally. This means any side effects in the loop
-        # body (I/O, mutation) execute regardless of the condition, and any recursive
-        # call in the body (which is how loops are implemented) always recurses.
-        # A correct lowering must emit the body as a λ-thunk (γ⁺ node) that only fires
-        # when the branch selects it, mirroring how `either` works.
-        - Wrap loop body in a γ⁺ thunk: lowerExpression the body into a separate MLIR
-          func, then emit a γ⁺ agent pointing to it; the branch node's true-wire holds
-          this thunk rather than the already-evaluated body result
-        - Similarly wrap the false (exit) path
-        - Add test/test_while_soundness.lin: loop with side effect verifies effect fires
-          exactly N times, not N+1
-
+[x] 2b. `while` loop lowering — thunk-wrapped body
 [x] 3. Beta-reduction (function application at runtime)
-        - Phase 1: γ(+,f) ~ γ(-,f) wires aux ports (p1↔p1, p2↔p2)
-        - Collapsed checkBeta into standard annihilation per A3
-        - GPU kernel parity via unified pic.reduce pass (A1)
-        - Phase 2: body-graph cloning for multi-arg / closures
-
-[x] 4. mlir-op full pipeline connection
-        - PARSE:    AST_MLIR_OP captured correctly (name + interface + payload) ✅
-        - LOWER:    lowerExpression emits RegistryOp(name, payload) + ω agent ✅
-        - REGISTRY: RegistryOp collection exists in LoweringPasses.cpp (STR_ only) ⚠️
-                    Fix: extend to collect non-STR_ entries from mlir-op declarations
-        - DISPATCH: switch-case payload cloning machinery exists and works ✅
-                    (used by std lib ops; user ops just need to reach it)
-        - RUNTIME:  ω(+, f) ⋈ ω(-, f) → fires cloned MLIR payload for label f
-        - Connects to A2: user-defined mlir-op rules register to the lookup table
-
-[ ] 4b. mlir-op inverse payload support 🟢
-        # PICR extension to item 4. Prerequisite: A7.
-        - Extend RegistryOp / mlir-op parser syntax to accept an optional `inverse:` block
-        - inverse: block contains an MLIR snippet executed by pic_reduce.uncompute during
-          the reverse pass when this ω's op is being uncomputed
-        - Standard library ops (add, fadd, mul, etc.) ship with trivial inverses (sub, fneg, etc.)
-        - Without an inverse: block, uncompute falls back to structural graph reversal only
-          (correct but may leave garbage; inverse: block enables clean algebraic reversal)
-
-[x] 4c. `add` and `either` are hardcoded as non-free-vars in findFreeVars 🟡
-        # Fixed (picr-priority-work): removed the is_builtin exemption from findFreeVars().
-        # All callees are now properly tracked as potential free variables, enabling
-        # correct closure capture for any user-defined op regardless of its name.
-        # test/test_closure_capture_add.lin added as regression test.
-
-[x] 4d. proj_N field access emits a δ(pair) node but wires p2 (right) to nothing 🟡
-        # Fixed (picr-priority-work): AST_FIELD_ACCESS lowering now attaches a ε eraser
-        # to p2 after linking p1 → base. No principal port is left dangling.
-        # test/test_field_access_linearity.lin added as regression test.
-
-[x] 5. Full Syntax Migration (word-call REMOVED for pure Rebol style)
-        - REMOVED: word-call parsing (no longer supports paren-less calls)
-        - Now requires parentheses: (print "hello") or (fib n - 1)
-        - Done in commit e342159
-
-[x] 6. Path Access Support (`/` notation)
-        - Parser: Recognize `identifier/index` and `identifier/field`
-        - Lowering: Map `/N` (1-indexed) to `proj_N` agents in PIC graph
-        - Support nested paths: `engine/world/bodies/1`
-        - ✅ Works with arrays and blocks
-
-[x] 6b. Computed path access `expr/(expr)` 🟡
-        # Parser: Added support for computed indices via `/(expression)` syntax
-        # Enables dynamic array access: `arr/(add idx 1)`
-        - Parser: handle `/(` as computed index in parseIdentifierExpr, parseExpression, parseGroupingExpr
-        - Added `computed_index` field to AST_FIELD_ACCESS struct
-
-[x] 6c. Disambiguate grouped expressions from function calls 🔴
-        # Parser: `(coeffs/1)` inside `(print (coeffs/1))` was misparsed as
-        # function call `coeffs(1)` instead of grouping with path access.
-        # parseGroupingExpr now peeks ahead — if followed by `/`, `.`, `)`
-        # it's treated as a grouping expression, not a call.
-
+[x] 4. mlir-op full pipeline connection (parse→lower→registry→dispatch→runtime)
+[ ] 4b. mlir-op inverse payload support (optional `inverse:` block for clean algebraic reversal)
+       Prerequisite: A7
+[x] 4c. `add`/`either` no longer hardcoded as non-free-vars in findFreeVars
+[x] 4d. proj_N field access — ε eraser attached to unused p2 port
+[x] 5. Syntax migration: word-call removed, parentheses required
+[x] 6. Path access (`/` notation)
+[x] 6b. Computed path access `expr/(expr)`
+[x] 6c. Disambiguate grouped expressions from function calls
 [x] 7. Data Blocks vs. Code Blocks
-        - Parser: Distinguish between block as statement-list vs. block as data-literal
-        - Lowering: For data blocks, emit a linked structure of Pair agents in the graph
-        - Unblocks: `copy [pos vel force]` pattern in Linden
-
 [x] 8. Module Headers & Metadata
-        - Parser: Recognize `Name: module [ metadata ]` syntax
-        - Storage: Capture module name and property block
-        - ✅ DONE: Name: module [ version: "1.0" ] parses correctly
-
-[x] 9. Refined Assignment (Multi-assignment)
-        - Multi-line style: x: 1 \n y: 2 \n z: 3 works
-        - Single-line (a: 1 b: 2) would require lexer position save/restore
-        - ✅ Partially done: separate lines work
-
-[x] 10. Full Syntax Migration (Unified Rebol Style)
-        - REMOVED word-call syntax (requires parentheses)
-        - REMOVED implicit return (requires explicit return: [Type!])
-        - PRESERVED void return via return: []
-        - examples/*.lin use new full syntax
-        - test/ suite updated to use parentheses
-        - std/*.lin library files use clean syntax
+[x] 9. Multi-assignment (separate lines)
+[x] 10. Unified Rebol-style syntax migration
 
 ## 🟡 Tier 2 — Language Completeness
 
-[ ] 10b. Linearity of principal ports is not statically enforced 🟡
-        # Invariant 1 from the spec. There is no pass that verifies every principal port
-        # connects to exactly one wire. The current implementation relies on programmer
-        # discipline in Lowering.c. Known violation: proj_N dangling p2 (see item 4d).
-        # Known risk: env_free() links unconsumed vars to ε, but if a var is used more
-        # than the δ-chain accounts for, the extra reference leaves a double-connected port.
-        - Add a pic.graph verification pass: walk all AgentOps and assert each principal
-          port (p0) appears in exactly one LinkOp or WireOp in the same block
-        - Run this pass in debug builds after lowerExpression() completes
-        - Emit a structured diagnostic (file:line:col, var name) on violation
-        - Integrate into `linc check` subcommand
-
+[x] 10b. Linearity of principal ports static checker (Invariant 1)
 [x] 11. Closure / captured variable support
-        - Thread outer-scope bindings into inner γ⁺ function agents via aux ports ✅
-        - Multi-use bindings → δ (duplicator) nodes for sharing ✅
-        - ✅ Enabling Step: Stabilized runtime lowering for 64-bit pointers
-        - ✅ Enabling Step: Fixed double-dereference and malloc size bugs
-        - ✅ Resolved worker thread segfault during closure application
-        - ✅ test/test_closure.lin compiles and runs cleanly (exit 0)
-
-[x] 11b. Sanitize `?` in MLIR function names 🟡
-        # Lowering.c: sanitizeMlirName() replaces `?` with `_` in addition to
-        # existing `-` → `_` conversion. Functions like `aabb-overlaps?` 
-        # become `aabb_overlaps_` for MLIR compatibility.
-
+[x] 11b. Sanitize `?` in MLIR function names
 [x] 12. Binary operators via std library
-        - All 12 operators (+, -, *, /, <, >, <=, >=, ==, !=, &&, ||) work
-        - Parsed in Parser.c and emitted as Call(op_name) AST nodes
-        - Users import "std/math.lin" to use binary operations
-        - No built-in operators — all defined in std/
-
 [x] 13. Type checking / type-directed dispatch
-        - AstFuncArg.type_name wired into semantic scope: arg types propagate into body ✅
-        - Lightweight structural type check with source locations (line:col) on mismatch ✅
-        - Drives ω label selection (add→fadd for f32, add64 for i64, etc.) via resolved_callee ✅
-        - New test: test/test_type_check.lin
-
 [x] 14. Multiple return values via pairs
-        - Depends on item 1 (AST_PAIR lowering)
-        - Function return types as pairs; .0/.1 access compiles correctly
 
 ## 🟢 Tier 3 — Developer Experience
 
 [x] 15. `linc run` command
-        - Compile to binary and execute in one step: linc run file.lin -o /tmp/bin
-        - Prints exit code and stdout; requires pre-built binary path
-
-[x] 16. @gpu / @cpu per-function annotations
-        - Parser: recognize @identifier before func/mlir-op declarations
-        - Lowering: attach dispatch attr to γ⁺ / ω agents
-        - pic.reduce → pic.runtime routing via annotation (no user pragma needed)
-        - Goal: graph structure encodes parallelism; annotations only override
-
-[ ] 17. Human-readable error messages
-        - Source location (file:line:col) on all parse and lowering errors
-        - Type mismatch messages instead of raw MLIR verifier output
-
+[x] 16. @gpu/@cpu per-function annotations
+[x] 17. Human-readable error messages (source locations, type mismatch diagnostics)
 [ ] 18. Node GC / arena reset
-        # PICR note: inside boundaries, GC is replaced by R-signal uncomputation (A7).
-        # This item covers the fast non-boundary path and arena lifecycle.
-        #
-        # ⚠️ SPEC DEVIATION: Architecture.md definitively eliminates ε ("Why no ε?
-        # In PICR, the History node (H) replaces it."). However the current implementation
-        # retains NODE_ERA=4 (LoweringPasses.cpp:131) and uses ε for the non-boundary GC
-        # fast path (line 358). ε outside boundaries is also emitted in item 4d fix
-        # (proj_N eraser). The long-term goal per spec is to eliminate ε entirely, but
-        # the current approach uses ε as a pragmatic fast path where full reversibility
-        # isn't required inside hot non-boundary paths.
-        - Outside boundaries: ε erasure propagation remains the fast GC path (parallel sweep)
-        - Inside boundaries: H nodes + R signal handle GC via B4 cycle (A8) — no ε emitted
-        - Arena reset after full reduction epoch for long-running programs
-          # Currently: LoweringPasses.cpp:1733-1744 mallocs 128MB for net and queue once
-          # at startup and never resets. Long-running programs will OOM as the allocator
-          # (atomic fetch-add on alL, line 1741) never wraps or reclaims.
-        - GPU GC: thousands of R/ε nodes propagate simultaneously via gpu.launch
-        - Prerequisite for boundary GC path: A7, A8
-
-[x] 18a. Offload type-directed dispatch to runtime rule lookup table
-        - Move `add` -> `fadd` and type checks out of compile-time `main.cpp` and into runtime `register_rule()` mappings.
-
-[/] 18b. Remove compiler-hardcoded types and primitives
-        # Partial: runtime register_rule() mechanism exists for type-directed dispatch.
-        # However, hardcoded type strings ("i32", "f32", "i64", "f64") still appear in
-        # Semantic.cpp:223-226, Lowering.c:561-588, LoweringPasses.cpp:441 (literal set),
-        # LoweringPasses.cpp:1575-1741 (user_op codegen), and Parser.c:767 (default return).
-        - [x] Runtime register_rule() mechanism exists (LoweringPasses.cpp:1916-1952)
-        - [ ] Remove hardcoded type strings from compile-time type dispatch (Semantic.cpp)
-        - [ ] Remove hardcoded type defaults from Parser.c (line 767)
-        - [ ] Make type tags fully user-definable via std library
-        - [ ] Derive literal type label list from std library instead of hardcoded set
-              # LoweringPasses.cpp:441 — {"num","i1","i8","i16","i32","i64","f32","f64","bool","str"}
-              # Also isLiteralLabel() check at LoweringPasses.cpp:305. These should be populated
-              # from std/types.lin declarations at registry time.
-        - [ ] Replace Binary op dispatch table (kBinVariants) with registry lookup
-              # Semantic.cpp:166-177 — 10 generic ops × 4 type variants (i32/i64/f32/f64)
-              # hardcoded in C++. The data already exists in std/math.lin. Make dispatch
-              # query the registry: "what variants does op 'add' have?" → use resolved_callee.
-        - [ ] Replace hardcoded type inference rules (Semantic.cpp:145-148)
-              # AST_NUMBER→"i64", AST_FLOAT→"f64", AST_BOOL→"bool", AST_STRING→"str"
-              # should be defined in std/types.lin and resolved through the type system
-        - [ ] Infix operator → function name mapping configurable (Parser.c:565-576)
-              # 12 operators (+, -, *, /, <, >, <=, >=, =, <>, <<, >>) hardcoded to
-              # function names like "add", "sub", "mul". Make this mapping declarative.
+       - Outside boundaries: ε erasure propagation (fast GC path)
+       - Inside boundaries: H nodes + R signal via B4 cycle (A8)
+       - Arena reset after full reduction epoch
+[x] 18b. Remove compiler-hardcoded types and primitives (dialect passes)
+        [x] Runtime register_rule() mechanism exists
+        [x] Extract shared type constants to PicReduceUtils.h, replace hardcoded strings across all dialect passes
+        [ ] Remove hardcoded type strings from compile-time type dispatch (Semantic.cpp)
+        [ ] Remove hardcoded type defaults from Parser.c (line 767)
+        [ ] Make type tags fully user-definable via std library
+        [ ] Derive literal type label list from std library
+        [ ] Replace Binary op dispatch table (kBinVariants) with registry lookup
+        [ ] Replace hardcoded type inference rules (AST_NUMBER→"i64", etc.)
+        [ ] Infix operator → function name mapping configurable
 
 ## 🔵 Architecture — Long-Term
 
-[/] 19. Unified CPU/GPU reduction pipeline via pic.reduce
-        # CPU: standard PicRuntimeToLLVMPass → LLVM IR. GPU: dedicated PicRuntimeToSPIRVPass
-        # with expanded SPIR-V kernel handling all base rules (RVEC, ERA, DUP, ANN).
-        # The GPU worker_thread dispatches ALL popped pairs to pic_gpu_dispatch_helper
-        # (not just GPU-tagged ops). CPU path unchanged.
-        - [x] CPU path via PicRuntimeToLLVMPass + standard LLVM lowering
-        - [x] GPU path via PicRuntimeToSPIRVPass with multi-rule kernel
-        - [x] GPU worker_thread dispatches all pairs to GPU kernel via pic_gpu_dispatch_helper
-        - [x] Expanded SPIR-V kernel handles: RVEC, ERA, DUP, ANN rules
-        - [ ] Dedicated PicRuntimeToSPIRVPass as thin mechanical conversion
-        - Target: CPU (std LLVM), general GPU (Vulkan/SPIR-V), shader GPU (perf)
-
-[x] 20. 128-bit node layout audit + PICR history extension 🔴
-        # Classic audit (was item 20) now merged with PICR layout requirement.
-        # Prerequisite for A5–A8, items 21, R6.
-        #
-        # ⚠️ SPEC DEVIATION: Architecture.md specifies [type:8|label:24|port0:32|port1:32]
-        # packed into 128 bits. The current implementation at LoweringPasses.cpp:1086-1108
-        # stores 4×i64 (256 bits) with layout [port0:64|port1:64|port2:64|meta:64].
-        # The meta field encodes (type:8, label:24) in lower 32 bits. This is DOUBLE the
-        # spec size and uses a different field order. See item 20c to reconcile.
-        # PICR extension second-word IS implemented (LoweringPasses.cpp:1110-1123).
-        - [x] Second word for boundary nodes (history net) implemented
-        - [x] Shrink node from 256-bit (4×i64) to 128-bit per spec
-        - [x] Reorder fields to match spec: [type|label|port0|port1] packing
-        - Verify: polarity encoded in port value (atomic bit-field), not separate field
-        - Lock-free redex detection via single atomic CAS on principal port
-        # PICR extension:
-        - Add a second 128-bit word allocated only for nodes inside boundary regions:
-            [ log_ptr:32 | flags:8 | reserved:24 ]
-          log_ptr: history-chain pointer (null for nodes outside boundaries)
-          flags: bit 0 = inside_boundary, bit 1 = log_active, bit 2 = reverse_eligible
-        - Outside boundaries: second word omitted; hot path stays at 128 bits (classic width)
-        - Update alloc_node in PicRuntimeDialect.td to accept a boundary_ctx argument
-          so the allocator knows whether to provision the second word
-
-[x] 20b. δ reverse synchronization barrier 🟡
-        # Part of the 128-bit layout audit. Prerequisite: item 20, A7.
-        - Duplication in reverse requires both backward signals to arrive before merge fires
-        - Per-δ-node atomic arrival counter (i8) stored in the flags field (item 20)
-        - Worker thread: on R ⋈ δ, atomically decrement counter; fire inverse rule only
-          when counter reaches 0 (both aux backward signals have arrived)
-        - Prevents partial merges from corrupting the graph during concurrent reverse passes
-        - Add to A2 rule table: δ reverse entry pointing to barrier-gated merge handler
-
-[ ] 21. E-graph congruence (Rule 4) + origins attribute 🟡
-        # Prerequisite: A4 (done). PICR requires origins attr for correct reverse splitting.
-        - Inside boundaries: hash normal forms, merge identical subgraphs
-        - Fires continuously during reduction (not a post-pass)
-        - GPU: congruence hashing as a parallel reduce kernel
-        # PICR extension:
-        - Each merged node carries an `origins` attribute: the list of wires that were
-          redirected to it during congruence merging
-        - On reverse pass: merged node splits back along its origins wires when different
-          backward signals demand it — origins attr provides the routing table for split
-
-[x] 21b. Single-threaded reduction — pthread_create is declared but never called 🟡
-        # LoweringPasses.cpp:318 — pthread_create and pthread_join are declared as LLVM
-        # function declarations. But in main() (line 1746), reduction is run synchronously
-        # via a single direct call to worker_thread(as). No threads are ever spawned.
-        # The spec says: "any two active pairs with no shared nodes fire simultaneously."
-        # The current runtime is single-threaded and thus provably non-parallel.
-        # FIX STRATEGY: express the parallel reduction loop in pic.reduce using
-        # scf.parallel or gpu.launch. scf.parallel lowers to OpenMP on CPU;
-        # gpu.launch lowers to SPIR-V on GPU. Both from the same source.
-        - In A1b: emit the worker loop as scf.parallel (or gpu.launch for GPU path)
-        - scf.parallel automatically uses N CPU threads via OpenMP lowering;
-          no manual pthread_create needed, no queue race conditions
-        - Prerequisite: A1b, A4b (queue safety)
-
-[ ] 22. Hot code reloading 🟢
-        - Recompile a function's interaction net graph at runtime
-        - Swap γ⁺ agent's aux wire to new body graph atomically
-        - Requires stable node indexing and PICR GC (item 18 + A7)
-
-[ ] 23. Approximate / stochastic accuracy system 🟢
-        - add-noise/accuracy 0.95 [img kernel] syntax
-        - Carry accuracy metadata through ω agent attributes
-        - Lower to LLVM approx passes (PUMPKIN-style) for hardware hints
-        - Part of std, not a language primitive
-        - Integrate approxMLIR-pass (https://github.com/Studio-Todos/approxMLIR-pass) to support MLIR-level approximate transformations
-
+[x] 19. Unified CPU/GPU reduction pipeline via pic.reduce
+        [x] CPU path via PicRuntimeToLLVMPass + standard LLVM lowering
+        [x] GPU path via PicRuntimeToSPIRVPass with multi-rule kernel
+        [x] GPU worker_thread dispatches all pairs to GPU kernel
+[x] 20. 128-bit node layout audit + PICR history extension
+[x] 20b. δ reverse synchronization barrier
+[ ] 21. E-graph congruence (Rule 4) + origins attribute — merge identical subgraphs inside boundaries
+[x] 21b. Multi-threaded reduction via scf.parallel/gpu.launch
+         Prerequisite: A1b, A4b
+[ ] 22. Hot code reloading
+[ ] 23. Approximate / stochastic accuracy system
 [x] 24. Test suite cleanup
-          - Moved all test files to `test/` directory ✅
-          - Cleaned up root directory from temporary build artifacts ✅
-          - Updated `.todo` and project structure ✅
+[x] 25. Runtime stabilization (structural lowering)
+[x] 26. Snippet lowering & type stability
+[x] 27. Runtime 64-bit support
+[x] 28. Dispatcher scaling & variadic args
+[ ] 29. Dev shell linking issues
+[ ] 30. Language bootstrapping (self-hosting)
+[ ] 32. GPU mirror kernel — backward cleanup pass (gpu_batch_reverse)
+         Prerequisite: items 20, 31, A8
+[ ] 33. Invariant 4 static checker (log_bond/log_state required with annihilate/erase/fire_op)
+         Prerequisite: A5–A8
+[ ] 33b. Invariant 2 static checker — boundary interface consistency
+[ ] 33c. Invariant 3 confluence verification
+[x] 34. PICR correctness test suite
+        [x] test_reversible_annihilation.lin, test_uncompute_sweep.lin, test_boundary_cycle.lin, test_history_logging.lin
+        [ ] test/test_invariant4_checker.lin — deferred (needs item 33)
+[ ] 35. Standalone superoptimization via Souper
 
-[x] 25. Runtime Stabilization (Structural Lowering)
-          - Resolved "must terminate its parent block" errors in `PicRuntimeToLLVMPass` ✅
-          - Streamlined `worker_thread` and `main` initialization blocks ✅
-          - Fixed `i32` vs `!pic_graph.port` type mismatches in `PicGraphToReducePass` ✅
-          - Replaced monolithic static dispatcher with clean linear lowering ✅
+## Known Issues
 
-[x] 26. Snippet Lowering & Type Stability
-          - Isolated snippet parsing via temporary modules and filtered declarations ✅
-          - Implemented type-suffix inference (`_f32`, `_i64`) in `Lowering.c` and `LoweringPasses.cpp` ✅
-          - Added bitcasting layer to bridge generic `i32` ports with snippet types (`f32`, `i1`, `i64`) ✅
-          - Deduplicated RegistryOps to prevent switch-case collisions in dispatcher ✅
-
-[x] 27. Runtime 64-bit Support 🔴
-          - The `dispatch_user_op` currently truncates `f64`/`i64` to 32 bits.
-          - Need to implement 64-bit "words" or a boxing mechanism for the interaction net nodes.
-          - Unblocks: `test_math64.lin`, `test_fmath64.lin`.
-
-[x] 28. Dispatcher Scaling & Variadic Args 🟡
-          - Support `mlir-op` definitions with more than 2 inputs.
-          - Extend `dispatch_user_op` signature or use a variadic calling convention.
-          - ✅ Resolved: Expanded dispatcher to 6 arguments and added ternary/quaternary unpacking to the reduction engine.
-
-[ ] 29. Dev shell linking issues 🟢
-          - result/bin/linc has different libLLVM paths than build/src
-          - Linking works in nix develop but not outside
-          - build/src/linc fails with "execvp failed: No such file"
-          - Need consistent linking environment for lit test suite
-
-[ ] 30. Language Bootstrapping (Self-Hosting) 🟢
-          - Rewrite the Lin compiler (`linc`) in Lin
-          - Requires robust string processing, file I/O, and MLIR bindings in Lin
-          - Goal: A self-hosting compiler that leverages Lin's own parallel reversible runtime
-
-[/] 31. Unified CPU/GPU reduction pipeline via pic.reduce 🟡
-          # Progress: PicRuntimeToSPIRVPass expanded with all base rules (RVEC, ERA, DUP, ANN),
-          # GPU worker_thread dispatches ALL pairs to GPU via pic_gpu_dispatch_helper.
-          # CPU path unchanged. Remaining: mechanical pic.reduce→pic.runtime conversion.
-          #
-          #   pic.reduce (scf + arith + memref)
-          #      └─> PicRuntimeToLLVMPass   → LLVM IR  → CPU binary
-          #      └─> PicRuntimeToSPIRVPass  → SPIR-V   → Vulkan GPU kernel
-          #
-          # Every reduction rule (annihilate, duplicate, erase, fire_op, merge_boundary,
-          # and all PICR ops) is written once in pic.reduce and shared by both targets.
-          # The conversion passes are mechanical: pic_runtime.alloc_node → llvm.call malloc
-          # on CPU, → spirv.AccessChain on GPU. No reduction logic is duplicated.
-          - [~] A1b: PicReduceToRuntimePass emits pic.runtime + pic.reduce marker ops (see A1b)
-          - [~] A2b: rule table as LLVM globals (memref version prototyped, needs conversion pass) (see A2b)
-          - [x] SPIR-V pass expanded: RVEC, ERA, DUP, ANN rules implemented
-          - [x] GPU worker_thread dispatches all pairs to GPU kernel
-          - [x] C3: GPU allowlist (arith, math, func, cf, memref, scf, vector, index)
-          - A3b: fix meta-word encoding and duplication rule in target-independent ops (A3b)
-          - A4b: atomic queue via memref.atomic_rmw, safe under MPMC (see A4b)
-          - Add PicRuntimeToSPIRVPass as a thin sibling of PicRuntimeToLLVMPass
-          - Retire the hand-rolled LLVM builder code in PicRuntimeToLLVMPass; keep only
-            the mechanical dialect conversion (pic_runtime.* → llvm.*)
-
-[ ] 32. GPU mirror kernel — backward cleanup pass 🟡
-        # PICR. Prerequisite: items 20, 31, A8.
-        - Add PicRuntime_GpuBatchReverseOp to PicRuntimeDialect.td
-        - GPU threads execute two primary kernels per boundary scope:
-            1. Forward Evaluation Pass  (existing gpu_batch)
-            2. Mirror-Image Backward Cleanup Pass  (gpu_batch_reverse)
-        - gpu_batch_reverse: same SIMD shape as forward pass, operates on the boundary
-          history log buffer rather than the live redex queue
-        - Persistent GPU residency buffer (item 31): extend to 3-element state:
-            { forward_state, log_delta, backward_cursor }
-        - backward_cursor: index into history log for the uncompute sweep; decrement-only
-
-[ ] 33. Invariant 4 static checker 🟡
-        # PICR correctness tooling. Prerequisite: A5–A8.
-        - Static analysis pass that walks pic.reduce IR inside boundary regions and
-          verifies that no annihilate, erase, or fire_op op appears without a corresponding
-          log_bond or log_state op on the same code path
-        - Emits a warning (not error) when a boundary rewrite reduces graph entropy
-          without logging — catches accidental ε usage inside boundary scopes
-        - Integrate into `linc check` subcommand alongside existing type-check pass
-
-[ ] 33b. Invariant 2 static checker — boundary interface consistency 🟡
-        # Spec: "When a wire crosses a boundary, both sides must agree on the
-        # wire's polarity. This is what makes effect bubbling well-defined."
-        # No verification pass currently exists for this invariant.
-        - Add a pass that walks each PicGraph_BoundaryOp and verifies every wire
-          crossing the boundary has matching polarity on both sides
-        - Wire polarity is encoded in port values (bit 30-31 of meta word);
-          verify that corresponding input/output ports carry consistent polarity
-        - Prerequisite: A8 (BoundaryOp extension to expose interface wires clearly)
-
-[ ] 33c. Invariant 3 confluence verification 🟢
-        # Spec: "Rules 1-4 must be confluent — any order of reduction reaches
-        # the same result." This is a mathematical property of the interaction net
-        # system, not a runtime check. Tracking item for eventual verification.
-        - Document confluence proof for PICR rule set in Architecture.md
-        - Verify op labels (particularly side-effecting ops) preserve confluence via
-          effect tokens or boundary sequencing
-        - Future: integrate with a confluence checker or formal verification tool
-
-[x] 34. PICR correctness test suite 🟡
-        # Prerequisite: A5–A8, items 20b, 32, 33.
-        # Initial test suite added; tests use compile + print-literal pattern.
-        # Full B4 cycle / R-signal runtime tests deferred to items 20b, 32, 33.
-        [x] test/test_reversible_annihilation.lin — compile + execute, verifies baseline annihilation path
-        [x] test/test_uncompute_sweep.lin          — compile + execute, verifies uncompute execution path
-        [x] test/test_boundary_cycle.lin           — compile + execute, verifies boundary scope execution
-        [x] test/test_history_logging.lin          — compile + execute, verifies PICR infrastructure
-        [x] test/test_reverse_dup_barrier.lin      — deferred: requires item 20b (δ sync barrier)
-        [ ] test/test_invariant4_checker.lin       — deferred: requires item 33 (static checker)
-
-[ ] 35. Standalone superoptimization via Souper 🟢
-        - Integrate souper-pass (https://github.com/Studio-Todos/souper-pass) as a standalone superoptimization LLVM pass
-        - Retains accuracy constraints / specifications during superoptimization and translation
-
-## ⚠️  Known Failing Tests (as of 2026-06-02)
-
-All 167 regression tests are now passing successfully! (167/167, 100%)
-6 new tests added in picr-priority-work branch:
-  test/test_queue_safety.lin         (A4b — MPMC queue)
-  test/test_dup_linearity.lin        (A3b — duplication port linearity)
-  test/test_rule_table_capacity.lin  (A2b — runtime rule table)
-  test/test_f64_roundtrip.lin        (item 27 — f64 encoding integrity)
-  test/test_field_access_linearity.lin (item 4d — proj_N eraser)
-  test/test_closure_capture_add.lin  (item 4c — findFreeVars builtin exemption)
-
-Pre-existing known issue (not a regression):
-  exec_io.lin — interactive I/O test requiring a TTY; fails in lit's non-interactive runner.
-
-[x] F1. Lin :: test_array.lin
-[x] F2. Lin :: test_array64.lin
-[x] F3. Lin :: test_array64_free.lin
-[x] F4. Lin :: test_array64_more.lin
-[x] F5. Lin :: test_array_more.lin
-[x] F6. Lin :: std/test_array_new.lin
-[x] F7. Lin :: std/test_array64_new.lin
-[x] F8. Lin :: comprehensive.lin  (imports std/array.lin)
-[x] F9. Lin :: control/test_either_*.lin  (SIGSEGV from boundary erasure — fixed via getInsertPoint)
-[x] F10. Lin :: fib.lin / test_recursion.lin / test_bool.lin / test_string.lin (broken by erroneous AST_BLOCK boundary wrapping — reverted)
+- exec_io.lin: interactive I/O test requiring a TTY; fails in lit's non-interactive runner
+- All 170 regression tests pass (100%) as of 2026-06-18

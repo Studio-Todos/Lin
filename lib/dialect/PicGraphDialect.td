@@ -46,11 +46,14 @@ def PicGraph_ActivePairOp : PicGraph_Op<"active_pair"> {
 }
 
 // A boundary is a region in the MLIR sense
+// A8: Extended with origins attr and history_log region for B4 Reversible Boundary Cycle.
+// origins — string labels of agents inside this boundary (used for rollback metadata).
+// history_log — optional region containing structural delta ops for reverse uncompute.
 def PicGraph_BoundaryOp : PicGraph_Op<"boundary"> {
-  let summary = "Boundary region";
-  let arguments = (ins Variadic<PicGraph_PortType>:$inputs);
+  let summary = "Boundary region with history log";
+  let arguments = (ins Variadic<PicGraph_PortType>:$inputs, OptionalAttr<StrArrayAttr>:$origins);
   let results = (outs Variadic<PicGraph_PortType>:$outputs);
-  let regions = (region AnyRegion:$body);
+  let regions = (region AnyRegion:$body, AnyRegion:$history_log);
 }
 
 def PicGraph_RegistryOp : PicGraph_Op<"registry"> {

@@ -1007,14 +1007,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
             linkValues(exitBlock, loc, exitMainArg, exitResultPort);
 
             MlirOperationState exitRetState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
-            MlirType exitI64Type = mlirTypeParseGet(ctx, mlirStringRefCreateFromCString("i64"));
-            MlirOperationState exitCastState = mlirOperationStateGet(mlirStringRefCreateFromCString("builtin.unrealized_conversion_cast"), loc);
-            mlirOperationStateAddOperands(&exitCastState, 1, &exitResultPort);
-            mlirOperationStateAddResults(&exitCastState, 1, &exitI64Type);
-            MlirOperation exitCast = mlirOperationCreate(&exitCastState);
-            mlirBlockAppendOwnedOperation(exitBlock, exitCast);
-            MlirValue exitRetVal = mlirOperationGetResult(exitCast, 0);
-            mlirOperationStateAddOperands(&exitRetState, 1, &exitRetVal);
+            mlirOperationStateAddOperands(&exitRetState, 1, &exitResultPort);
             mlirBlockAppendOwnedOperation(exitBlock, mlirOperationCreate(&exitRetState));
         }
 
@@ -1139,14 +1132,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
             linkValues(bodyBlock, loc, appP2, bodyResultPort);
 
             MlirOperationState bodyRetState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
-            MlirType bodyI64Type = mlirTypeParseGet(ctx, mlirStringRefCreateFromCString("i64"));
-            MlirOperationState bodyCastState = mlirOperationStateGet(mlirStringRefCreateFromCString("builtin.unrealized_conversion_cast"), loc);
-            mlirOperationStateAddOperands(&bodyCastState, 1, &bodyResultPort);
-            mlirOperationStateAddResults(&bodyCastState, 1, &bodyI64Type);
-            MlirOperation bodyCast = mlirOperationCreate(&bodyCastState);
-            mlirBlockAppendOwnedOperation(bodyBlock, bodyCast);
-            MlirValue bodyRetVal = mlirOperationGetResult(bodyCast, 0);
-            mlirOperationStateAddOperands(&bodyRetState, 1, &bodyRetVal);
+            mlirOperationStateAddOperands(&bodyRetState, 1, &bodyResultPort);
             mlirBlockAppendOwnedOperation(bodyBlock, mlirOperationCreate(&bodyRetState));
         }
 
@@ -1299,14 +1285,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
             linkValues(macroBlock, loc, eitherP0, macroResultPort);
 
             MlirOperationState macroRetState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
-            MlirType macroI64Type = mlirTypeParseGet(ctx, mlirStringRefCreateFromCString("i64"));
-            MlirOperationState macroCastState = mlirOperationStateGet(mlirStringRefCreateFromCString("builtin.unrealized_conversion_cast"), loc);
-            mlirOperationStateAddOperands(&macroCastState, 1, &macroResultPort);
-            mlirOperationStateAddResults(&macroCastState, 1, &macroI64Type);
-            MlirOperation macroCast = mlirOperationCreate(&macroCastState);
-            mlirBlockAppendOwnedOperation(macroBlock, macroCast);
-            MlirValue macroRetVal = mlirOperationGetResult(macroCast, 0);
-            mlirOperationStateAddOperands(&macroRetState, 1, &macroRetVal);
+            mlirOperationStateAddOperands(&macroRetState, 1, &macroResultPort);
             mlirBlockAppendOwnedOperation(macroBlock, mlirOperationCreate(&macroRetState));
 
             free(v_trues);
@@ -1573,16 +1552,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         mlirBlockAppendOwnedOperation(innerBlock, mlirOperationCreate(&linkBodyState));
 
         MlirOperationState retState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
-        // Cast resultPort to i64 for return signature
-        MlirType i64Type = mlirTypeParseGet(ctx, mlirStringRefCreateFromCString("i64"));
-        MlirOperationState castRetState = mlirOperationStateGet(mlirStringRefCreateFromCString("builtin.unrealized_conversion_cast"), loc);
-        mlirOperationStateAddOperands(&castRetState, 1, &resultPort);
-        mlirOperationStateAddResults(&castRetState, 1, &i64Type);
-        MlirOperation castRet = mlirOperationCreate(&castRetState);
-        mlirBlockAppendOwnedOperation(innerBlock, castRet);
-        MlirValue retVal = mlirOperationGetResult(castRet, 0);
-
-        mlirOperationStateAddOperands(&retState, 1, &retVal);
+        mlirOperationStateAddOperands(&retState, 1, &resultPort);
         mlirBlockAppendOwnedOperation(innerBlock, mlirOperationCreate(&retState));
 
         // Phase 2.5: Register payload for the dispatcher

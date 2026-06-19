@@ -11,6 +11,7 @@ Makefile
 .ninja_log
 
 # Compiled object files
+*.ppm
 *.o
 *.a
 *.so

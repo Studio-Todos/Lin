@@ -23,6 +23,7 @@
 #include <map>
 
 using namespace mlir;
+using namespace mlir::pic::runtime;
 
 namespace {
 
@@ -45,6 +46,11 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
       auto i32Type = builder.getI32Type();
       auto i64Type = builder.getI64Type();
       DenseMap<Value, Value> valueToPort;
+
+      // A8: Track boundary clusters, node indices, and origins for B4 cycle
+      int nextBoundaryId = 1;
+      DenseMap<int, SmallVector<Value>> boundaryToNodes;
+      DenseMap<int, SmallVector<std::string>> boundaryOrigins;
 
       auto getInsertPoint = [&](Operation *o) -> Operation* {
           Operation *curr = o;
@@ -140,23 +146,31 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
             }
         } else val = opcodeForLabel(label);
 
-        uint8_t nodeType = NODE_OP; // Default to omega/op
-        if (agentType == "constructor") nodeType = NODE_CON;
-        else if (agentType == "destructor") nodeType = NODE_DES;
-        else if (agentType == "gamma") {
-            if (polVal == 0) nodeType = NODE_CON;
-            else if (polVal == 1) nodeType = NODE_DES;
-        }
-        else if (agentType == "delta") nodeType = NODE_DUP;
-        else if (agentType == "epsilon") nodeType = NODE_ERA;
-        else if (agentType == "history" || agentType == "H") nodeType = NODE_HIS;
-        else if (agentType == "log_bond" || agentType == "L") nodeType = NODE_LOG;
-        else if (agentType == "reverse_vector" || agentType == "R") nodeType = NODE_RVEC;
+        uint8_t nodeType = nodeTypeForAgent(agentType, polVal);
         
         uint8_t allocType = (polVal << 6) | nodeType;
         Value valConst = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(val));
         auto alloc = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, allocType, valConst, builder.getBoolAttr(insideBoundary));
         Value nodeIdx = alloc.getIndex();
+
+        // A8: collect node indices and origins per boundary cluster
+        if (insideBoundary) {
+            Operation *bp = op->getParentOp();
+            while (bp && bp != funcOp) {
+                if (bp->getName().getStringRef() == "pic_graph.boundary") break;
+                bp = bp->getParentOp();
+            }
+            if (bp) {
+                auto it = boundaryToNodes.find((intptr_t)bp);
+                if (it == boundaryToNodes.end()) {
+                    boundaryToNodes[(intptr_t)bp] = SmallVector<Value>{nodeIdx};
+                    boundaryOrigins[(intptr_t)bp] = SmallVector<std::string>{label.str()};
+                } else {
+                    it->second.push_back(nodeIdx);
+                    boundaryOrigins[(intptr_t)bp].push_back(label.str());
+                }
+            }
+        }
         
         if ((label == "num" || label == "i32" || label == "i64" || label == "f64" || label == "bool" || label == "str") && (op.getValue() || op.getStrVal())) {
             if (label == "str") {
@@ -177,7 +191,7 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
                 uint64_t fullVal = op.getValue().value();
                 Value lowVal = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(fullVal & 0xFFFFFFFF));
                 builder.create<pic::runtime::SetPortOp>(loc, nodeIdx, builder.getI8IntegerAttr(1), lowVal);
-                if (label == "f64" || label == "i64" || label == "num") {
+                if (is64BitTypeLabel(label.str())) {
                     Value highVal = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(fullVal >> 32));
                     builder.create<pic::runtime::SetPortOp>(loc, nodeIdx, builder.getI8IntegerAttr(2), highVal);
                 }
@@ -198,7 +212,7 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
                     break;
                 }
             }
-            bool isLit = (label == "num" || label == "i1" || label == "i8" || label == "i16" || label == "i32" || label == "i64" || label == "f32" || label == "f64" || label == "bool" || label == "str" || label.starts_with("STR_"));
+            bool isLit = isKnownLiteralType(label.str()) || label.starts_with("STR_");
             if (isUserOp || isLit) {
                 valueToPort[op.getP0()] = makePort(0); // Callee/Function/Literal -> Port 0 (Principal)
                 valueToPort[op.getP1()] = makePort(1); // Arg/Bundle      -> Port 1
@@ -241,6 +255,31 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
               builder.create<pic::runtime::LinkOp>(op.getLoc(), safeTrunc(pA), safeTrunc(pB));
           }
       });
+
+      // A8: Set origins attr on each BoundaryOp from collected labels
+      funcOp.walk([&](pic::graph::BoundaryOp boundaryOp) {
+          auto it = boundaryOrigins.find((intptr_t)boundaryOp.getOperation());
+          if (it != boundaryOrigins.end() && !it->second.empty()) {
+              SmallVector<Attribute> originAttrs;
+              for (auto &s : it->second)
+                  originAttrs.push_back(builder.getStringAttr(s));
+              boundaryOp->setAttr("origins", builder.getArrayAttr(originAttrs));
+          }
+      });
+
+      // A8: Emit consolidated checkpoint_boundary + uncompute_sweep ops for each boundary cluster
+      for (auto &kv : boundaryToNodes) {
+          auto &nodeValues = kv.second;
+          if (!nodeValues.empty()) {
+              int bId = nextBoundaryId++;
+              builder.setInsertionPointToStart(&funcOp.getBody().front());
+              builder.create<pic::runtime::CheckpointBoundaryOp>(
+                  funcOp.getLoc(), builder.getI32IntegerAttr(bId), nodeValues);
+              Value bIdVal = builder.create<arith::ConstantOp>(
+                  funcOp.getLoc(), i32Type, builder.getI32IntegerAttr(bId));
+              builder.create<pic::runtime::UncomputeSweepOp>(funcOp.getLoc(), bIdVal);
+          }
+      }
 
       SmallVector<Operation*> toErase;
       funcOp.walk([&](pic::graph::LinkOp op) {

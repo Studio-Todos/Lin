@@ -90,5 +90,10 @@ def PicRuntime_SetHistoryOp : PicRuntime_Op<"set_history"> {
   let arguments = (ins I32:$node_index, I8Attr:$word_index, I64:$word_value);
 }
 
+def PicRuntime_CheckpointBoundaryOp : PicRuntime_Op<"checkpoint_boundary"> {
+  let summary = "Consolidated boundary checkpoint marker";
+  let arguments = (ins I32Attr:$boundary_id, Variadic<I32>:$node_indices);
+}
+
 #endif // PIC_RUNTIME_DIALECT
 
