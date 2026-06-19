@@ -82,11 +82,11 @@
         [x] Runtime register_rule() mechanism exists
         [x] Extract shared type constants to PicReduceUtils.h, replace hardcoded strings across all dialect passes
         [x] Remove hardcoded type strings from compile-time type dispatch (Semantic.cpp)
-        [ ] Make type tags fully user-definable via std library
-        [ ] Derive literal type label list from std library
+        [x] Make type tags fully user-definable via std library
+        [x] Derive literal type label list from std library
         [x] Replace Binary op dispatch table (kBinVariants) with typeIndex()
         [x] Replace hardcoded type inference rules (AST_NUMBER→"i64", etc.)
-        [ ] Infix operator → function name mapping configurable
+        [x] Infix operator → function name mapping configurable
 
 ## 🔵 Architecture — Long-Term
 

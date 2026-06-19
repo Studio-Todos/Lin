@@ -22,6 +22,45 @@ inline constexpr const char* kF32Type = "f32";
 inline constexpr const char* kF64Type = "f64";
 inline constexpr const char* kStrType = "str";
 
+// Load known type labels from the module's lin.type_names attribute, falling back
+// to kAllLiteralTypes if not present.
+inline SmallVector<std::string> getTypeLabels(ModuleOp module) {
+    if (auto attr = module->getAttrOfType<StringAttr>("lin.type_names")) {
+        SmallVector<std::string> result;
+        StringRef val = attr.getValue();
+        while (!val.empty()) {
+            size_t comma = val.find(',');
+            if (comma == StringRef::npos) {
+                result.push_back(val.str());
+                break;
+            }
+            result.push_back(val.substr(0, comma).str());
+            val = val.substr(comma + 1);
+        }
+        // Also include the fallback types that aren't typically in type declarations
+        // but are needed by the runtime (e.g., "num")
+        for (auto lit : kAllLiteralTypes) {
+            bool found = false;
+            for (auto &r : result) {
+                if (r == lit) { found = true; break; }
+            }
+            if (!found) result.push_back(lit);
+        }
+        return result;
+    }
+    SmallVector<std::string> fallback;
+    for (auto lit : kAllLiteralTypes) fallback.push_back(lit);
+    return fallback;
+}
+
+// Check if a type label uses 2 ports (64-bit) vs 1 port (32-bit).
+// Known types: "f64", "i64", "num" are 64-bit. Others are guessed by suffix convention.
+inline bool is64BitLabel(const std::string& label) {
+    if (label == "f64" || label == "i64" || label == "num") return true;
+    if (label.size() > 2 && label.substr(label.size() - 2) == "64") return true;
+    return false;
+}
+
 inline int typeIndex(const std::string& type) {
     if (type == "i32") return 0;
     if (type == "i64") return 1;
@@ -35,6 +74,14 @@ inline bool isKnownLiteralType(const std::string& label) {
         if (label == lit) return true;
     }
     return false;
+}
+
+inline bool isKnownLiteralType(const std::string& label, ModuleOp module) {
+    auto types = getTypeLabels(module);
+    for (auto &t : types) {
+        if (label == t) return true;
+    }
+    return isKnownLiteralType(label);
 }
 
 inline bool is64BitTypeLabel(const std::string& label) {
