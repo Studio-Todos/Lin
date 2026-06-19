@@ -1,4 +1,5 @@
 #include "lin/Semantic.h"
+#include "../lib/dialect/PicReduceUtils.h"
 #include <iostream>
 #include <string>
 #include <unordered_set>
@@ -350,13 +351,13 @@ bool hasGpuAnnotation(AstNode *node) {
     switch (node->type) {
         case AST_FUNC_DECL:
             if (node->as.func_decl.dispatch && 
-                strncmp(node->as.func_decl.dispatch, "gpu", node->as.func_decl.dispatch_len) == 0) {
+                strncmp(node->as.func_decl.dispatch, kTargetGpu, node->as.func_decl.dispatch_len) == 0) {
                 return true;
             }
             return hasGpuAnnotation(node->as.func_decl.body);
         case AST_MLIR_OP:
             if (node->as.mlir_op.dispatch && 
-                strncmp(node->as.mlir_op.dispatch, "gpu", node->as.mlir_op.dispatch_len) == 0) {
+                strncmp(node->as.mlir_op.dispatch, kTargetGpu, node->as.mlir_op.dispatch_len) == 0) {
                 return true;
             }
             return false;

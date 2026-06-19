@@ -164,6 +164,9 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
         StringAttr n = op->getAttrOfType<StringAttr>("op_name");
         StringAttr p = op->getAttrOfType<StringAttr>("payload");
         StringAttr argsAttr = op->getAttrOfType<StringAttr>("arg_names");
+        StringAttr dispatchAttr = op->getAttrOfType<StringAttr>("dispatch");
+        std::string forcedTarget = dispatchAttr ? dispatchAttr.getValue().str() : "";
+        bool isGpuCapable = true;
         if (n && p) {
             std::string label = n.getValue().str();
             if (label.compare(0, 4, "STR_") != 0) {
@@ -386,7 +389,7 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
                     }
 
                     func::FuncOp tempFunc = parsedSnippet ? parsedSnippet->lookupSymbol<func::FuncOp>("temp") : nullptr;
-                    bool isGpuCapable = true;
+                    isGpuCapable = true;
                     if (tempFunc) {
                         tempFunc.walk([&](Operation *tempOp) {
                             if (auto* dialect = tempOp->getDialect()) {
@@ -515,20 +518,15 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
                         bTerm.create<func::ReturnOp>(module.getLoc(), zeroRet);
                     }
                 }
-                userOps.push_back({opcodeForLabel(label), label, funcName, (int)numArgs, argTypes});
+                SmallVector<std::string> targets = {"cpu"};
+                if (isGpuCapable) targets.push_back("gpu");
+                userOps.push_back(UserOp(opcodeForLabel(label), label, funcName, (int)numArgs, argTypes, targets, forcedTarget));
             }
         }
     }
 
     if (!gpuOpAttrs.empty()) {
         module->setAttr("pic.gpu_user_ops", builder.getDictionaryAttr(gpuOpAttrs));
-    }
-
-    llvm::SmallDenseSet<uint32_t> gpuOpHashes;
-    if (auto gpuOpsAttr = module->getAttrOfType<DictionaryAttr>("pic.gpu_user_ops")) {
-        for (auto entry : gpuOpsAttr) {
-            gpuOpHashes.insert(opcodeForLabel(entry.getName()));
-        }
     }
 
     for (auto op : regOps) {
@@ -797,11 +795,16 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
           }
 
           Value isGpu = builder.create<arith::ConstantOp>(loc, i1Type, builder.getBoolAttr(false));
-          if (target == TargetBackend::GPU && !gpuOpHashes.empty()) {
-              for (auto hash : gpuOpHashes) {
-                  Value hashConst = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(hash));
-                  Value cmp = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, impl, hashConst);
-                  isGpu = builder.create<arith::OrIOp>(loc, isGpu, cmp);
+          if (target == TargetBackend::GPU) {
+              for (auto &gop : userOps) {
+                  bool hasGpu = std::find(gop.targets.begin(), gop.targets.end(), "gpu") != gop.targets.end();
+                  bool forcedGpu = (gop.forcedTarget == "gpu");
+                  bool forcedOff = (gop.forcedTarget == "cpu");
+                  if ((hasGpu || forcedGpu) && !forcedOff) {
+                      Value hashConst = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(gop.hash));
+                      Value cmp = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, impl, hashConst);
+                      isGpu = builder.create<arith::OrIOp>(loc, isGpu, cmp);
+                  }
               }
           }
 
@@ -810,7 +813,7 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
           builder.create<cf::CondBranchOp>(loc, isUnary, doUnary, checkBinary);
 
           builder.setInsertionPointToStart(doUnary);
-          if (target == TargetBackend::GPU && !gpuOpHashes.empty()) {
+          if (target == TargetBackend::GPU) {
               Block *gpuBranch = funcOp.addBlock();
               Block *cpuBranch = funcOp.addBlock();
               builder.create<cf::CondBranchOp>(loc, isGpu, gpuBranch, cpuBranch);
@@ -878,7 +881,7 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
           Value callArg0_64 = builder.create<arith::SelectOp>(loc, isCall, v0_64_bin, firstArg_64);
           Value callArg1_64 = builder.create<arith::SelectOp>(loc, isCall, valNode_aux2_64, v0_64_bin);
 
-          if (target == TargetBackend::GPU && !gpuOpHashes.empty()) {
+          if (target == TargetBackend::GPU) {
               Block *gpuBranchBin = funcOp.addBlock();
               Block *cpuBranchBin = funcOp.addBlock();
               builder.create<cf::CondBranchOp>(loc, isGpu, gpuBranchBin, cpuBranchBin);

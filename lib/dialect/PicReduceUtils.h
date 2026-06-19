@@ -154,12 +154,24 @@ enum class TargetBackend {
     GPU
 };
 
+inline constexpr const char* kTargetGpu = "gpu";
+inline constexpr const char* kTargetCpu = "cpu";
+
 struct UserOp {
     uint32_t hash;
     std::string label;
     std::string funcName;
     int numArgs;
     SmallVector<std::string> argTypes;
+    SmallVector<std::string> targets;
+    std::string forcedTarget;
+
+    UserOp() = default;
+    UserOp(uint32_t hash, const std::string& label, const std::string& funcName,
+           int numArgs, const SmallVector<std::string>& argTypes,
+           const SmallVector<std::string>& targets, const std::string& forcedTarget)
+        : hash(hash), label(label), funcName(funcName), numArgs(numArgs),
+          argTypes(argTypes), targets(targets), forcedTarget(forcedTarget) {}
 };
 
 #endif // PIC_REDUCE_UTILS_H

@@ -12,12 +12,12 @@
 [x] C1. Replace indirect dispatch with static opcode switch
 [x] C2. Formalize host-allocated arena — no malloc inside kernels
        [x] Express arena as memref in pic.reduce (not LLVM globals)
-[/] C3. ω GPU eligibility check at mlir-op registration time
+[x] C3. ω GPU eligibility check at mlir-op registration time
        [x] Dialect legality check runs when dispatch=="gpu"
        [x] GPU-legal allowlist (arith, math, func, cf, memref, scf, vector, index)
-       [ ] Auto-classify all ops at registration time (not just tagged ones)
-       [ ] Support @cpu override annotation
-       [ ] Replace hardcoded GPU dispatch string check (Semantic.cpp:328)
+       [x] Auto-classify all ops at registration time (not just tagged ones)
+       [x] Support @cpu override annotation
+       [x] Replace hardcoded GPU dispatch string check (Semantic.cpp:328)
 
 [x] A1. pic.reduce pass: implement reduction rules in target-independent MLIR
 [x] A1b. pic.reduce → pic.runtime pipeline: PicReduceToRuntimePass emits pic.reduce markers,
