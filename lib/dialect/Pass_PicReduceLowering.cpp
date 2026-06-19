@@ -703,6 +703,16 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
           Value stateArg = eraOp.getState();
           if (handleGpuDispatch(nodeA, nodeB, stateArg)) continue;
 
+          auto freeNode = [&](Value nodeIdx) {
+              auto fcGlobal = builder.create<memref::GetGlobalOp>(loc, MemRefType::get({}, i32Type), "__pic_free_count");
+              Value oldCount = builder.create<memref::AtomicRMWOp>(loc, i32Type, arith::AtomicRMWKind::addi,
+                  builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(1)),
+                  fcGlobal, ValueRange{});
+              auto flGlobal = builder.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i32Type), "__pic_free_list");
+              Value storeIdx = builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), oldCount);
+              builder.create<memref::StoreOp>(loc, nodeIdx, flGlobal, ValueRange{storeIdx});
+          };
+
           Value metaA = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(3));
           Value metaB = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeB, builder.getI8IntegerAttr(3));
           Value labelA = builder.create<arith::AndIOp>(loc, metaA, c0xFFFFFF_i32);
@@ -723,6 +733,7 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
           builder.create<cf::CondBranchOp>(loc, isAnn, doEraAnn, doEraProp);
 
           builder.setInsertionPointToStart(doEraAnn);
+          freeNode(nodeA); freeNode(nodeB);
           builder.create<cf::BranchOp>(loc, lHead);
 
           builder.setInsertionPointToStart(doEraProp);
@@ -732,9 +743,11 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
           builder.create<cf::CondBranchOp>(loc, otherIsLit, eraLitCase, eraNormalProp);
 
           builder.setInsertionPointToStart(eraLitCase);
+          freeNode(nodeA); freeNode(nodeB);
           builder.create<cf::BranchOp>(loc, lHead);
 
           builder.setInsertionPointToStart(eraNormalProp);
+          freeNode(nodeA); freeNode(nodeB);
           Value era1 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(ALLOC_ERA), c0_i64, builder.getBoolAttr(false));
           Value era2 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(ALLOC_ERA), c0_i64, builder.getBoolAttr(false));
           Value auxOther1 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, otherNode, builder.getI8IntegerAttr(1));

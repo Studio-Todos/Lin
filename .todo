@@ -74,10 +74,10 @@
 [x] 15. `linc run` command
 [x] 16. @gpu/@cpu per-function annotations
 [x] 17. Human-readable error messages (source locations, type mismatch diagnostics)
-[ ] 18. Node GC / arena reset
-       - Outside boundaries: ε erasure propagation (fast GC path)
-       - Inside boundaries: H nodes + R signal via B4 cycle (A8)
-       - Arena reset after full reduction epoch
+[x] 18. Node GC / arena reset
+        [x] Outside boundaries: ε erasure propagation (fast GC path) — free list + push in EraseOp + check in AllocNodeOp
+        [x] Inside boundaries: H nodes + R signal via B4 cycle (A8)
+        [x] Arena reset after full reduction epoch
 [x] 18b. Remove compiler-hardcoded types and primitives (dialect passes)
         [x] Runtime register_rule() mechanism exists
         [x] Extract shared type constants to PicReduceUtils.h, replace hardcoded strings across all dialect passes
