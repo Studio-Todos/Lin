@@ -11,7 +11,7 @@
 
 [x] C1. Replace indirect dispatch with static opcode switch
 [x] C2. Formalize host-allocated arena — no malloc inside kernels
-       [ ] Express arena as memref in pic.reduce (not LLVM globals)
+       [x] Express arena as memref in pic.reduce (not LLVM globals)
 [/] C3. ω GPU eligibility check at mlir-op registration time
        [x] Dialect legality check runs when dispatch=="gpu"
        [x] GPU-legal allowlist (arith, math, func, cf, memref, scf, vector, index)
@@ -24,16 +24,16 @@
          PicReduceLoweringPass expands to pic.runtime ops, PicRuntimeToLLVMPass converts mechanically
 [x] A1c. Node type encodings moved to PicRuntimeDialect.h (single source of truth)
 [x] A2. Rule lookup table (user-extensible dispatch)
-[ ] A2b. Rewrite rule table as memref in pic.reduce for CPU+GPU portability
+[x] A2b. Rewrite rule table as memref in pic.reduce for CPU+GPU portability
          [x] register_rule()/lookup_rule() with 5-field entries (typeA, labelA, typeB, labelB, impl)
-         [ ] Rewrite as memref in pic.reduce
+         [x] Rewrite as memref in pic.reduce
          Prerequisite: A1b
 [x] A3. Fix γ⁺/γ⁻ encoding for function agents
 [x] A3b. Polarity meta-word encoding reconciled — named constants, consistent decode paths
 [x] A4. Boundary lowering (checkpoint, atomic-OR bitmask, per-node history)
 [x] A4b. Redex queue bounded & MPMC-safe
          [x] Bounds check, AtomicRMWOp::add for all push paths
-         [ ] Express head/tail as memref.atomic_rmw in pic.reduce
+         [x] Express head/tail as memref.atomic_rmw in pic.reduce
          [ ] MPMC documentation in Architecture.md
 [x] A5. PICR node set (H, L, R) in pic.graph dialect
 [x] A6. Reversible Annihilation — L-bond deposition in pic.reduce
@@ -73,20 +73,21 @@
 
 [x] 15. `linc run` command
 [x] 16. @gpu/@cpu per-function annotations
-[ ] 17. Human-readable error messages (source locations, type mismatch diagnostics)
+[x] 17. Human-readable error messages (source locations, type mismatch diagnostics)
 [ ] 18. Node GC / arena reset
        - Outside boundaries: ε erasure propagation (fast GC path)
        - Inside boundaries: H nodes + R signal via B4 cycle (A8)
        - Arena reset after full reduction epoch
-[/] 18b. Remove compiler-hardcoded types and primitives
-       [x] Runtime register_rule() mechanism exists
-       [ ] Remove hardcoded type strings from compile-time type dispatch (Semantic.cpp)
-       [ ] Remove hardcoded type defaults from Parser.c (line 767)
-       [ ] Make type tags fully user-definable via std library
-       [ ] Derive literal type label list from std library
-       [ ] Replace Binary op dispatch table (kBinVariants) with registry lookup
-       [ ] Replace hardcoded type inference rules (AST_NUMBER→"i64", etc.)
-       [ ] Infix operator → function name mapping configurable
+[x] 18b. Remove compiler-hardcoded types and primitives (dialect passes)
+        [x] Runtime register_rule() mechanism exists
+        [x] Extract shared type constants to PicReduceUtils.h, replace hardcoded strings across all dialect passes
+        [ ] Remove hardcoded type strings from compile-time type dispatch (Semantic.cpp)
+        [ ] Remove hardcoded type defaults from Parser.c (line 767)
+        [ ] Make type tags fully user-definable via std library
+        [ ] Derive literal type label list from std library
+        [ ] Replace Binary op dispatch table (kBinVariants) with registry lookup
+        [ ] Replace hardcoded type inference rules (AST_NUMBER→"i64", etc.)
+        [ ] Infix operator → function name mapping configurable
 
 ## 🔵 Architecture — Long-Term
 

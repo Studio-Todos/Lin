@@ -379,9 +379,10 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
                             }
                         }
                     } else {
-                        llvm::errs() << "PARSE ERROR: Failed to parse MLIR snippet for user_op_" << label << "\n";
-                        llvm::errs() << "--- tempModuleStr ---\n" << tempModuleStr << "\n--- end ---\n";
-                        abort();
+                        module.emitError() << "Failed to parse MLIR snippet for user_op_"
+                            << label << "\ntempModuleStr:\n" << tempModuleStr;
+                        signalPassFailure();
+                        return;
                     }
 
                     func::FuncOp tempFunc = parsedSnippet ? parsedSnippet->lookupSymbol<func::FuncOp>("temp") : nullptr;

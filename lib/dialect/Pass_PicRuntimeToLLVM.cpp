@@ -668,8 +668,12 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
 
 
     func::FuncOp entry = module.lookupSymbol<func::FuncOp>("main_inet_entry");
-    if (entry) {
-        builder.setInsertionPoint(entry);
+    if (!entry) {
+        module.emitError() << "PicRuntimeToLLVMPass: required function 'main_inet_entry' not found";
+        signalPassFailure();
+        return;
+    }
+    builder.setInsertionPoint(entry);
         auto m = builder.create<LLVM::LLVMFuncOp>(entry.getLoc(), "main", LLVM::LLVMFunctionType::get(i32Type, {}));
         Block *mE = m.addEntryBlock(); builder.setInsertionPointToStart(mE);
         for (auto &op : userOps) {
@@ -723,7 +727,6 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             builder.create<LLVM::CallOp>(entry.getLoc(), TypeRange{}, "pic_gpu_cleanup", ValueRange{});
         }
         builder.create<LLVM::ReturnOp>(entry.getLoc(), ValueRange{builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(0))});
-    }
 
     SmallVector<Operation*> castsToErase;
     module.walk([&](UnrealizedConversionCastOp op) {
