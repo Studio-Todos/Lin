@@ -81,12 +81,11 @@
 [x] 18b. Remove compiler-hardcoded types and primitives (dialect passes)
         [x] Runtime register_rule() mechanism exists
         [x] Extract shared type constants to PicReduceUtils.h, replace hardcoded strings across all dialect passes
-        [ ] Remove hardcoded type strings from compile-time type dispatch (Semantic.cpp)
-        [ ] Remove hardcoded type defaults from Parser.c (line 767)
+        [x] Remove hardcoded type strings from compile-time type dispatch (Semantic.cpp)
         [ ] Make type tags fully user-definable via std library
         [ ] Derive literal type label list from std library
-        [ ] Replace Binary op dispatch table (kBinVariants) with registry lookup
-        [ ] Replace hardcoded type inference rules (AST_NUMBER→"i64", etc.)
+        [x] Replace Binary op dispatch table (kBinVariants) with typeIndex()
+        [x] Replace hardcoded type inference rules (AST_NUMBER→"i64", etc.)
         [ ] Infix operator → function name mapping configurable
 
 ## 🔵 Architecture — Long-Term

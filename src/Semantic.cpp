@@ -143,10 +143,10 @@ static std::string inferType(AstNode *node, const TypeEnv &env,
                               const std::unordered_map<std::string, OpSig> &sigs) {
     if (!node) return "";
     switch (node->type) {
-        case AST_NUMBER: return "i64";
-        case AST_FLOAT:  return "f64";
-        case AST_BOOL:   return "bool";
-        case AST_STRING: return "str";
+        case AST_NUMBER: return kDefaultType;
+        case AST_FLOAT:  return kF64Type;
+        case AST_BOOL:   return kBoolType;
+        case AST_STRING: return kStrType;
         case AST_IDENTIFIER: {
             std::string nm(node->as.identifier.name, node->as.identifier.length);
             auto it = env.find(nm); return it != env.end() ? it->second : "";
@@ -181,11 +181,11 @@ static const std::unordered_map<std::string, std::array<const char*, 4>> kBinVar
 static const std::unordered_map<std::string, std::unordered_map<std::string, const char*>> kUnaryVariants = {
     {"print", {
         {"i32",  "print_i32"},
-        {"i64",  "print_i64"},
+        {kDefaultType, "print_i64"},
         {"f32",  "print_f32"},
-        {"f64",  "print_f64"},
-        {"str",  "print_str"},
-        {"bool", "print_i32"},
+        {kF64Type,  "print_f64"},
+        {kStrType,  "print_str"},
+        {kBoolType, "print_i32"},
     }},
 };
 
@@ -233,10 +233,8 @@ static void typeDirectedDispatch(AstNode *node, TypeEnv env,
                     if (ty.empty()) ty = inferType(node->as.call.args[0], env, sigs);
                 }
                 const char *variant = nullptr;
-                if      (ty == "i32") variant = vit->second[0];
-                else if (ty == "i64") variant = vit->second[1];
-                else if (ty == "f32") variant = vit->second[2];
-                else if (ty == "f64") variant = vit->second[3];
+                int ti = typeIndex(ty);
+                if (ti >= 0) variant = vit->second[ti];
                 if (variant && strcmp(variant, node->as.call.callee) != 0) {
                     if (node->as.call.resolved_callee) free((void*)node->as.call.resolved_callee);
                     node->as.call.resolved_callee = strdup(variant);

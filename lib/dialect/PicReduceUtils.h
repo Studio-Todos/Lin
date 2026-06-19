@@ -16,6 +16,19 @@ using namespace mlir;
 
 inline constexpr const char* kAllLiteralTypes[] = {"num", "i1", "i8", "i16", "i32", "i64", "f32", "f64", "bool", "str"};
 inline constexpr size_t kNumLiteralTypes = 10;
+inline constexpr const char* kDefaultType = "i64";
+inline constexpr const char* kBoolType = "bool";
+inline constexpr const char* kF32Type = "f32";
+inline constexpr const char* kF64Type = "f64";
+inline constexpr const char* kStrType = "str";
+
+inline int typeIndex(const std::string& type) {
+    if (type == "i32") return 0;
+    if (type == "i64") return 1;
+    if (type == "f32") return 2;
+    if (type == "f64") return 3;
+    return -1;
+}
 
 inline bool isKnownLiteralType(const std::string& label) {
     for (auto lit : kAllLiteralTypes) {
@@ -43,9 +56,9 @@ static bool suffixToTypeName(const std::string& label, std::string& opName, std:
         bool isFloat = (base[0] == 'f');
         if (isFloat) {
             base = base.substr(1);
-            typeName = (suffix == "64") ? "f64" : "f32";
+            typeName = (suffix == "64") ? kF64Type : kF32Type;
         } else {
-            typeName = (suffix == "64") ? "i64" : "i32";
+            typeName = (suffix == "64") ? kDefaultType : "i32";
         }
         if (base == "divs" || base == "divu") opName = "div";
         else if (base == "rems" || base == "remu") opName = "rem";
@@ -137,7 +150,7 @@ static std::string extractType(const std::string& payload, const std::string& va
         }
         return typePart;
     }
-    return "i64";
+    return kDefaultType;
 }
 
 static uint32_t opcodeForLabel(StringRef label) {
