@@ -25,9 +25,10 @@ using namespace mlir;
 
 namespace {
 
-static void createQueueMemrefGlobals(ModuleOp module, OpBuilder &builder, TargetBackend target) {
+static void createPicMemrefGlobals(ModuleOp module, OpBuilder &builder, TargetBackend target) {
     auto loc = module.getLoc();
     auto i64Type = builder.getI64Type();
+    auto i32Type = builder.getI32Type();
     auto headTy = MemRefType::get({1}, i64Type);
     if (!module.lookupSymbol("__pic_queue_head")) {
         OpBuilder gb(module.getBodyRegion());
@@ -58,6 +59,39 @@ static void createQueueMemrefGlobals(ModuleOp module, OpBuilder &builder, Target
             gb.getStringAttr("private"), headTy,
             initAttr, false, IntegerAttr{});
     }
+    // C2: Arena globals — replaces state struct fields [0] net, [1] q, [4] alL, [5] history_net
+    if (!module.lookupSymbol("__pic_net")) {
+        OpBuilder gb(module.getBodyRegion());
+        auto netTy = MemRefType::get({32000000}, i32Type);
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({32000000}, i32Type), gb.getI32IntegerAttr(0));
+        gb.create<memref::GlobalOp>(loc, "__pic_net",
+            gb.getStringAttr("private"), netTy,
+            initAttr, false, IntegerAttr{});
+    }
+    if (!module.lookupSymbol("__pic_history_net")) {
+        OpBuilder gb(module.getBodyRegion());
+        auto histTy = MemRefType::get({8000000}, i64Type);
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({8000000}, i64Type), gb.getI64IntegerAttr(0));
+        gb.create<memref::GlobalOp>(loc, "__pic_history_net",
+            gb.getStringAttr("private"), histTy,
+            initAttr, false, IntegerAttr{});
+    }
+    if (!module.lookupSymbol("__pic_queue")) {
+        OpBuilder gb(module.getBodyRegion());
+        auto queueTy = MemRefType::get({16000000}, i64Type);
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({16000000}, i64Type), gb.getI64IntegerAttr(0));
+        gb.create<memref::GlobalOp>(loc, "__pic_queue",
+            gb.getStringAttr("private"), queueTy,
+            initAttr, false, IntegerAttr{});
+    }
+    if (!module.lookupSymbol("__pic_allocator")) {
+        OpBuilder gb(module.getBodyRegion());
+        auto allocTy = MemRefType::get({}, i32Type);
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({}, i32Type), gb.getI32IntegerAttr(0));
+        gb.create<memref::GlobalOp>(loc, "__pic_allocator",
+            gb.getStringAttr("private"), allocTy,
+            initAttr, false, IntegerAttr{});
+    }
 }
 
 struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, OperationPass<ModuleOp>> {
@@ -76,7 +110,7 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     auto i32Type = builder.getI32Type();
     auto i64Type = builder.getI64Type();
 
-    createQueueMemrefGlobals(module, builder, target);
+    createPicMemrefGlobals(module, builder, target);
     auto i1Type = builder.getI1Type();
     auto i8Type = builder.getI8Type();
     auto f32Type = builder.getF32Type();

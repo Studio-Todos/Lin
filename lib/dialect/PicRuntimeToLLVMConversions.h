@@ -6,6 +6,8 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 
@@ -14,23 +16,24 @@ using namespace mlir::pic::runtime;
 
 // =========================================================================
 // Helper functions used by the per-op conversion functions below.
-// These emit LLVM dialect ops directly.
 // =========================================================================
+
+static Value toIdx(OpBuilder &ob, Location loc, Value v) {
+    return ob.create<arith::IndexCastOp>(loc, ob.getIndexType(), v);
+}
 
 static void genNonBarrierLink(OpBuilder &ob, Location loc, Value p1, Value p2, Value stateArg, func::FuncOp &f) {
     auto i32Type = ob.getI32Type();
     auto i64Type = ob.getI64Type();
-    auto ptrType = LLVM::LLVMPointerType::get(ob.getContext());
-    Value as = ob.create<LLVM::IntToPtrOp>(loc, ptrType, stateArg);
 
-    Value net = ob.create<LLVM::LoadOp>(loc, ptrType, ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(0))}));
-    Value q = ob.create<LLVM::LoadOp>(loc, ptrType, ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1))}));
+    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_net");
+    auto qGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i64Type), "__pic_queue");
 
     auto setT = [&](Value v1, Value v2) {
         Value nIdx = ob.create<LLVM::LShrOp>(loc, i32Type, v1, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(2)));
         Value pNum = ob.create<LLVM::AndOp>(loc, i32Type, v1, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(3)));
         Value offset = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, safeZExt(ob, loc, i64Type, nIdx), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2))), safeZExt(ob, loc, i64Type, pNum));
-        ob.create<LLVM::StoreOp>(loc, v2, ob.create<LLVM::GEPOp>(loc, ptrType, i32Type, net, ValueRange{offset}));
+        ob.create<memref::StoreOp>(loc, v2, netGlobal, ValueRange{toIdx(ob, loc, offset)});
     };
     setT(p1, p2); setT(p2, p1);
 
@@ -60,7 +63,7 @@ static void genNonBarrierLink(OpBuilder &ob, Location loc, Value p1, Value p2, V
 
     ob.setInsertionPointToStart(doStore);
     Value r = ob.create<LLVM::OrOp>(loc, i64Type, safeZExt(ob, loc, i64Type, p1), ob.create<LLVM::ShlOp>(loc, i64Type, safeZExt(ob, loc, i64Type, p2), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(32))));
-    ob.create<LLVM::StoreOp>(loc, r, ob.create<LLVM::GEPOp>(loc, ptrType, i64Type, q, ValueRange{curT}));
+    ob.create<memref::StoreOp>(loc, r, qGlobal, ValueRange{toIdx(ob, loc, curT)});
     ob.create<LLVM::BrOp>(loc, contPush);
 
     ob.setInsertionPointToStart(contPush);
@@ -72,20 +75,19 @@ static void genNonBarrierLink(OpBuilder &ob, Location loc, Value p1, Value p2, V
 static Value genAllocateRvecNode(OpBuilder &ob, Location loc, Value stateArg, func::FuncOp &f) {
     auto i32Type = ob.getI32Type();
     auto i64Type = ob.getI64Type();
-    auto ptrType = LLVM::LLVMPointerType::get(ob.getContext());
 
-    Value as = ob.create<LLVM::IntToPtrOp>(loc, ptrType, stateArg);
-    Value alPtr = ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(4))});
-    Value alL = ob.create<LLVM::LoadOp>(loc, ptrType, alPtr);
-    Value nIdx = ob.create<LLVM::AtomicRMWOp>(loc, LLVM::AtomicBinOp::add, alL, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(1)), LLVM::AtomicOrdering::seq_cst);
+    auto alGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({}, i32Type), "__pic_allocator");
+    Value nIdx = ob.create<memref::AtomicRMWOp>(loc, i32Type, arith::AtomicRMWKind::addi,
+        ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(1)),
+        alGlobal, ValueRange{});
 
-    Value net = ob.create<LLVM::LoadOp>(loc, ptrType, ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(0))}));
+    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_net");
     Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
     Value base = ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2)));
 
     Value metaVal = ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0x88000000));
     Value off3 = ob.create<LLVM::AddOp>(loc, i64Type, base, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(3)));
-    ob.create<LLVM::StoreOp>(loc, metaVal, ob.create<LLVM::GEPOp>(loc, ptrType, i32Type, net, ValueRange{off3}));
+    ob.create<memref::StoreOp>(loc, metaVal, netGlobal, ValueRange{toIdx(ob, loc, off3)});
 
     Value port0Val = ob.create<LLVM::OrOp>(loc, i32Type, ob.create<LLVM::ShlOp>(loc, i32Type, nIdx, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(2))), ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0)));
     return port0Val;
@@ -94,11 +96,9 @@ static Value genAllocateRvecNode(OpBuilder &ob, Location loc, Value stateArg, fu
 static void genLinkPorts(OpBuilder &ob, Location loc, Value p1, Value p2, Value stateArg, func::FuncOp &f) {
     auto i32Type = ob.getI32Type();
     auto i64Type = ob.getI64Type();
-    auto ptrType = LLVM::LLVMPointerType::get(ob.getContext());
-    Value as = ob.create<LLVM::IntToPtrOp>(loc, ptrType, stateArg);
 
-    Value net = ob.create<LLVM::LoadOp>(loc, ptrType, ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(0))}));
-    Value historyNet = ob.create<LLVM::LoadOp>(loc, ptrType, ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(5))}));
+    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_net");
+    auto histGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i64Type), "__pic_history_net");
 
     Value p1_32 = safeZExt(ob, loc, i32Type, p1);
     Value p2_32 = safeZExt(ob, loc, i32Type, p2);
@@ -110,10 +110,10 @@ static void genLinkPorts(OpBuilder &ob, Location loc, Value p1, Value p2, Value 
     Value pNum2 = ob.create<LLVM::AndOp>(loc, i32Type, p2_32, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(3)));
 
     Value offsetMeta1 = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, safeZExt(ob, loc, i64Type, nIdx1), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2))), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(3)));
-    Value meta1 = ob.create<LLVM::LoadOp>(loc, i32Type, ob.create<LLVM::GEPOp>(loc, ptrType, i32Type, net, ValueRange{offsetMeta1}));
+    Value meta1 = ob.create<memref::LoadOp>(loc, i32Type, netGlobal, ValueRange{toIdx(ob, loc, offsetMeta1)});
 
     Value offsetMeta2 = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, safeZExt(ob, loc, i64Type, nIdx2), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2))), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(3)));
-    Value meta2 = ob.create<LLVM::LoadOp>(loc, i32Type, ob.create<LLVM::GEPOp>(loc, ptrType, i32Type, net, ValueRange{offsetMeta2}));
+    Value meta2 = ob.create<memref::LoadOp>(loc, i32Type, netGlobal, ValueRange{toIdx(ob, loc, offsetMeta2)});
 
     Value typeVal1 = ob.create<LLVM::LShrOp>(loc, i32Type, meta1, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(24)));
     Value type1 = ob.create<LLVM::AndOp>(loc, i32Type, typeVal1, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0x3F)));
@@ -153,16 +153,16 @@ static void genLinkPorts(OpBuilder &ob, Location loc, Value p1, Value p2, Value 
 
     ob.setInsertionPointToStart(barrierBlock);
     Value counterOffset = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, dupNodeIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1))), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1)));
-    Value counterPtr = ob.create<LLVM::GEPOp>(loc, ptrType, i64Type, historyNet, ValueRange{counterOffset});
-    Value decVal = ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1));
-    Value prevCount = ob.create<LLVM::AtomicRMWOp>(loc, LLVM::AtomicBinOp::sub, counterPtr, decVal, LLVM::AtomicOrdering::seq_cst);
-    Value nextCount = ob.create<LLVM::SubOp>(loc, i64Type, prevCount, decVal);
+    Value decVal = ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(-1));
+    Value prevCount = ob.create<memref::AtomicRMWOp>(loc, i64Type, arith::AtomicRMWKind::addi,
+        decVal, histGlobal, ValueRange{toIdx(ob, loc, counterOffset)});
+    Value nextCount = ob.create<LLVM::AddOp>(loc, i64Type, prevCount, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(-1)));
     Value isZero = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, nextCount, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(0)));
     ob.create<LLVM::CondBrOp>(loc, isZero, mergeBlock, exitBarrier);
 
     ob.setInsertionPointToStart(mergeBlock);
     Value offsetW0 = ob.create<LLVM::ShlOp>(loc, i64Type, dupNodeIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2)));
-    Value w0 = ob.create<LLVM::LoadOp>(loc, i32Type, ob.create<LLVM::GEPOp>(loc, ptrType, i32Type, net, ValueRange{offsetW0}));
+    Value w0 = ob.create<memref::LoadOp>(loc, i32Type, netGlobal, ValueRange{toIdx(ob, loc, offsetW0)});
     Value r_out = genAllocateRvecNode(ob, loc, stateArg, f);
     genNonBarrierLink(ob, loc, r_out, w0, stateArg, f);
     ob.create<LLVM::BrOp>(loc, exitBarrier);
@@ -190,22 +190,21 @@ static void genLinkPorts(OpBuilder &ob, Location loc, Value p1, Value p2, Value 
 static Value convertAllocNodeOp(OpBuilder &ob, pic::runtime::AllocNodeOp allocOp, Value stateArg, func::FuncOp &f) {
     auto i32Type = ob.getI32Type();
     auto i64Type = ob.getI64Type();
-    auto ptrType = LLVM::LLVMPointerType::get(ob.getContext());
     Location loc = allocOp.getLoc();
 
-    Value as = ob.create<LLVM::IntToPtrOp>(loc, ptrType, stateArg);
-    Value alPtr = ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(4))});
-    Value alL = ob.create<LLVM::LoadOp>(loc, ptrType, alPtr);
-    Value nIdx = ob.create<LLVM::AtomicRMWOp>(loc, LLVM::AtomicBinOp::add, alL, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(1)), LLVM::AtomicOrdering::seq_cst);
+    auto alGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({}, i32Type), "__pic_allocator");
+    Value nIdx = ob.create<memref::AtomicRMWOp>(loc, i32Type, arith::AtomicRMWKind::addi,
+        ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(1)),
+        alGlobal, ValueRange{});
 
-    Value net = ob.create<LLVM::LoadOp>(loc, ptrType, ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(0))}));
+    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_net");
     Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
     Value base = ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2)));
 
     auto store = [&](int i, Value v) {
         Value off = ob.create<LLVM::AddOp>(loc, i64Type, base, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(i)));
         Value v32 = (v.getType() == i32Type) ? v : ob.create<LLVM::TruncOp>(loc, i32Type, v);
-        ob.create<LLVM::StoreOp>(loc, v32, ob.create<LLVM::GEPOp>(loc, ptrType, i32Type, net, ValueRange{off}));
+        ob.create<memref::StoreOp>(loc, v32, netGlobal, ValueRange{toIdx(ob, loc, off)});
     };
 
     auto makePort = [&](int p) {
@@ -224,18 +223,16 @@ static Value convertAllocNodeOp(OpBuilder &ob, pic::runtime::AllocNodeOp allocOp
     store(0, makePort(0)); store(1, makePort(1)); store(2, makePort(2)); store(3, metaValueVal);
 
     if (typeVal == NODE_DUP) {
-        Value historyNet = ob.create<LLVM::LoadOp>(loc, ptrType, ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(5))}));
+        auto histGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i64Type), "__pic_history_net");
         Value hBase = ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1)));
         Value valWord0 = ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1ULL << 32));
 
-        Value gep0 = ob.create<LLVM::GEPOp>(loc, ptrType, i64Type, historyNet, ValueRange{hBase});
-        ob.create<LLVM::StoreOp>(loc, valWord0, gep0);
+        ob.create<memref::StoreOp>(loc, valWord0, histGlobal, ValueRange{toIdx(ob, loc, hBase)});
 
         Value hBasePlus1 = ob.create<LLVM::AddOp>(loc, hBase, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1)));
-        Value gep1 = ob.create<LLVM::GEPOp>(loc, ptrType, i64Type, historyNet, ValueRange{hBasePlus1});
 
         Value valWord1 = ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2));
-        ob.create<LLVM::StoreOp>(loc, valWord1, gep1);
+        ob.create<memref::StoreOp>(loc, valWord1, histGlobal, ValueRange{toIdx(ob, loc, hBasePlus1)});
     }
 
     return nIdx;
@@ -244,48 +241,43 @@ static Value convertAllocNodeOp(OpBuilder &ob, pic::runtime::AllocNodeOp allocOp
 static void convertSetPortOp(OpBuilder &ob, pic::runtime::SetPortOp setOp, Value stateArg) {
     auto i32Type = ob.getI32Type();
     auto i64Type = ob.getI64Type();
-    auto ptrType = LLVM::LLVMPointerType::get(ob.getContext());
     Location loc = setOp.getLoc();
 
     Value nIdx = setOp.getNodeIndex();
     int pIdx = setOp.getPortIndex();
     Value val = setOp.getPortValue();
-    Value net = ob.create<LLVM::LoadOp>(loc, ptrType, ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, ob.create<LLVM::IntToPtrOp>(loc, ptrType, stateArg), ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(0))}));
+    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_net");
     Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
     Value offset = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2))), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(pIdx)));
-    ob.create<LLVM::StoreOp>(loc, val, ob.create<LLVM::GEPOp>(loc, ptrType, i32Type, net, ValueRange{offset}));
+    ob.create<memref::StoreOp>(loc, val, netGlobal, ValueRange{toIdx(ob, loc, offset)});
 }
 
 static Value convertGetPortOp(OpBuilder &ob, pic::runtime::GetPortOp getOp, Value stateArg) {
     auto i32Type = ob.getI32Type();
     auto i64Type = ob.getI64Type();
-    auto ptrType = LLVM::LLVMPointerType::get(ob.getContext());
     Location loc = getOp.getLoc();
 
     Value nIdx = getOp.getNodeIndex();
     int pIdx = getOp.getPortIndex();
-    Value as = ob.create<LLVM::IntToPtrOp>(loc, ptrType, stateArg);
-    Value net = ob.create<LLVM::LoadOp>(loc, ptrType, ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(0))}));
+    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_net");
     Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
     Value offset = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2))), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(pIdx)));
-    Value val32 = ob.create<LLVM::LoadOp>(loc, i32Type, ob.create<LLVM::GEPOp>(loc, ptrType, i32Type, net, ValueRange{offset}));
+    Value val32 = ob.create<memref::LoadOp>(loc, i32Type, netGlobal, ValueRange{toIdx(ob, loc, offset)});
     return val32;
 }
 
 static Value convertGetPortDynamicOp(OpBuilder &ob, pic::runtime::GetPortDynamicOp getOp, Value stateArg) {
     auto i32Type = ob.getI32Type();
     auto i64Type = ob.getI64Type();
-    auto ptrType = LLVM::LLVMPointerType::get(ob.getContext());
     Location loc = getOp.getLoc();
 
     Value nIdx = getOp.getNodeIndex();
     Value pIdx = getOp.getPortIndex();
-    Value as = ob.create<LLVM::IntToPtrOp>(loc, ptrType, stateArg);
-    Value net = ob.create<LLVM::LoadOp>(loc, ptrType, ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(0))}));
+    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_net");
     Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
     Value pIdx64 = safeZExt(ob, loc, i64Type, pIdx);
     Value offset = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2))), pIdx64);
-    Value val32 = ob.create<LLVM::LoadOp>(loc, i32Type, ob.create<LLVM::GEPOp>(loc, ptrType, i32Type, net, ValueRange{offset}));
+    Value val32 = ob.create<memref::LoadOp>(loc, i32Type, netGlobal, ValueRange{toIdx(ob, loc, offset)});
     return val32;
 }
 
@@ -317,11 +309,9 @@ static void convertPushRedexOp(OpBuilder &ob, pic::runtime::PushRedexOp pushOp, 
     ob.setInsertionPointToStart(doStore);
     // Store redex pair (nodeA, nodeB) into queue buffer at the old tail index
     auto i32Type = ob.getI32Type();
-    auto ptrType = LLVM::LLVMPointerType::get(ob.getContext());
-    Value as = ob.create<LLVM::IntToPtrOp>(loc, ptrType, stateArg);
-    Value q = ob.create<LLVM::LoadOp>(loc, ptrType, ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1))}));
+    auto qGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i64Type), "__pic_queue");
     Value r = ob.create<LLVM::OrOp>(loc, i64Type, safeZExt(ob, loc, i64Type, nA), ob.create<LLVM::ShlOp>(loc, i64Type, safeZExt(ob, loc, i64Type, nB), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(32))));
-    ob.create<LLVM::StoreOp>(loc, r, ob.create<LLVM::GEPOp>(loc, ptrType, i64Type, q, ValueRange{curT}));
+    ob.create<memref::StoreOp>(loc, r, qGlobal, ValueRange{toIdx(ob, loc, curT)});
     ob.create<LLVM::BrOp>(loc, cont);
 
     ob.setInsertionPointToStart(cont);
@@ -331,7 +321,6 @@ static std::array<Value, 3> convertPopRedexOp(OpBuilder &ob, pic::runtime::PopRe
     auto i32Type = ob.getI32Type();
     auto i64Type = ob.getI64Type();
     auto i1Type = ob.getI1Type();
-    auto ptrType = LLVM::LLVMPointerType::get(ob.getContext());
     Location loc = popOp.getLoc();
 
     auto headTy = MemRefType::get({1}, i64Type);
@@ -339,9 +328,7 @@ static std::array<Value, 3> convertPopRedexOp(OpBuilder &ob, pic::runtime::PopRe
     auto tailGlobal = ob.create<memref::GetGlobalOp>(loc, headTy, "__pic_queue_tail");
     auto activeGlobal = ob.create<memref::GetGlobalOp>(loc, headTy, "__pic_active_count");
     auto lockGlobal = ob.create<memref::GetGlobalOp>(loc, headTy, "__pic_lock");
-
-    Value as = ob.create<LLVM::IntToPtrOp>(loc, ptrType, stateArg);
-    Value q = ob.create<LLVM::LoadOp>(loc, ptrType, ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1))}));
+    auto qGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i64Type), "__pic_queue");
 
     Value zeroIdx = ob.create<arith::ConstantIndexOp>(loc, 0);
     Value oneVal = ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1));
@@ -419,7 +406,7 @@ static std::array<Value, 3> convertPopRedexOp(OpBuilder &ob, pic::runtime::PopRe
 
     Value popIdx = doLoad->addArgument(i64Type, loc);
     ob.setInsertionPointToStart(doLoad);
-    Value val = ob.create<LLVM::LoadOp>(loc, i64Type, ob.create<LLVM::GEPOp>(loc, ptrType, i64Type, q, ValueRange{popIdx}));
+    Value val = ob.create<memref::LoadOp>(loc, i64Type, qGlobal, ValueRange{toIdx(ob, loc, popIdx)});
     Value pA = ob.create<LLVM::TruncOp>(loc, i32Type, val);
     Value pB = ob.create<LLVM::TruncOp>(loc, i32Type, ob.create<LLVM::LShrOp>(loc, i64Type, val, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(32))));
     Value c2 = ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(2));
@@ -433,83 +420,70 @@ static std::array<Value, 3> convertPopRedexOp(OpBuilder &ob, pic::runtime::PopRe
 }
 
 static Value convertGetHistoryOp(OpBuilder &ob, pic::runtime::GetHistoryOp histOp, Value stateArg) {
-    auto i32Type = ob.getI32Type();
     auto i64Type = ob.getI64Type();
-    auto ptrType = LLVM::LLVMPointerType::get(ob.getContext());
     Location loc = histOp.getLoc();
 
     Value nIdx = histOp.getNodeIndex();
     int wIdx = histOp.getWordIndex();
-    Value as = ob.create<LLVM::IntToPtrOp>(loc, ptrType, stateArg);
-    Value historyNet = ob.create<LLVM::LoadOp>(loc, ptrType, ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(5))}));
+    auto histGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i64Type), "__pic_history_net");
     Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
     Value offset = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1))), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(wIdx)));
-    Value val = ob.create<LLVM::LoadOp>(loc, i64Type, ob.create<LLVM::GEPOp>(loc, ptrType, i64Type, historyNet, ValueRange{offset}));
+    Value val = ob.create<memref::LoadOp>(loc, i64Type, histGlobal, ValueRange{toIdx(ob, loc, offset)});
     return val;
 }
 
 static void convertSetHistoryOp(OpBuilder &ob, pic::runtime::SetHistoryOp histOp, Value stateArg) {
-    auto i32Type = ob.getI32Type();
     auto i64Type = ob.getI64Type();
-    auto ptrType = LLVM::LLVMPointerType::get(ob.getContext());
     Location loc = histOp.getLoc();
 
     Value nIdx = histOp.getNodeIndex();
     int wIdx = histOp.getWordIndex();
     Value val = histOp.getWordValue();
-    Value as = ob.create<LLVM::IntToPtrOp>(loc, ptrType, stateArg);
-    Value historyNet = ob.create<LLVM::LoadOp>(loc, ptrType, ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(5))}));
+    auto histGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i64Type), "__pic_history_net");
     Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
     Value offset = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1))), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(wIdx)));
-    ob.create<LLVM::StoreOp>(loc, val, ob.create<LLVM::GEPOp>(loc, ptrType, i64Type, historyNet, ValueRange{offset}));
+    ob.create<memref::StoreOp>(loc, val, histGlobal, ValueRange{toIdx(ob, loc, offset)});
 }
 
 static void convertUncomputeSweepOp(OpBuilder &ob, pic::runtime::UncomputeSweepOp sweepOp, Value stateArg, func::FuncOp &f) {
     auto i32Type = ob.getI32Type();
     auto i64Type = ob.getI64Type();
-    auto ptrType = LLVM::LLVMPointerType::get(ob.getContext());
     Location loc = sweepOp.getLoc();
 
     Value boundaryId = sweepOp.getBoundaryId();
-    Value as = ob.create<LLVM::IntToPtrOp>(loc, ptrType, stateArg);
-    Value alPtr = ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(4))});
-    Value alL = ob.create<LLVM::LoadOp>(loc, ptrType, alPtr);
-
-    Value rIdx = ob.create<LLVM::AtomicRMWOp>(loc, LLVM::AtomicBinOp::add, alL, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(1)), LLVM::AtomicOrdering::seq_cst);
+    auto alGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({}, i32Type), "__pic_allocator");
+    Value rIdx = ob.create<memref::AtomicRMWOp>(loc, i32Type, arith::AtomicRMWKind::addi,
+        ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(1)),
+        alGlobal, ValueRange{});
     Value rIdx64 = safeZExt(ob, loc, i64Type, rIdx);
     Value base = ob.create<LLVM::ShlOp>(loc, i64Type, rIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2)));
-    Value net = ob.create<LLVM::LoadOp>(loc, ptrType, ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as, ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(0))}));
+    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_net");
 
     auto makePort = [&](Value idx, int p) {
         return ob.create<LLVM::OrOp>(loc, i32Type, ob.create<LLVM::ShlOp>(loc, i32Type, idx, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(2))), ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(p)));
     };
 
     Value rPort0 = makePort(rIdx, 0);
-    ob.create<LLVM::StoreOp>(loc, rPort0, ob.create<LLVM::GEPOp>(loc, ptrType, i32Type, net, ValueRange{base}));
+    ob.create<memref::StoreOp>(loc, rPort0, netGlobal, ValueRange{toIdx(ob, loc, base)});
     Value metaVal = ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr((2U << 30) | (8U << 24)));
     Value off3 = ob.create<LLVM::AddOp>(loc, i64Type, base, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(3)));
-    ob.create<LLVM::StoreOp>(loc, metaVal, ob.create<LLVM::GEPOp>(loc, ptrType, i32Type, net, ValueRange{off3}));
+    ob.create<memref::StoreOp>(loc, metaVal, netGlobal, ValueRange{toIdx(ob, loc, off3)});
 
     genLinkPorts(ob, loc, rPort0, boundaryId, stateArg, f);
 }
 
 static void convertCheckpointBoundaryOp(OpBuilder &ob, pic::runtime::CheckpointBoundaryOp cpOp, Value stateArg) {
-    auto i32Type = ob.getI32Type();
     auto i64Type = ob.getI64Type();
-    auto ptrType = LLVM::LLVMPointerType::get(ob.getContext());
     Location loc = cpOp.getLoc();
 
     int boundaryId = cpOp.getBoundaryId();
-    Value as = ob.create<LLVM::IntToPtrOp>(loc, ptrType, stateArg);
-    Value historyNet = ob.create<LLVM::LoadOp>(loc, ptrType,
-        ob.create<LLVM::GEPOp>(loc, ptrType, ptrType, as,
-            ValueRange{ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(5))}));
+    auto histGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i64Type), "__pic_history_net");
     Value bId = ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(boundaryId));
-    Value checkpointAddr = ob.create<LLVM::GEPOp>(loc, ptrType, i64Type, historyNet, ValueRange{bId});
     Value countVal = ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(cpOp.getNumOperands()));
     Value checkpointVal = ob.create<LLVM::ShlOp>(loc, i64Type, countVal, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(32)));
     checkpointVal = ob.create<LLVM::OrOp>(loc, i64Type, checkpointVal, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1)));
-    ob.create<LLVM::AtomicRMWOp>(loc, LLVM::AtomicBinOp::_or, checkpointAddr, checkpointVal, LLVM::AtomicOrdering::seq_cst);
+    ob.create<memref::AtomicRMWOp>(loc, i64Type, arith::AtomicRMWKind::ori,
+        checkpointVal, histGlobal, ValueRange{toIdx(ob, loc, bId)});
 }
 
 #endif // PIC_RUNTIME_TO_LLVM_CONVERSIONS_H
