@@ -25,6 +25,41 @@ using namespace mlir;
 
 namespace {
 
+static void createQueueMemrefGlobals(ModuleOp module, OpBuilder &builder, TargetBackend target) {
+    auto loc = module.getLoc();
+    auto i64Type = builder.getI64Type();
+    auto headTy = MemRefType::get({1}, i64Type);
+    if (!module.lookupSymbol("__pic_queue_head")) {
+        OpBuilder gb(module.getBodyRegion());
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({1}, i64Type), gb.getI64IntegerAttr(0));
+        gb.create<memref::GlobalOp>(loc, "__pic_queue_head",
+            gb.getStringAttr("private"), headTy,
+            initAttr, false, IntegerAttr{});
+    }
+    if (!module.lookupSymbol("__pic_queue_tail")) {
+        OpBuilder gb(module.getBodyRegion());
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({1}, i64Type), gb.getI64IntegerAttr(0));
+        gb.create<memref::GlobalOp>(loc, "__pic_queue_tail",
+            gb.getStringAttr("private"), headTy,
+            initAttr, false, IntegerAttr{});
+    }
+    if (!module.lookupSymbol("__pic_active_count")) {
+        OpBuilder gb(module.getBodyRegion());
+        int64_t initVal = (target == TargetBackend::GPU) ? 1 : 4;
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({1}, i64Type), gb.getI64IntegerAttr(initVal));
+        gb.create<memref::GlobalOp>(loc, "__pic_active_count",
+            gb.getStringAttr("private"), headTy,
+            initAttr, false, IntegerAttr{});
+    }
+    if (!module.lookupSymbol("__pic_lock")) {
+        OpBuilder gb(module.getBodyRegion());
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({1}, i64Type), gb.getI64IntegerAttr(0));
+        gb.create<memref::GlobalOp>(loc, "__pic_lock",
+            gb.getStringAttr("private"), headTy,
+            initAttr, false, IntegerAttr{});
+    }
+}
+
 struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PicReduceToRuntimePass)
 
@@ -40,6 +75,8 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     Location loc = module.getLoc();
     auto i32Type = builder.getI32Type();
     auto i64Type = builder.getI64Type();
+
+    createQueueMemrefGlobals(module, builder, target);
     auto i1Type = builder.getI1Type();
     auto i8Type = builder.getI8Type();
     auto f32Type = builder.getF32Type();

@@ -443,6 +443,7 @@ if (enableGPU) {
 
       PassManager pm2(&context);
       pm2.addPass(mlir::createConvertSCFToCFPass());
+      pm2.addPass(mlir::createFinalizeMemRefToLLVMConversionPass());
       pm2.addPass(mlir::createConvertControlFlowToLLVMPass());
       pm2.addPass(mlir::createConvertMathToLibmPass());
       pm2.addPass(mlir::createConvertMathToLLVMPass());
