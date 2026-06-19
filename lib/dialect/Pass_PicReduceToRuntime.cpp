@@ -92,6 +92,23 @@ static void createPicMemrefGlobals(ModuleOp module, OpBuilder &builder, TargetBa
             gb.getStringAttr("private"), allocTy,
             initAttr, false, IntegerAttr{});
     }
+    // Free list for node GC
+    if (!module.lookupSymbol("__pic_free_list")) {
+        OpBuilder gb(module.getBodyRegion());
+        auto freeListTy = MemRefType::get({8000000}, i32Type);
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({8000000}, i32Type), gb.getI32IntegerAttr(0));
+        gb.create<memref::GlobalOp>(loc, "__pic_free_list",
+            gb.getStringAttr("private"), freeListTy,
+            initAttr, false, IntegerAttr{});
+    }
+    if (!module.lookupSymbol("__pic_free_count")) {
+        OpBuilder gb(module.getBodyRegion());
+        auto freeCountTy = MemRefType::get({}, i32Type);
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({}, i32Type), gb.getI32IntegerAttr(0));
+        gb.create<memref::GlobalOp>(loc, "__pic_free_count",
+            gb.getStringAttr("private"), freeCountTy,
+            initAttr, false, IntegerAttr{});
+    }
 }
 
 struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, OperationPass<ModuleOp>> {
@@ -160,7 +177,7 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     Value c0xFFFFFFFF00000000_i64 = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0xFFFFFFFF00000000ULL));
 
     std::vector<uint32_t> literalHashes;
-    for (const auto &lit : kAllLiteralTypes) {
+    for (const auto &lit : getTypeLabels(module)) {
         literalHashes.push_back(opcodeForLabel(lit));
     }
     module.walk([&](pic::graph::RegistryOp op) {

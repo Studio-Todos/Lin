@@ -700,7 +700,7 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
 
 
     std::vector<uint32_t> literalHashes;
-    for (const auto &lit : kAllLiteralTypes) {
+    for (const auto &lit : getTypeLabels(module)) {
         literalHashes.push_back(opcodeForLabel(lit));
     }
     module.walk([&](pic::graph::RegistryOp op) {
@@ -709,6 +709,12 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
             literalHashes.push_back(opcodeForLabel(key));
         }
     });
+
+    std::vector<uint32_t> wideTypeHashes;
+    for (const auto &lit : getTypeLabels(module)) {
+        if (is64BitLabel(lit))
+            wideTypeHashes.push_back(opcodeForLabel(lit));
+    }
 
     auto isLiteralLabel = [&](OpBuilder &b, Location loc, Value label) -> Value {
         Value isLit = b.create<arith::ConstantOp>(loc, i1Type, b.getBoolAttr(false));
@@ -749,10 +755,12 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
           Value p1 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, node, builder.getI8IntegerAttr(1));
           Value p2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, node, builder.getI8IntegerAttr(2));
           
-          Value isF64 = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, label, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("f64"))));
-          Value isI64 = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, label, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("i64"))));
-          Value isNum = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, label, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("num"))));
-          Value is64 = builder.create<arith::OrIOp>(loc, isF64, builder.create<arith::OrIOp>(loc, isI64, isNum));
+          Value is64 = builder.create<arith::ConstantOp>(loc, i1Type, builder.getBoolAttr(false));
+          for (uint32_t hash : wideTypeHashes) {
+              Value hashConst = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(hash));
+              Value cmp = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, label, hashConst);
+              is64 = builder.create<arith::OrIOp>(loc, is64, cmp);
+          }
           
           Value p1_64 = builder.create<arith::ExtUIOp>(loc, i64Type, p1);
           Value p2_64 = builder.create<arith::ExtUIOp>(loc, i64Type, p2);
@@ -882,6 +890,16 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
           Value stateArg = eraOp.getState();
           if (handleGpuDispatch(nodeA, nodeB, stateArg)) continue;
 
+          auto freeNode = [&](Value nodeIdx) {
+              auto fcGlobal = builder.create<memref::GetGlobalOp>(loc, MemRefType::get({}, i32Type), "__pic_free_count");
+              Value oldCount = builder.create<memref::AtomicRMWOp>(loc, i32Type, arith::AtomicRMWKind::addi,
+                  builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(1)),
+                  fcGlobal, ValueRange{});
+              auto flGlobal = builder.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i32Type), "__pic_free_list");
+              Value storeIdx = builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), oldCount);
+              builder.create<memref::StoreOp>(loc, nodeIdx, flGlobal, ValueRange{storeIdx});
+          };
+
           Value metaA = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(3));
           Value metaB = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeB, builder.getI8IntegerAttr(3));
           Value labelA = builder.create<arith::AndIOp>(loc, metaA, c0xFFFFFF_i32);
@@ -902,6 +920,7 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
           builder.create<cf::CondBranchOp>(loc, isAnn, doEraAnn, doEraProp);
 
           builder.setInsertionPointToStart(doEraAnn);
+          freeNode(nodeA); freeNode(nodeB);
           builder.create<cf::BranchOp>(loc, lHead);
 
           builder.setInsertionPointToStart(doEraProp);
@@ -911,9 +930,11 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
           builder.create<cf::CondBranchOp>(loc, otherIsLit, eraLitCase, eraNormalProp);
 
           builder.setInsertionPointToStart(eraLitCase);
+          freeNode(nodeA); freeNode(nodeB);
           builder.create<cf::BranchOp>(loc, lHead);
 
           builder.setInsertionPointToStart(eraNormalProp);
+          freeNode(nodeA); freeNode(nodeB);
           Value era1 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(ALLOC_ERA), c0_i64, builder.getBoolAttr(false));
           Value era2 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(ALLOC_ERA), c0_i64, builder.getBoolAttr(false));
           Value auxOther1 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, otherNode, builder.getI8IntegerAttr(1));
@@ -1264,10 +1285,12 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
 
           // valLitCase: nodeA is a literal constant, nodeB is standard
           builder.setInsertionPointToStart(valLitCase);
-          Value isF64A = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelA, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("f64"))));
-          Value isI64A = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelA, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("i64"))));
-          Value isNumA = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelA, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("num"))));
-          Value is64A = builder.create<arith::OrIOp>(loc, isF64A, builder.create<arith::OrIOp>(loc, isI64A, isNumA));
+          Value is64A = builder.create<arith::ConstantOp>(loc, i1Type, builder.getBoolAttr(false));
+          for (uint32_t hash : wideTypeHashes) {
+              Value hashConst = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(hash));
+              Value cmp = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelA, hashConst);
+              is64A = builder.create<arith::OrIOp>(loc, is64A, cmp);
+          }
           
           Value litValA = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(1));
           Value valLit1 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(0), c0_i64, builder.getBoolAttr(false));
@@ -1300,10 +1323,12 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
 
           // opLitCase: nodeB is a literal constant, nodeA is standard
           builder.setInsertionPointToStart(opLitCase);
-          Value isF64B = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelB, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("f64"))));
-          Value isI64B = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelB, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("i64"))));
-          Value isNumB = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelB, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("num"))));
-          Value is64B = builder.create<arith::OrIOp>(loc, isF64B, builder.create<arith::OrIOp>(loc, isI64B, isNumB));
+          Value is64B = builder.create<arith::ConstantOp>(loc, i1Type, builder.getBoolAttr(false));
+          for (uint32_t hash : wideTypeHashes) {
+              Value hashConst = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(hash));
+              Value cmp = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelB, hashConst);
+              is64B = builder.create<arith::OrIOp>(loc, is64B, cmp);
+          }
 
           Value litValB = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeB, builder.getI8IntegerAttr(1));
           Value opLit1 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(0), c0_i64, builder.getBoolAttr(false));

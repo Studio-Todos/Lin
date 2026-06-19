@@ -716,6 +716,14 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 builder.create<LLVM::CallOp>(entry.getLoc(), i32Type, "pthread_join", ValueRange{tVal, retValPtr});
             }
         }
+        // Arena reset after reduction epoch
+        {
+            Value zero = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(0));
+            auto allocGlobal = builder.create<memref::GetGlobalOp>(entry.getLoc(), MemRefType::get({}, i32Type), "__pic_allocator");
+            builder.create<memref::StoreOp>(entry.getLoc(), zero, allocGlobal, ValueRange{});
+            auto fcGlobal = builder.create<memref::GetGlobalOp>(entry.getLoc(), MemRefType::get({}, i32Type), "__pic_free_count");
+            builder.create<memref::StoreOp>(entry.getLoc(), zero, fcGlobal, ValueRange{});
+        }
         if (target == TargetBackend::GPU) {
             auto cleanupFty = LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(module.getContext()), {});
             auto cleanupFunc = module.lookupSymbol<LLVM::LLVMFuncOp>("pic_gpu_cleanup");

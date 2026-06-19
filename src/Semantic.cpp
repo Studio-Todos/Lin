@@ -143,10 +143,10 @@ static std::string inferType(AstNode *node, const TypeEnv &env,
                               const std::unordered_map<std::string, OpSig> &sigs) {
     if (!node) return "";
     switch (node->type) {
-        case AST_NUMBER: return "i64";
-        case AST_FLOAT:  return "f64";
-        case AST_BOOL:   return "bool";
-        case AST_STRING: return "str";
+        case AST_NUMBER: return kDefaultType;
+        case AST_FLOAT:  return kF64Type;
+        case AST_BOOL:   return kBoolType;
+        case AST_STRING: return kStrType;
         case AST_IDENTIFIER: {
             std::string nm(node->as.identifier.name, node->as.identifier.length);
             auto it = env.find(nm); return it != env.end() ? it->second : "";
@@ -163,29 +163,44 @@ static std::string inferType(AstNode *node, const TypeEnv &env,
     }
 }
 
-// Typed variant table: generic op → {i32, i64, f32, f64} variants
-static const std::unordered_map<std::string, std::array<const char*, 4>> kBinVariants = {
-    {"add", {"add","add64","fadd","fadd64"}},
-    {"sub", {"sub","sub64","fsub","fsub64"}},
-    {"mul", {"mul","mul64","fmul","fmul64"}},
-    {"div", {"div","div64","fdiv","fdiv64"}},
-    {"lt",  {"lt", "slt64", "flt", "flt64"}},
-    {"gt",  {"gt", "sgt64", "fgt", "fgt64"}},
-    {"le",  {"le", "sle64", "fle", "fle64"}},
-    {"ge",  {"ge", "sge64", "fge", "fge64"}},
-    {"eq",  {"eq", "eq64", "feq", "feq64"}},
-    {"ne",  {"ne", "ne64","fneq","fneq64"}},
-};
+// Try to find a type-specific variant for a generic binary op by convention.
+// Convention from std/math.lin:
+//   {op}32, {op}64, f{op}32, f{op}64
+//   comparisons: s{op}64 (signed i64), f{op}64 (f64), {op} (i32 default)
+static std::string findBinVariant(const std::string &callee, const std::string &ty,
+                                   const std::unordered_map<std::string, OpSig> &sigs) {
+    std::vector<std::string> candidates;
+    if (ty == "i32") {
+        candidates.push_back(callee + "32");
+        candidates.push_back(callee);
+    } else if (ty == kDefaultType) {
+        candidates.push_back(callee + "64");
+        if (callee == "lt" || callee == "gt" || callee == "le" || callee == "ge")
+            candidates.push_back("s" + callee + "64");
+        if (callee == "eq") candidates.push_back("eq64");
+        if (callee == "ne") candidates.push_back("ne64");
+    } else if (ty == kF32Type) {
+        candidates.push_back("f" + callee + "32");
+        candidates.push_back("f" + callee);
+    } else if (ty == kF64Type) {
+        candidates.push_back("f" + callee + "64");
+    }
+    for (auto &c : candidates) {
+        if (sigs.find(c) != sigs.end())
+            return c;
+    }
+    return "";
+}
 
 // Typed variant table: generic 1-arg op → arg type → specific variant
 static const std::unordered_map<std::string, std::unordered_map<std::string, const char*>> kUnaryVariants = {
     {"print", {
         {"i32",  "print_i32"},
-        {"i64",  "print_i64"},
+        {kDefaultType, "print_i64"},
         {"f32",  "print_f32"},
-        {"f64",  "print_f64"},
-        {"str",  "print_str"},
-        {"bool", "print_i32"},
+        {kF64Type,  "print_f64"},
+        {kStrType,  "print_str"},
+        {kBoolType, "print_i32"},
     }},
 };
 
@@ -224,22 +239,19 @@ static void typeDirectedDispatch(AstNode *node, TypeEnv env,
             for (int i = 0; i < node->as.call.arg_count; ++i)
                 typeDirectedDispatch(node->as.call.args[i], env, sigs);
             std::string callee(node->as.call.callee, node->as.call.callee_len);
-            auto vit = kBinVariants.find(callee);
-            if (vit != kBinVariants.end() && node->as.call.arg_count >= 1) {
+            if (node->as.call.arg_count >= 1) {
                 std::string ty = inferType(node->as.call.args[0], env, sigs);
                 if (node->as.call.arg_count >= 2) {
                     std::string ty2 = inferType(node->as.call.args[1], env, sigs);
                     if (!ty2.empty()) ty = ty2;
                     if (ty.empty()) ty = inferType(node->as.call.args[0], env, sigs);
                 }
-                const char *variant = nullptr;
-                if      (ty == "i32") variant = vit->second[0];
-                else if (ty == "i64") variant = vit->second[1];
-                else if (ty == "f32") variant = vit->second[2];
-                else if (ty == "f64") variant = vit->second[3];
-                if (variant && strcmp(variant, node->as.call.callee) != 0) {
-                    if (node->as.call.resolved_callee) free((void*)node->as.call.resolved_callee);
-                    node->as.call.resolved_callee = strdup(variant);
+                if (!ty.empty()) {
+                    std::string variant = findBinVariant(callee, ty, sigs);
+                    if (!variant.empty() && variant != callee) {
+                        if (node->as.call.resolved_callee) free((void*)node->as.call.resolved_callee);
+                        node->as.call.resolved_callee = strdup(variant.c_str());
+                    }
                 }
             }
             auto uit = kUnaryVariants.find(callee);

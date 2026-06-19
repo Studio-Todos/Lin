@@ -2188,6 +2188,38 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
         env_free(&env, ctx, block, loc);
     }
 
+    // Collect type declarations (func decls with 0 args, return type, empty body)
+    // and add them as a module attribute for use by dialect passes.
+    char typeNamesBuf[1024] = {0};
+    int typeNamesLen = 0;
+    {
+        // Walk AST recursively for type declarations
+        AstNode *stack[256];
+        int sp = 0;
+        stack[sp++] = ast;
+        while (sp > 0) {
+            AstNode *n = stack[--sp];
+            if (!n) continue;
+            if (n->type == AST_FUNC_DECL &&
+                n->as.func_decl.arg_count == 0 &&
+                n->as.func_decl.return_type_len > 0 &&
+                n->as.func_decl.name_len > 0 &&
+                (!n->as.func_decl.body ||
+                 (n->as.func_decl.body->type == AST_BLOCK && n->as.func_decl.body->as.block.count == 0))) {
+                if (typeNamesLen > 0) typeNamesBuf[typeNamesLen++] = ',';
+                memcpy(typeNamesBuf + typeNamesLen, n->as.func_decl.name, n->as.func_decl.name_len);
+                typeNamesLen += n->as.func_decl.name_len;
+            } else if (n->type == AST_BLOCK || n->type == AST_BLOCK_DATA) {
+                for (int i = 0; i < n->as.block.count && sp < 256; i++)
+                    stack[sp++] = n->as.block.statements[i];
+            }
+        }
+    }
+    if (typeNamesLen > 0) {
+        MlirAttribute typeAttr = mlirStringAttrGet(ctx, mlirStringRefCreate(typeNamesBuf, typeNamesLen));
+        mlirOperationSetAttributeByName(mlirModuleGetOperation(module), mlirStringRefCreateFromCString("lin.type_names"), typeAttr);
+    }
+
     return module;
 }
 

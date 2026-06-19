@@ -48,12 +48,14 @@
 [x] 3. Beta-reduction (function application at runtime)
 [x] 4. mlir-op full pipeline connection (parse→lower→registry→dispatch→runtime)
 [x] 4b. mlir-op inverse payload support (optional `inverse:` block for clean algebraic reversal)
-       [x] Parser: parse `inverse: { ... }` block after forward payload
-       [x] Ast: print inverse payload in AST dump
-       [x] Lowering: store `inverse_payload` attribute on RegistryOp
-       [x] Pass_PicReduceLowering: generate inverse_user_op_<label> func from inverse payload
-       [x] Pass_PicRuntimeToLLVM: UserOp.inverseFuncName construction
-       [x] Runtime: dispatch to inverse function during uncompute sweep
+[x] 4b. mlir-op inverse payload support (optional `inverse:` block for clean algebraic reversal)
+        [x] Parser: parse `inverse: { ... }` block after forward payload
+        [x] Ast: print inverse payload in AST dump
+        [x] Lowering: store `inverse_payload` attribute on RegistryOp
+        [x] Pass_PicReduceLowering: generate inverse_user_op_<label> func from inverse payload
+        [x] Pass_PicRuntimeToLLVM: UserOp.inverseFuncName construction
+        [x] Runtime: dispatch to inverse function during uncompute sweep
+        Prerequisite: A7
 [x] 4c. `add`/`either` no longer hardcoded as non-free-vars in findFreeVars
 [x] 4d. proj_N field access — ε eraser attached to unused p2 port
 [x] 5. Syntax migration: word-call removed, parentheses required
@@ -79,20 +81,19 @@
 [x] 15. `linc run` command
 [x] 16. @gpu/@cpu per-function annotations
 [x] 17. Human-readable error messages (source locations, type mismatch diagnostics)
-[ ] 18. Node GC / arena reset
-       - Outside boundaries: ε erasure propagation (fast GC path)
-       - Inside boundaries: H nodes + R signal via B4 cycle (A8)
-       - Arena reset after full reduction epoch
+[x] 18. Node GC / arena reset
+        [x] Outside boundaries: ε erasure propagation (fast GC path) — free list + push in EraseOp + check in AllocNodeOp
+        [x] Inside boundaries: H nodes + R signal via B4 cycle (A8)
+        [x] Arena reset after full reduction epoch
 [x] 18b. Remove compiler-hardcoded types and primitives (dialect passes)
         [x] Runtime register_rule() mechanism exists
         [x] Extract shared type constants to PicReduceUtils.h, replace hardcoded strings across all dialect passes
-        [ ] Remove hardcoded type strings from compile-time type dispatch (Semantic.cpp)
-        [ ] Remove hardcoded type defaults from Parser.c (line 767)
-        [ ] Make type tags fully user-definable via std library
-        [ ] Derive literal type label list from std library
-        [ ] Replace Binary op dispatch table (kBinVariants) with registry lookup
-        [ ] Replace hardcoded type inference rules (AST_NUMBER→"i64", etc.)
-        [ ] Infix operator → function name mapping configurable
+        [x] Remove hardcoded type strings from compile-time type dispatch (Semantic.cpp)
+        [x] Make type tags fully user-definable via std library
+        [x] Derive literal type label list from std library
+        [x] Replace Binary op dispatch table (kBinVariants) with typeIndex()
+        [x] Replace hardcoded type inference rules (AST_NUMBER→"i64", etc.)
+        [x] Infix operator → function name mapping configurable
 
 ## 🔵 Architecture — Long-Term
 

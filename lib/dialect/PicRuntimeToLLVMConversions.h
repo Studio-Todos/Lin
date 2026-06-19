@@ -76,10 +76,22 @@ static Value genAllocateRvecNode(OpBuilder &ob, Location loc, Value stateArg, fu
     auto i32Type = ob.getI32Type();
     auto i64Type = ob.getI64Type();
 
+    auto freeCountGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({}, i32Type), "__pic_free_count");
+    Value freeCount = ob.create<memref::LoadOp>(loc, i32Type, freeCountGlobal, ValueRange{});
+    Value hasFree = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ne, freeCount, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0)));
+
+    Value newFreeCount = ob.create<LLVM::SubOp>(loc, i32Type, freeCount, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(1)));
+    Value storeFreeCount = ob.create<LLVM::SelectOp>(loc, hasFree, newFreeCount, freeCount);
+    ob.create<memref::StoreOp>(loc, storeFreeCount, freeCountGlobal, ValueRange{});
+    Value safeNewCount = ob.create<LLVM::SelectOp>(loc, hasFree, newFreeCount, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0)));
+    auto freeListGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i32Type), "__pic_free_list");
+    Value freeIdx = ob.create<memref::LoadOp>(loc, i32Type, freeListGlobal, ValueRange{toIdx(ob, loc, safeNewCount)});
+
     auto alGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({}, i32Type), "__pic_allocator");
-    Value nIdx = ob.create<memref::AtomicRMWOp>(loc, i32Type, arith::AtomicRMWKind::addi,
+    Value bumpIdx = ob.create<memref::AtomicRMWOp>(loc, i32Type, arith::AtomicRMWKind::addi,
         ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(1)),
         alGlobal, ValueRange{});
+    Value nIdx = ob.create<LLVM::SelectOp>(loc, hasFree, freeIdx, bumpIdx);
 
     auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_net");
     Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
@@ -192,10 +204,22 @@ static Value convertAllocNodeOp(OpBuilder &ob, pic::runtime::AllocNodeOp allocOp
     auto i64Type = ob.getI64Type();
     Location loc = allocOp.getLoc();
 
+    auto freeCountGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({}, i32Type), "__pic_free_count");
+    Value freeCount = ob.create<memref::LoadOp>(loc, i32Type, freeCountGlobal, ValueRange{});
+    Value hasFree = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ne, freeCount, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0)));
+
+    Value newFreeCount = ob.create<LLVM::SubOp>(loc, i32Type, freeCount, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(1)));
+    Value storeFreeCount = ob.create<LLVM::SelectOp>(loc, hasFree, newFreeCount, freeCount);
+    ob.create<memref::StoreOp>(loc, storeFreeCount, freeCountGlobal, ValueRange{});
+    Value safeNewCount = ob.create<LLVM::SelectOp>(loc, hasFree, newFreeCount, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0)));
+    auto freeListGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i32Type), "__pic_free_list");
+    Value freeIdx = ob.create<memref::LoadOp>(loc, i32Type, freeListGlobal, ValueRange{toIdx(ob, loc, safeNewCount)});
+
     auto alGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({}, i32Type), "__pic_allocator");
-    Value nIdx = ob.create<memref::AtomicRMWOp>(loc, i32Type, arith::AtomicRMWKind::addi,
+    Value bumpIdx = ob.create<memref::AtomicRMWOp>(loc, i32Type, arith::AtomicRMWKind::addi,
         ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(1)),
         alGlobal, ValueRange{});
+    Value nIdx = ob.create<LLVM::SelectOp>(loc, hasFree, freeIdx, bumpIdx);
 
     auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_net");
     Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
