@@ -254,10 +254,7 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
                             cleanName = cleanName.substr(0, underscorePos);
                         }
                         std::string mlirType = argTypes[i];
-                        if (mlirType != "i1" && mlirType != "i8" && mlirType != "i16" &&
-                            mlirType != "i32" && mlirType != "i64" &&
-                            mlirType != "f32" && mlirType != "f64" &&
-                            mlirType != "ptr") {
+                        if (!isValidMLIRType(mlirType)) {
                             mlirType = "i32";
                         }
                         argS += cleanName + " : " + mlirType;
@@ -339,10 +336,7 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
                             cleanName = cleanName.substr(0, underscorePos);
                         }
                         std::string mlirType = argTypes[i];
-                        if (mlirType != "i1" && mlirType != "i8" && mlirType != "i16" &&
-                            mlirType != "i32" && mlirType != "i64" &&
-                            mlirType != "f32" && mlirType != "f64" &&
-                            mlirType != "ptr") {
+                        if (!isValidMLIRType(mlirType)) {
                             mlirType = "i32";
                         }
                         argS2 += cleanName + " : " + mlirType;
@@ -548,7 +542,7 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
 
 
     std::vector<uint32_t> literalHashes;
-    for (const auto &lit : {"num", "i1", "i8", "i16", "i32", "i64", "f32", "f64", "bool", "str"}) {
+    for (const auto &lit : kAllLiteralTypes) {
         literalHashes.push_back(opcodeForLabel(lit));
     }
     module.walk([&](pic::graph::RegistryOp op) {

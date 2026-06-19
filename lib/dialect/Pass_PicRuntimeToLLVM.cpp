@@ -353,29 +353,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                     opName = op.label.substr(0, underscore);
                     typeName = op.label.substr(underscore + 1);
                 } else {
-                    std::string suffix = "";
-                    if (op.label.size() > 2) {
-                        suffix = op.label.substr(op.label.size() - 2);
-                    }
-                    if (suffix == "64" || suffix == "32") {
-std::string base = op.label.substr(0, op.label.size() - 2);
-                        originalBase = base;
-                        bool isFloat = (base[0] == 'f');
-                        if (isFloat) {
-                            base = base.substr(1);
-                            typeName = (suffix == "64") ? "f64" : "f32";
-                        } else {
-                            typeName = (suffix == "64") ? "i64" : "i32";
-                        }
-                        if (base == "divs" || base == "divu") opName = "div";
-                        else if (base == "rems" || base == "remu") opName = "rem";
-                        else if (base == "slt") opName = "lt";
-                        else if (base == "sgt") opName = "gt";
-                        else if (base == "sle") opName = "le";
-                        else if (base == "sge") opName = "ge";
-                        else if (base == "neq") opName = "ne";
-                        else opName = base;
-                    }
+                    suffixToTypeName(op.label, opName, typeName, originalBase);
                 }
 
                 auto addRuleMatch = [&](uint32_t typeA, uint32_t keyOp, uint32_t typeB, uint32_t keyType, uint32_t valImpl) {
@@ -697,33 +675,13 @@ std::string base = op.label.substr(0, op.label.size() - 2);
         for (auto &op : userOps) {
             std::string opName = "";
             std::string typeName = "";
+            std::string originalBase = "";
             size_t underscore = op.label.find('_');
             if (underscore != std::string::npos) {
                 opName = op.label.substr(0, underscore);
                 typeName = op.label.substr(underscore + 1);
             } else {
-                std::string suffix = "";
-                if (op.label.size() > 2) {
-                    suffix = op.label.substr(op.label.size() - 2);
-                }
-                if (suffix == "64" || suffix == "32") {
-                    std::string base = op.label.substr(0, op.label.size() - 2);
-                    bool isFloat = (base[0] == 'f');
-                    if (isFloat) {
-                        base = base.substr(1);
-                        typeName = (suffix == "64") ? "f64" : "f32";
-                    } else {
-                        typeName = (suffix == "64") ? "i64" : "i32";
-                    }
-                    if (base == "divs" || base == "divu") opName = "div";
-                    else if (base == "rems" || base == "remu") opName = "rem";
-                    else if (base == "slt") opName = "lt";
-                    else if (base == "sgt") opName = "gt";
-                    else if (base == "sle") opName = "le";
-                    else if (base == "sge") opName = "ge";
-                    else if (base == "neq") opName = "ne";
-                    else opName = base;
-                }
+                suffixToTypeName(op.label, opName, typeName, originalBase);
             }
         }
         Value zero64 = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(0));

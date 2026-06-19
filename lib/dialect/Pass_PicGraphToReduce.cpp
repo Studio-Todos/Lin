@@ -191,7 +191,7 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
                 uint64_t fullVal = op.getValue().value();
                 Value lowVal = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(fullVal & 0xFFFFFFFF));
                 builder.create<pic::runtime::SetPortOp>(loc, nodeIdx, builder.getI8IntegerAttr(1), lowVal);
-                if (label == "f64" || label == "i64" || label == "num") {
+                if (is64BitTypeLabel(label.str())) {
                     Value highVal = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(fullVal >> 32));
                     builder.create<pic::runtime::SetPortOp>(loc, nodeIdx, builder.getI8IntegerAttr(2), highVal);
                 }
@@ -212,7 +212,7 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
                     break;
                 }
             }
-            bool isLit = (label == "num" || label == "i1" || label == "i8" || label == "i16" || label == "i32" || label == "i64" || label == "f32" || label == "f64" || label == "bool" || label == "str" || label.starts_with("STR_"));
+            bool isLit = isKnownLiteralType(label.str()) || label.starts_with("STR_");
             if (isUserOp || isLit) {
                 valueToPort[op.getP0()] = makePort(0); // Callee/Function/Literal -> Port 0 (Principal)
                 valueToPort[op.getP1()] = makePort(1); // Arg/Bundle      -> Port 1

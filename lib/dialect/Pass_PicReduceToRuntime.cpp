@@ -160,7 +160,7 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     Value c0xFFFFFFFF00000000_i64 = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0xFFFFFFFF00000000ULL));
 
     std::vector<uint32_t> literalHashes;
-    for (const auto &lit : {"num", "i1", "i8", "i16", "i32", "i64", "f32", "f64", "bool", "str"}) {
+    for (const auto &lit : kAllLiteralTypes) {
         literalHashes.push_back(opcodeForLabel(lit));
     }
     module.walk([&](pic::graph::RegistryOp op) {
