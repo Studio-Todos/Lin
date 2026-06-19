@@ -361,6 +361,45 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
                 node->as.mlir_op.payload_len--;
             }
 
+            // Parse optional inverse: { ... } block
+            node->as.mlir_op.inverse_payload = NULL;
+            node->as.mlir_op.inverse_len = 0;
+            if (parser->current.type == TOKEN_IDENTIFIER &&
+                parser->current.length == 7 &&
+                strncmp(parser->current.start, "inverse", 7) == 0) {
+                parserAdvance(parser);
+                consume(parser, TOKEN_COLON, "Expect ':' after 'inverse'.");
+
+                Token inv_start = parser->current;
+                consume(parser, TOKEN_LBRACE, "Expect '{' for inverse payload.");
+                const char *inv_begin = inv_start.start + 1;
+                const char *p_inv = inv_begin;
+                int braces_inv = 1;
+                while (braces_inv > 0 && *p_inv != '\0') {
+                    if (*p_inv == '{') braces_inv++;
+                    else if (*p_inv == '}') braces_inv--;
+                    p_inv++;
+                }
+                if (braces_inv > 0) {
+                    errorAt(parser, &inv_start, "Unterminated inverse payload.");
+                    return NULL;
+                }
+
+                parser->lexer.current = p_inv;
+                parserAdvance(parser);
+
+                node->as.mlir_op.inverse_payload = inv_begin;
+                node->as.mlir_op.inverse_len = (int)((p_inv - 1) - inv_begin);
+                // Trim leading whitespace on inverse payload
+                while (node->as.mlir_op.inverse_len > 0 && (*node->as.mlir_op.inverse_payload == '\n' || *node->as.mlir_op.inverse_payload == '\r')) {
+                    node->as.mlir_op.inverse_payload++;
+                    node->as.mlir_op.inverse_len--;
+                }
+                while (node->as.mlir_op.inverse_len > 0 && (node->as.mlir_op.inverse_payload[node->as.mlir_op.inverse_len - 1] == ' ' || node->as.mlir_op.inverse_payload[node->as.mlir_op.inverse_len - 1] == '\t' || node->as.mlir_op.inverse_payload[node->as.mlir_op.inverse_len - 1] == '\n' || node->as.mlir_op.inverse_payload[node->as.mlir_op.inverse_len - 1] == '\r')) {
+                    node->as.mlir_op.inverse_len--;
+                }
+            }
+
             return node;
         } else if (is_module) {
             parserAdvance(parser); // consume colon

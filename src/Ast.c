@@ -90,6 +90,9 @@ void printAst(AstNode *node, int depth) {
             } else {
                 printf("MlirOp(%.*s)\n", node->as.mlir_op.name_len, node->as.mlir_op.name);
             }
+            if (node->as.mlir_op.inverse_payload) {
+                printf("  inverse: %.*s\n", node->as.mlir_op.inverse_len, node->as.mlir_op.inverse_payload);
+            }
             break;
         case AST_IMPORT:
             printf("Import(%.*s)\n", node->as.import_stmt.length, node->as.import_stmt.path);
