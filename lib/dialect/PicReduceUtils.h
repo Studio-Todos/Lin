@@ -223,15 +223,18 @@ struct UserOp {
     std::string funcName;
     int numArgs;
     SmallVector<std::string> argTypes;
-    SmallVector<std::string> targets;
-    std::string forcedTarget;
+    SmallVector<std::string> targets;       // Auto-classified compatible dispatch targets (e.g. "cpu", "gpu")
+    std::string forcedTarget;               // From @annotation override, empty if none
+    std::string inverseFuncName;            // Name of inverse wrapper func, empty if no inverse
 
     UserOp() = default;
     UserOp(uint32_t hash, const std::string& label, const std::string& funcName,
            int numArgs, const SmallVector<std::string>& argTypes,
-           const SmallVector<std::string>& targets, const std::string& forcedTarget)
+           const SmallVector<std::string>& targets, const std::string& forcedTarget,
+           const std::string& inverseFuncName = "")
         : hash(hash), label(label), funcName(funcName), numArgs(numArgs),
-          argTypes(argTypes), targets(targets), forcedTarget(forcedTarget) {}
+          argTypes(argTypes), targets(targets), forcedTarget(forcedTarget),
+          inverseFuncName(inverseFuncName) {}
 };
 
 #endif // PIC_REDUCE_UTILS_H
