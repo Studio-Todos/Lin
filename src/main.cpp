@@ -335,6 +335,7 @@ int main(int argc, char **argv) {
 #endif
       PassManager pm(&context);
       pm.addPass(createPicGraphVerifyPass());
+      pm.addPass(createPicGraphEGraphPass());
       pm.addPass(createPicGraphToReducePass());
       pm.addPass(createPicReduceToRuntimePass(enableGPU ? TargetBackend::GPU : TargetBackend::CPU));
       pm.addPass(createPicReduceLoweringPass(enableGPU ? TargetBackend::GPU : TargetBackend::CPU));

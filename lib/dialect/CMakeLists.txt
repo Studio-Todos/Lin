@@ -31,6 +31,7 @@ add_mlir_dialect_library(PicDialects
   PicDialectsCAPI.cpp
   Pass_PicGraphToReduce.cpp
   Pass_PicGraphVerify.cpp
+  Pass_PicGraphEGraph.cpp
   Pass_PicReduceToRuntime.cpp
   Pass_PicReduceLowering.cpp
   Pass_PicRuntimeToLLVM.cpp

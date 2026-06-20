@@ -48,7 +48,6 @@
 [x] 3. Beta-reduction (function application at runtime)
 [x] 4. mlir-op full pipeline connection (parse→lower→registry→dispatch→runtime)
 [x] 4b. mlir-op inverse payload support (optional `inverse:` block for clean algebraic reversal)
-[x] 4b. mlir-op inverse payload support (optional `inverse:` block for clean algebraic reversal)
         [x] Parser: parse `inverse: { ... }` block after forward payload
         [x] Ast: print inverse payload in AST dump
         [x] Lowering: store `inverse_payload` attribute on RegistryOp
@@ -103,11 +102,11 @@
         [x] GPU worker_thread dispatches all pairs to GPU kernel
 [x] 20. 128-bit node layout audit + PICR history extension
 [x] 20b. δ reverse synchronization barrier
-[ ] 21. E-graph congruence (Rule 4) + origins attribute — merge identical subgraphs inside boundaries
+[x] 21. E-graph congruence (Rule 4) + origins attribute — merge identical subgraphs inside boundaries
 [x] 21b. Multi-threaded reduction via scf.parallel/gpu.launch
          Prerequisite: A1b, A4b
 [ ] 22. Hot code reloading
-[ ] 23. Approximate / stochastic accuracy system
+[ ] 23. Approximate / stochastic accuracy system via approxMLIR-pass
 [x] 24. Test suite cleanup
 [x] 25. Runtime stabilization (structural lowering)
 [x] 26. Snippet lowering & type stability

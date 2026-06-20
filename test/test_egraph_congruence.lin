@@ -1,0 +1,18 @@
+// RUN: %linc build %s -o %t 2>&1 | FileCheck %s
+// Test 21: E-graph congruence (Rule 4) — duplicate omega agents inside
+// boundaries are merged into one with a delta duplicator.
+
+import "std/types.lin"
+
+// Two identical literal expressions inside a boundary should have their
+// omega agents merged by the e-graph pass.
+main: func [return: [i32!]] [
+    // Force evaluation of two identical sub-expressions so the e-graph pass
+    // has duplicate omega agents to merge
+    either 1 [
+        42
+    ] [
+        42
+    ]
+]
+// CHECK: i32 {{.*}} = 42
