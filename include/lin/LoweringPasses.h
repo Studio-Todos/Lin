@@ -8,6 +8,7 @@
 #include <string>
 
 std::unique_ptr<mlir::Pass> createPicGraphVerifyPass();
+std::unique_ptr<mlir::Pass> createPicGraphEGraphPass();
 std::unique_ptr<mlir::Pass> createPicGraphToReducePass();
 std::unique_ptr<mlir::Pass> createPicReduceToRuntimePass(TargetBackend target = TargetBackend::CPU);
 std::unique_ptr<mlir::Pass> createPicReduceLoweringPass(TargetBackend target = TargetBackend::CPU);
