@@ -93,6 +93,13 @@
         [x] Replace Binary op dispatch table (kBinVariants) with typeIndex()
         [x] Replace hardcoded type inference rules (AST_NUMBER→"i64", etc.)
         [x] Infix operator → function name mapping configurable
+[x] 31. `linc new/init` project scaffolding with Lin.toml
+        [x] Rust-style CLI with --help/--version, colored diagnostics, --quiet
+        [x] `linc new <name>` creates project template (src/main.lin, Lin.toml, .gitignore)
+        [x] `linc init [dir]` creates Lin.toml in existing directory
+        [x] Lin.toml config file (project name, version, edition, includes)
+        [x] `linc check <file>` type-check only (no codegen)
+        [x] Subcommand scanning: flags can appear before/after subcommand
 
 ## 🔵 Architecture — Long-Term
 
@@ -128,4 +135,5 @@
 ## Known Issues
 
 - exec_io.lin: interactive I/O test requiring a TTY; fails in lit's non-interactive runner
-- All 170 regression tests pass (100%) as of 2026-06-18
+- 7 tests fail in Nix sandbox due to missing CRT startup files (Scrt1.o/crti.o/crtbeginS.o) — linking-only failures, not compiler bugs
+- All 171 regression tests pass (164/171) as of 2026-06-22, with 7 Nix sandbox linking failures
