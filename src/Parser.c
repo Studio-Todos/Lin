@@ -124,7 +124,11 @@ static TokenType identifierType(const Lexer *lexer) {
 static Token string(Lexer *lexer) {
     while (peek(lexer) != '"' && !isAtEnd(lexer)) {
         if (peek(lexer) == '\n') lexer->line++;
-        advance(lexer);
+        char c = advance(lexer);
+        if (c == '\\' && !isAtEnd(lexer)) {
+            if (peek(lexer) == '\n') lexer->line++;
+            advance(lexer);
+        }
     }
     if (isAtEnd(lexer)) return makeToken(lexer, TOKEN_ERROR);
     advance(lexer);
@@ -288,8 +292,33 @@ static AstNode* parseFloatExpr(Parser *parser) {
 static AstNode* parseStringExpr(Parser *parser) {
     AstNode *node = createNode(parser, AST_STRING);
     if (!node) return NULL;
-    node->as.string.value = parser->current.start + 1;
-    node->as.string.length = parser->current.length - 2;
+    
+    const char *src = parser->current.start + 1;
+    int src_len = parser->current.length - 2;
+    
+    char *buf = (char*)malloc(src_len + 1);
+    if (!buf) return NULL;
+    
+    int j = 0;
+    for (int i = 0; i < src_len; i++) {
+        if (src[i] == '\\' && i + 1 < src_len) {
+            switch (src[i + 1]) {
+                case 'n': buf[j++] = '\n'; i++; break;
+                case 't': buf[j++] = '\t'; i++; break;
+                case '\\': buf[j++] = '\\'; i++; break;
+                case '"': buf[j++] = '"'; i++; break;
+                case 'r': buf[j++] = '\r'; i++; break;
+                case '0': buf[j++] = '\0'; i++; break;
+                default: buf[j++] = src[i]; break;
+            }
+        } else {
+            buf[j++] = src[i];
+        }
+    }
+    buf[j] = '\0';
+    
+    node->as.string.value = buf;
+    node->as.string.length = j;
     parserAdvance(parser);
     return node;
 }
