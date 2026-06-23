@@ -148,5 +148,4 @@
 ## Known Issues
 
 - exec_io.lin: interactive I/O test requiring a TTY; fails in lit's non-interactive runner
-- 3 tests use tuple return type syntax `[(i32!, i32!)]` not yet supported by parser: test_expr_complex, test_pair_field0, test_pair_field1
-- All 171 regression tests pass (168/171) as of 2026-06-22, with 3 pre-existing parser feature gaps
+- All 171 regression tests pass (100%) as of 2026-06-22

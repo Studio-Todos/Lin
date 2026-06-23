@@ -518,7 +518,10 @@ static AstNode* parseGroupingExpr(Parser *parser) {
         // If followed by anything else (expressions), it's a function call.
         const char *p = parser->lexer.current;
         while (*p == ' ' || *p == '\n' || *p == '\t' || *p == '\r') p++;
-        bool isGroupingExpr = (*p == '/' || *p == '.' || *p == ']' || *p == ',');
+        bool isGroupingExpr = (*p == '/' || *p == '.' || *p == ']' || *p == ',' ||
+                               *p == '*' || *p == '+' || *p == '-' || *p == '<' ||
+                               *p == '>' || *p == '=' || *p == '!' || *p == '&' ||
+                               *p == '|' || *p == '^' || *p == '%');
 
         if (isGroupingExpr) {
             AstNode *expr = parseExpression(parser);
@@ -926,8 +929,35 @@ static AstNode* parseFuncDecl(Parser *parser, bool anonymous) {
         if (parser->current.type == TOKEN_IDENTIFIER) {
             parserAdvance(parser);
             consume(parser, TOKEN_BANG, "Expect '!'.");
+        } else if (parser->current.type == TOKEN_LPAREN) {
+            // Composite/tuple return type like [(i32!, i32!)]
+            // Capture the whole parenthesized expression as the type name
+            int depth = 0;
+            const char *start = parser->current.start;
+            while (parser->current.type != TOKEN_EOF) {
+                if (parser->current.type == TOKEN_LPAREN) depth++;
+                if (parser->current.type == TOKEN_RPAREN) {
+                    depth--;
+                    if (depth == 0) {
+                        parserAdvance(parser); // consume ')'
+                        break;
+                    }
+                }
+                parserAdvance(parser);
+            }
+            returnTypeName.start = start;
+            returnTypeName.length = (int)(parser->previous.start - start + parser->previous.length);
+        } else if (parser->current.type == TOKEN_LBRACKET) {
+            // Nested block type like [[i32!]]
+            parserAdvance(parser);
+            returnTypeName = parser->current;
+            if (parser->current.type == TOKEN_IDENTIFIER) {
+                parserAdvance(parser);
+                consume(parser, TOKEN_BANG, "Expect '!'.");
+            }
+            consume(parser, TOKEN_RBRACKET, "Expect ']' after nested type.");
         } else {
-            errorAt(parser, &parser->current, "Expect return type identifier.");
+            error(parser, "Expect return type identifier.");
         }
         consume(parser, TOKEN_RBRACKET, "Expect ']' after return type.");
     }
