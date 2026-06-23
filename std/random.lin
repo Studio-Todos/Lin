@@ -1,0 +1,20 @@
+// std/random.lin
+// Standard random number generation for Lin.
+
+// Generate a random i32 value.
+rand: mlir-op [
+    inputs:  [state [i64!]]
+    outputs: [res_state [i64!] val [i32!]]
+] {
+    %val = llvm.call @rand() : () -> i32
+    %res_state = llvm.add %state, %state : i64
+}
+
+// Seed the random number generator.
+srand: mlir-op [
+    inputs:  [state [i64!] seed [i32!]]
+    outputs: [res_state [i64!]]
+] {
+    llvm.call @srand(%seed) : (i32) -> ()
+    %res_state = llvm.add %state, %state : i64
+}

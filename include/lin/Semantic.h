@@ -6,13 +6,15 @@
 #include <string>
 
 // Run all checkstyle and static analysis. Returns error count (0 on success).
-int checkstyleAst(AstNode *node);
+// source: the full source text (for diagnostic source-line display), can be NULL.
+int checkstyleAst(AstNode *node, const char *source);
 
 // Checks if function or sub-statements have GPU annotation.
 bool hasGpuAnnotation(AstNode *node);
 
 // Run semantic type checking. Returns error count.
-int semanticTypeCheckAst(AstNode *node, std::unordered_set<std::string>& declaredTypes);
+// source: the full source text (for diagnostic source-line display), can be NULL.
+int semanticTypeCheckAst(AstNode *node, std::unordered_set<std::string>& declaredTypes, const char *source);
 
 // Type-directed omega-label selection/dispatch.
 void performTypeDirectedDispatch(AstNode *ast);

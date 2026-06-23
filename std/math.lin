@@ -78,6 +78,39 @@ remu32: mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
     %res = arith.remui %a, %b : i32
 }
 
+// Bitwise XOR (i32)
+xor32: mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
+    %res = arith.xori %a, %b : i32
+}
+
+// Absolute value (i32)
+abs32: mlir-op [ inputs: [a [i32!]] outputs: [res [i32!]] ] {
+    %c0 = arith.constant 0 : i32
+    %neg = arith.subi %c0, %a : i32
+    %cmp = arith.cmpi slt, %a, %c0 : i32
+    %res = arith.select %cmp, %neg, %a : i32
+}
+
+// Negation (i32)
+neg32: mlir-op [ inputs: [a [i32!]] outputs: [res [i32!]] ] {
+    %c0 = arith.constant 0 : i32
+    %res = arith.subi %c0, %a : i32
+}
+
+// Absolute value (i64)
+abs64: mlir-op [ inputs: [a [i64!]] outputs: [res [i64!]] ] {
+    %c0 = arith.constant 0 : i64
+    %neg = arith.subi %c0, %a : i64
+    %cmp = arith.cmpi slt, %a, %c0 : i64
+    %res = arith.select %cmp, %neg, %a : i64
+}
+
+// Negation (i64)
+neg64: mlir-op [ inputs: [a [i64!]] outputs: [res [i64!]] ] {
+    %c0 = arith.constant 0 : i64
+    %res = arith.subi %c0, %a : i64
+}
+
 // --- Floating Point 64-bit ---
 
 fadd64: mlir-op [ inputs: [a [i64!] b [i64!]] outputs: [res [i32!]] ] {

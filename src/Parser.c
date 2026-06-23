@@ -1,5 +1,6 @@
 #include "lin/Parser.h"
 #include "lin/Ast.h"
+#include "lin/Diagnostic.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -70,6 +71,13 @@ static Token makeToken(const Lexer *lexer, TokenType type) {
 }
 
 static Token number(Lexer *lexer) {
+    // Check for hex literal (0x...)
+    if (lexer->current[-1] == '0' && (peek(lexer) == 'x' || peek(lexer) == 'X')) {
+        advance(lexer); // consume 'x' or 'X'
+        while (isxdigit(peek(lexer))) advance(lexer);
+        return makeToken(lexer, TOKEN_NUMBER);
+    }
+
     while (isdigit(peek(lexer))) advance(lexer);
 
     if (peek(lexer) == '.' && isdigit(peekNext(lexer))) {
@@ -161,8 +169,11 @@ Token scanToken(Lexer *lexer) {
         case '}': return makeToken(lexer, TOKEN_RBRACE);
         case '*': return makeToken(lexer, TOKEN_STAR);
         case '/': return makeToken(lexer, TOKEN_SLASH);
-        case '&': if (match(lexer, '&')) return makeToken(lexer, TOKEN_AND); break;
-        case '|': if (match(lexer, '|')) return makeToken(lexer, TOKEN_OR); break;
+        case '&': if (match(lexer, '&')) return makeToken(lexer, TOKEN_AND);
+                  return makeToken(lexer, TOKEN_AND);
+        case '|': if (match(lexer, '|')) return makeToken(lexer, TOKEN_OR);
+                  return makeToken(lexer, TOKEN_OR);
+        case '^': return makeToken(lexer, TOKEN_POW);
         case '=': if (match(lexer, '=')) return makeToken(lexer, TOKEN_EQUAL_EQUAL); break;
         case '<': if (match(lexer, '=')) return makeToken(lexer, TOKEN_LESS_EQUAL);
                   else if (match(lexer, '<')) return makeToken(lexer, TOKEN_LESS); // << shift
@@ -202,13 +213,12 @@ typedef struct {
 
 static void errorAt(Parser *parser, const Token *token, const char *message) {
     if (parser->hadError) return;
-    fprintf(stderr, "[line %d:%d] Error", token->line, token->col);
+    const char *source = parser->lexer.start;
     if (token->type == TOKEN_EOF) {
-        fprintf(stderr, " at end");
+        diagError(source, NULL, token->line, token->col, message);
     } else {
-        fprintf(stderr, " at '%.*s'", token->length, token->start);
+        diagError(source, NULL, token->line, token->col, message);
     }
-    fprintf(stderr, ": %s\n", message);
     parser->hadError = true;
 }
 
@@ -262,7 +272,7 @@ static AstNode* createNode(Parser *parser, AstNodeType type) {
 static AstNode* parseNumberExpr(Parser *parser) {
     AstNode *node = createNode(parser, AST_NUMBER);
     if (!node) return NULL;
-    node->as.number.value = atoll(parser->current.start);
+    node->as.number.value = strtoll(parser->current.start, NULL, 0);
     parserAdvance(parser);
     return node;
 }
@@ -508,7 +518,10 @@ static AstNode* parseGroupingExpr(Parser *parser) {
         // If followed by anything else (expressions), it's a function call.
         const char *p = parser->lexer.current;
         while (*p == ' ' || *p == '\n' || *p == '\t' || *p == '\r') p++;
-        bool isGroupingExpr = (*p == '/' || *p == '.' || *p == ']' || *p == ',');
+        bool isGroupingExpr = (*p == '/' || *p == '.' || *p == ']' || *p == ',' ||
+                               *p == '*' || *p == '+' || *p == '-' || *p == '<' ||
+                               *p == '>' || *p == '=' || *p == '!' || *p == '&' ||
+                               *p == '|' || *p == '^' || *p == '%');
 
         if (isGroupingExpr) {
             AstNode *expr = parseExpression(parser);
@@ -685,7 +698,8 @@ static AstNode* parseExpression(Parser *parser) {
            parser->current.type == TOKEN_STAR || parser->current.type == TOKEN_GREATER ||
            parser->current.type == TOKEN_EQUAL_EQUAL || parser->current.type == TOKEN_NOT_EQUAL ||
            parser->current.type == TOKEN_GREATER_EQUAL || parser->current.type == TOKEN_LESS_EQUAL ||
-           parser->current.type == TOKEN_AND || parser->current.type == TOKEN_OR) {
+           parser->current.type == TOKEN_AND || parser->current.type == TOKEN_OR ||
+           parser->current.type == TOKEN_POW) {
         TokenType op = parser->current.type;
         parserAdvance(parser);
         AstNode *right = parsePrimary(parser);
@@ -702,6 +716,7 @@ static AstNode* parseExpression(Parser *parser) {
         else if (op == TOKEN_NOT_EQUAL) funcName = "ne";
         else if (op == TOKEN_AND) funcName = "and";
         else if (op == TOKEN_OR) funcName = "std.or";
+        else if (op == TOKEN_POW) funcName = "xor";
 
         AstNode *call = createNode(parser, AST_CALL);
         call->as.call.callee = strdup(funcName);
@@ -914,8 +929,35 @@ static AstNode* parseFuncDecl(Parser *parser, bool anonymous) {
         if (parser->current.type == TOKEN_IDENTIFIER) {
             parserAdvance(parser);
             consume(parser, TOKEN_BANG, "Expect '!'.");
+        } else if (parser->current.type == TOKEN_LPAREN) {
+            // Composite/tuple return type like [(i32!, i32!)]
+            // Capture the whole parenthesized expression as the type name
+            int depth = 0;
+            const char *start = parser->current.start;
+            while (parser->current.type != TOKEN_EOF) {
+                if (parser->current.type == TOKEN_LPAREN) depth++;
+                if (parser->current.type == TOKEN_RPAREN) {
+                    depth--;
+                    if (depth == 0) {
+                        parserAdvance(parser); // consume ')'
+                        break;
+                    }
+                }
+                parserAdvance(parser);
+            }
+            returnTypeName.start = start;
+            returnTypeName.length = (int)(parser->previous.start - start + parser->previous.length);
+        } else if (parser->current.type == TOKEN_LBRACKET) {
+            // Nested block type like [[i32!]]
+            parserAdvance(parser);
+            returnTypeName = parser->current;
+            if (parser->current.type == TOKEN_IDENTIFIER) {
+                parserAdvance(parser);
+                consume(parser, TOKEN_BANG, "Expect '!'.");
+            }
+            consume(parser, TOKEN_RBRACKET, "Expect ']' after nested type.");
         } else {
-            errorAt(parser, &parser->current, "Expect return type identifier.");
+            error(parser, "Expect return type identifier.");
         }
         consume(parser, TOKEN_RBRACKET, "Expect ']' after return type.");
     }

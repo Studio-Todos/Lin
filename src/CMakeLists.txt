@@ -1,4 +1,4 @@
-add_executable(linc main.cpp Parser.c Lowering.c gpu_runtime.c Ast.c Semantic.cpp EGraphOptimizer.c)
+add_executable(linc main.cpp Parser.c Lowering.c gpu_runtime.c Ast.c Diagnostic.c Semantic.cpp EGraphOptimizer.c)
 
 find_package(Vulkan REQUIRED)
 

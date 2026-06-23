@@ -93,6 +93,26 @@
         [x] Replace Binary op dispatch table (kBinVariants) with typeIndex()
         [x] Replace hardcoded type inference rules (AST_NUMBER→"i64", etc.)
         [x] Infix operator → function name mapping configurable
+[x] 31. `linc new/init` project scaffolding with Lin.toml
+        [x] Rust-style CLI with --help/--version, colored diagnostics, --quiet
+        [x] `linc new <name>` creates project template (src/main.lin, Lin.toml, .gitignore)
+        [x] `linc init [dir]` creates Lin.toml in existing directory
+        [x] Lin.toml config file (project name, version, edition, includes)
+        [x] `linc check <file>` type-check only (no codegen)
+        [x] Subcommand scanning: flags can appear before/after subcommand
+[x] 17b. Rust-style error diagnostics (source lines, caret pointers, colored output)
+        [x] Diagnostic.c/h subsystem for formatted errors/warnings/notes
+        [x] Parser uses diagError() with source-line display
+        [x] Semantic checker uses diagError() with source-line display
+        [x] Checkstyle uses source locations with diagError()
+[x] 36. Standard library expansion
+        [x] abs32/abs64, neg32/neg64 in math.lin (arith.select-based)
+        [x] std/random.lin with rand/srand (libc wrappers)
+        [x] xor32 bitwise XOR in math.lin
+[x] 37. Parser fixes for feature completeness
+        [x] Single `&` and `|` operators (bitwise AND/OR)
+        [x] Hex literal support (0x... prefix with strtoll)
+        [x] `^` operator for bitwise XOR (maps to xor64/xor32)
 
 ## 🔵 Architecture — Long-Term
 
@@ -128,4 +148,4 @@
 ## Known Issues
 
 - exec_io.lin: interactive I/O test requiring a TTY; fails in lit's non-interactive runner
-- All 170 regression tests pass (100%) as of 2026-06-18
+- All 171 regression tests pass (100%) as of 2026-06-22
