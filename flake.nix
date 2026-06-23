@@ -103,6 +103,8 @@
               final.vulkan-headers
               vulkan-loader
               vulkan-validation-layers
+              final.gcc
+              final.glibc
             ];
 
             configurePhase = ''
