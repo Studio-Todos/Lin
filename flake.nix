@@ -103,9 +103,7 @@
               final.vulkan-headers
               vulkan-loader
               vulkan-validation-layers
-              final.gcc
-              final.glibc
-            ];
+              ];
 
             configurePhase = ''
               export LLVM_DIR=${llvm.llvm.dev}
