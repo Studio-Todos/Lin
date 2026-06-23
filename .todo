@@ -100,6 +100,14 @@
         [x] Lin.toml config file (project name, version, edition, includes)
         [x] `linc check <file>` type-check only (no codegen)
         [x] Subcommand scanning: flags can appear before/after subcommand
+[x] 17b. Rust-style error diagnostics (source lines, caret pointers, colored output)
+        [x] Diagnostic.c/h subsystem for formatted errors/warnings/notes
+        [x] Parser uses diagError() with source-line display
+        [x] Semantic checker uses diagError() with source-line display
+        [x] Checkstyle uses source locations with diagError()
+[x] 36. Standard library expansion
+        [x] abs32/abs64, neg32/neg64 in math.lin (arith.select-based)
+        [x] std/random.lin with rand/srand (libc wrappers)
 
 ## 🔵 Architecture — Long-Term
 
