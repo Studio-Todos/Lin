@@ -71,6 +71,13 @@ static Token makeToken(const Lexer *lexer, TokenType type) {
 }
 
 static Token number(Lexer *lexer) {
+    // Check for hex literal (0x...)
+    if (lexer->current[-1] == '0' && (peek(lexer) == 'x' || peek(lexer) == 'X')) {
+        advance(lexer); // consume 'x' or 'X'
+        while (isxdigit(peek(lexer))) advance(lexer);
+        return makeToken(lexer, TOKEN_NUMBER);
+    }
+
     while (isdigit(peek(lexer))) advance(lexer);
 
     if (peek(lexer) == '.' && isdigit(peekNext(lexer))) {
@@ -162,8 +169,11 @@ Token scanToken(Lexer *lexer) {
         case '}': return makeToken(lexer, TOKEN_RBRACE);
         case '*': return makeToken(lexer, TOKEN_STAR);
         case '/': return makeToken(lexer, TOKEN_SLASH);
-        case '&': if (match(lexer, '&')) return makeToken(lexer, TOKEN_AND); break;
-        case '|': if (match(lexer, '|')) return makeToken(lexer, TOKEN_OR); break;
+        case '&': if (match(lexer, '&')) return makeToken(lexer, TOKEN_AND);
+                  return makeToken(lexer, TOKEN_AND);
+        case '|': if (match(lexer, '|')) return makeToken(lexer, TOKEN_OR);
+                  return makeToken(lexer, TOKEN_OR);
+        case '^': return makeToken(lexer, TOKEN_POW);
         case '=': if (match(lexer, '=')) return makeToken(lexer, TOKEN_EQUAL_EQUAL); break;
         case '<': if (match(lexer, '=')) return makeToken(lexer, TOKEN_LESS_EQUAL);
                   else if (match(lexer, '<')) return makeToken(lexer, TOKEN_LESS); // << shift
@@ -262,7 +272,7 @@ static AstNode* createNode(Parser *parser, AstNodeType type) {
 static AstNode* parseNumberExpr(Parser *parser) {
     AstNode *node = createNode(parser, AST_NUMBER);
     if (!node) return NULL;
-    node->as.number.value = atoll(parser->current.start);
+    node->as.number.value = strtoll(parser->current.start, NULL, 0);
     parserAdvance(parser);
     return node;
 }
@@ -685,7 +695,8 @@ static AstNode* parseExpression(Parser *parser) {
            parser->current.type == TOKEN_STAR || parser->current.type == TOKEN_GREATER ||
            parser->current.type == TOKEN_EQUAL_EQUAL || parser->current.type == TOKEN_NOT_EQUAL ||
            parser->current.type == TOKEN_GREATER_EQUAL || parser->current.type == TOKEN_LESS_EQUAL ||
-           parser->current.type == TOKEN_AND || parser->current.type == TOKEN_OR) {
+           parser->current.type == TOKEN_AND || parser->current.type == TOKEN_OR ||
+           parser->current.type == TOKEN_POW) {
         TokenType op = parser->current.type;
         parserAdvance(parser);
         AstNode *right = parsePrimary(parser);
@@ -702,6 +713,7 @@ static AstNode* parseExpression(Parser *parser) {
         else if (op == TOKEN_NOT_EQUAL) funcName = "ne";
         else if (op == TOKEN_AND) funcName = "and";
         else if (op == TOKEN_OR) funcName = "std.or";
+        else if (op == TOKEN_POW) funcName = "xor";
 
         AstNode *call = createNode(parser, AST_CALL);
         call->as.call.callee = strdup(funcName);

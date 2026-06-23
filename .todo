@@ -108,6 +108,11 @@
 [x] 36. Standard library expansion
         [x] abs32/abs64, neg32/neg64 in math.lin (arith.select-based)
         [x] std/random.lin with rand/srand (libc wrappers)
+        [x] xor32 bitwise XOR in math.lin
+[x] 37. Parser fixes for feature completeness
+        [x] Single `&` and `|` operators (bitwise AND/OR)
+        [x] Hex literal support (0x... prefix with strtoll)
+        [x] `^` operator for bitwise XOR (maps to xor64/xor32)
 
 ## 🔵 Architecture — Long-Term
 
@@ -143,5 +148,5 @@
 ## Known Issues
 
 - exec_io.lin: interactive I/O test requiring a TTY; fails in lit's non-interactive runner
-- 7 tests fail in Nix sandbox due to missing CRT startup files (Scrt1.o/crti.o/crtbeginS.o) — linking-only failures, not compiler bugs
-- All 171 regression tests pass (164/171) as of 2026-06-22, with 7 Nix sandbox linking failures
+- 3 tests use tuple return type syntax `[(i32!, i32!)]` not yet supported by parser: test_expr_complex, test_pair_field0, test_pair_field1
+- All 171 regression tests pass (168/171) as of 2026-06-22, with 3 pre-existing parser feature gaps

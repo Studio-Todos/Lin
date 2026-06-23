@@ -78,6 +78,11 @@ remu32: mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
     %res = arith.remui %a, %b : i32
 }
 
+// Bitwise XOR (i32)
+xor32: mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
+    %res = arith.xori %a, %b : i32
+}
+
 // Absolute value (i32)
 abs32: mlir-op [ inputs: [a [i32!]] outputs: [res [i32!]] ] {
     %c0 = arith.constant 0 : i32
