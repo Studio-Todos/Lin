@@ -1,9 +1,9 @@
 // RUN: not %linc test %s 2>&1 | FileCheck %s
 
-// CHECK: Checkstyle Error: Function name 'myFunc' must be lower-case.
-// CHECK: Checkstyle Error: Function argument 'argNum' must be lower-case.
-// CHECK: Checkstyle Error: Variable name 'varA' must be lower-case.
-// CHECK: Checkstyle Error: Function call 'myFunc' must be lower-case.
+// CHECK: error: Function name 'myFunc' must be lower-case
+// CHECK: error: Function argument 'argNum' must be lower-case
+// CHECK: error: Variable name 'varA' must be lower-case
+// CHECK: error: Function call 'myFunc' must be lower-case
 // CHECK: Checkstyle and static analysis failed with 4 error(s).
 
 myFunc: func [

@@ -561,7 +561,7 @@ static int runCompilationPipeline(
     }
 
     std::unordered_set<std::string> declaredTypes;
-    int semanticErrors = semanticTypeCheckAst(ast, declaredTypes);
+    int semanticErrors = semanticTypeCheckAst(ast, declaredTypes, patchedSource);
     if (semanticErrors > 0) {
         err("Semantic analysis failed with " + std::to_string(semanticErrors) + " error(s).");
         if (ast) freeAst(ast);
@@ -1098,7 +1098,7 @@ int main(int argc, char **argv) {
         }
 
         std::unordered_set<std::string> declaredTypes;
-        int errors = semanticTypeCheckAst(ast, declaredTypes);
+        int errors = semanticTypeCheckAst(ast, declaredTypes, patchedSource);
         if (ast) freeAst(ast);
         for (const char *src : importSources) free((void*)src);
 
@@ -1227,7 +1227,7 @@ int main(int argc, char **argv) {
         }
 
         std::cout << "\nRunning built-in checkstyle and static analysis...\n";
-        int styleErrors = checkstyleAst(ast);
+        int styleErrors = checkstyleAst(ast, patchedSource);
         if (ast) freeAst(ast);
         for (const char *src : testImportSources) free((void*)src);
 

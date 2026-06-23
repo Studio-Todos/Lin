@@ -1,5 +1,6 @@
 #include "lin/Parser.h"
 #include "lin/Ast.h"
+#include "lin/Diagnostic.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -202,13 +203,12 @@ typedef struct {
 
 static void errorAt(Parser *parser, const Token *token, const char *message) {
     if (parser->hadError) return;
-    fprintf(stderr, "[line %d:%d] Error", token->line, token->col);
+    const char *source = parser->lexer.start;
     if (token->type == TOKEN_EOF) {
-        fprintf(stderr, " at end");
+        diagError(source, NULL, token->line, token->col, message);
     } else {
-        fprintf(stderr, " at '%.*s'", token->length, token->start);
+        diagError(source, NULL, token->line, token->col, message);
     }
-    fprintf(stderr, ": %s\n", message);
     parser->hadError = true;
 }
 

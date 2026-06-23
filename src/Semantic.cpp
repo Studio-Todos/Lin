@@ -1,4 +1,5 @@
 #include "lin/Semantic.h"
+#include "lin/Diagnostic.h"
 #include "../lib/dialect/PicReduceUtils.h"
 #include <iostream>
 #include <string>
@@ -19,7 +20,7 @@ static bool isIdiomaticCase(const char* str, int len) {
 }
 
 // Semantic type checking: validate arg/return type names with source locations.
-int semanticTypeCheckAst(AstNode *node, std::unordered_set<std::string>& declaredTypes) {
+int semanticTypeCheckAst(AstNode *node, std::unordered_set<std::string>& declaredTypes, const char *source) {
     if (!node) return 0;
     int errors = 0;
     switch (node->type) {
@@ -34,53 +35,51 @@ int semanticTypeCheckAst(AstNode *node, std::unordered_set<std::string>& declare
                     declaredTypes.insert(std::string(stmt->as.assignment.name, stmt->as.assignment.name_len));
             }
             for (int i = 0; i < node->as.block.count; ++i)
-                errors += semanticTypeCheckAst(node->as.block.statements[i], declaredTypes);
+                errors += semanticTypeCheckAst(node->as.block.statements[i], declaredTypes, source);
             break;
         }
         case AST_FUNC_DECL: {
             for (int i = 0; i < node->as.func_decl.arg_count; ++i) {
                 std::string t(node->as.func_decl.args[i].type_name, node->as.func_decl.args[i].type_name_len);
                 if (declaredTypes.find(t) == declaredTypes.end()) {
-                    std::cerr << "[line " << node->line << ":" << node->col
-                              << "] Semantic Error: Type '" << t << "' used in argument '"
-                              << std::string(node->as.func_decl.args[i].name, node->as.func_decl.args[i].name_len)
-                              << "' is undeclared.\n";
+                    std::string errMsg = "Undeclared type '" + t + "' in argument '"
+                        + std::string(node->as.func_decl.args[i].name, node->as.func_decl.args[i].name_len) + "'";
+                    diagError(source, NULL, node->line, node->col, errMsg.c_str());
                     errors++;
                 }
             }
             if (node->as.func_decl.return_type_len > 0 && node->as.func_decl.return_type_name) {
                 std::string rt(node->as.func_decl.return_type_name, node->as.func_decl.return_type_len);
                 if (!rt.empty() && rt[0] != '[' && declaredTypes.find(rt) == declaredTypes.end()) {
-                    std::cerr << "[line " << node->line << ":" << node->col
-                              << "] Semantic Error: Return type '" << rt << "' in function '"
-                              << (node->as.func_decl.name
-                                  ? std::string(node->as.func_decl.name, node->as.func_decl.name_len)
-                                  : std::string("anonymous"))
-                              << "' is undeclared.\n";
+                    std::string funcName = node->as.func_decl.name
+                        ? std::string(node->as.func_decl.name, node->as.func_decl.name_len)
+                        : "<anonymous>";
+                    std::string errMsg = "Undeclared return type '" + rt + "' in function '" + funcName + "'";
+                    diagError(source, NULL, node->line, node->col, errMsg.c_str());
                     errors++;
                 }
             }
             if (node->as.func_decl.body)
-                errors += semanticTypeCheckAst(node->as.func_decl.body, declaredTypes);
+                errors += semanticTypeCheckAst(node->as.func_decl.body, declaredTypes, source);
             break;
         }
         case AST_ASSIGNMENT:
-            errors += semanticTypeCheckAst(node->as.assignment.value, declaredTypes); break;
+            errors += semanticTypeCheckAst(node->as.assignment.value, declaredTypes, source); break;
         case AST_CALL:
             for (int i = 0; i < node->as.call.arg_count; ++i)
-                errors += semanticTypeCheckAst(node->as.call.args[i], declaredTypes);
+                errors += semanticTypeCheckAst(node->as.call.args[i], declaredTypes, source);
             break;
         case AST_BINARY:
-            errors += semanticTypeCheckAst(node->as.binary.left, declaredTypes);
-            errors += semanticTypeCheckAst(node->as.binary.right, declaredTypes);
+            errors += semanticTypeCheckAst(node->as.binary.left, declaredTypes, source);
+            errors += semanticTypeCheckAst(node->as.binary.right, declaredTypes, source);
             break;
         case AST_WHILE:
-            errors += semanticTypeCheckAst(node->as.while_loop.condition, declaredTypes);
-            errors += semanticTypeCheckAst(node->as.while_loop.body, declaredTypes);
+            errors += semanticTypeCheckAst(node->as.while_loop.condition, declaredTypes, source);
+            errors += semanticTypeCheckAst(node->as.while_loop.body, declaredTypes, source);
             break;
         case AST_PAIR:
-            errors += semanticTypeCheckAst(node->as.pair.left, declaredTypes);
-            errors += semanticTypeCheckAst(node->as.pair.right, declaredTypes);
+            errors += semanticTypeCheckAst(node->as.pair.left, declaredTypes, source);
+            errors += semanticTypeCheckAst(node->as.pair.right, declaredTypes, source);
             break;
         default: break;
     }
@@ -288,63 +287,77 @@ void performTypeDirectedDispatch(AstNode *ast) {
 }
 
 // Recursive AST traversal for checkstyle
-int checkstyleAst(AstNode *node) {
+int checkstyleAst(AstNode *node, const char *source) {
     if (!node) return 0;
     int errors = 0;
 
     switch (node->type) {
         case AST_IDENTIFIER: {
             if (!isIdiomaticCase(node->as.identifier.name, node->as.identifier.length)) {
-                std::cerr << "Checkstyle Error: Identifier '" << std::string(node->as.identifier.name, node->as.identifier.length) << "' must be lower-case.\n";
+                std::string msg = "Identifier '"
+                    + std::string(node->as.identifier.name, node->as.identifier.length)
+                    + "' must be lower-case";
+                diagError(source, NULL, node->line, node->col, msg.c_str());
                 errors++;
             }
             break;
         }
         case AST_ASSIGNMENT: {
             if (!isIdiomaticCase(node->as.assignment.name, node->as.assignment.name_len)) {
-                std::cerr << "Checkstyle Error: Variable name '" << std::string(node->as.assignment.name, node->as.assignment.name_len) << "' must be lower-case.\n";
+                std::string msg = "Variable name '"
+                    + std::string(node->as.assignment.name, node->as.assignment.name_len)
+                    + "' must be lower-case";
+                diagError(source, NULL, node->line, node->col, msg.c_str());
                 errors++;
             }
-            errors += checkstyleAst(node->as.assignment.value);
+            errors += checkstyleAst(node->as.assignment.value, source);
             break;
         }
         case AST_FUNC_DECL: {
             if (!isIdiomaticCase(node->as.func_decl.name, node->as.func_decl.name_len)) {
-                std::cerr << "Checkstyle Error: Function name '" << std::string(node->as.func_decl.name, node->as.func_decl.name_len) << "' must be lower-case.\n";
+                std::string msg = "Function name '"
+                    + std::string(node->as.func_decl.name, node->as.func_decl.name_len)
+                    + "' must be lower-case";
+                diagError(source, NULL, node->line, node->col, msg.c_str());
                 errors++;
             }
             for (int i = 0; i < node->as.func_decl.arg_count; ++i) {
                 if (!isIdiomaticCase(node->as.func_decl.args[i].name, node->as.func_decl.args[i].name_len)) {
-                    std::cerr << "Checkstyle Error: Function argument '" << std::string(node->as.func_decl.args[i].name, node->as.func_decl.args[i].name_len) << "' must be lower-case.\n";
+                    std::string msg = "Function argument '"
+                        + std::string(node->as.func_decl.args[i].name, node->as.func_decl.args[i].name_len)
+                        + "' must be lower-case";
+                    diagError(source, NULL, node->line, node->col, msg.c_str());
                     errors++;
                 }
             }
-            errors += checkstyleAst(node->as.func_decl.body);
+            errors += checkstyleAst(node->as.func_decl.body, source);
             break;
         }
         case AST_CALL: {
             if (!isIdiomaticCase(node->as.call.callee, node->as.call.callee_len)) {
-                std::cerr << "Checkstyle Error: Function call '" << std::string(node->as.call.callee, node->as.call.callee_len) << "' must be lower-case.\n";
+                std::string msg = "Function call '"
+                    + std::string(node->as.call.callee, node->as.call.callee_len)
+                    + "' must be lower-case";
+                diagError(source, NULL, node->line, node->col, msg.c_str());
                 errors++;
             }
             for (int i = 0; i < node->as.call.arg_count; ++i) {
-                errors += checkstyleAst(node->as.call.args[i]);
+                errors += checkstyleAst(node->as.call.args[i], source);
             }
             break;
         }
         case AST_BINARY: {
-            errors += checkstyleAst(node->as.binary.left);
-            errors += checkstyleAst(node->as.binary.right);
+            errors += checkstyleAst(node->as.binary.left, source);
+            errors += checkstyleAst(node->as.binary.right, source);
             break;
         }
         case AST_BLOCK: {
             for (int i = 0; i < node->as.block.count; ++i) {
-                errors += checkstyleAst(node->as.block.statements[i]);
+                errors += checkstyleAst(node->as.block.statements[i], source);
             }
             break;
         }
         case AST_IMPORT: {
-            // Note: Imports are flattened, so we don't traverse `module_block` here to avoid double-checking.
             break;
         }
         case AST_NUMBER:
