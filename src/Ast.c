@@ -13,6 +13,8 @@ void freeAst(AstNode *node) {
         if (node->as.call.resolved_callee) free((void*)node->as.call.resolved_callee);
         for (int i=0; i<node->as.call.arg_count; i++) freeAst(node->as.call.args[i]);
         free(node->as.call.args);
+    } else if (node->type == AST_STRING) {
+        free((void*)node->as.string.value);
     } else if (node->type == AST_WHILE) {
         freeAst(node->as.while_loop.condition);
         freeAst(node->as.while_loop.body);
