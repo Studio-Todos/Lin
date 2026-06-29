@@ -94,7 +94,9 @@ typedef enum {
     AST_WHILE,
     AST_PAIR,
     AST_FIELD_ACCESS,
-    AST_MODULE
+    AST_MODULE,
+    AST_BLOCK_LITERAL,
+    AST_IF_RESULT
 } AstNodeType;
 
 typedef struct AstNode {

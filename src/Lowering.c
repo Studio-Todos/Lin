@@ -919,6 +919,43 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         return lastVal;
     }
 
+    if (expr->type == AST_BLOCK_LITERAL) {
+        MlirValue lastVal = {NULL};
+        for (int i = 0; i < expr->as.block.count; i++) {
+            AstNode *item = expr->as.block.statements[i];
+            if (!item) continue;
+            MlirValue itemVal = lowerExpression(ctx, block, loc, item, env, false);
+            if (!mlirValueIsNull(lastVal)) {
+                MlirOperationState pairState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+                MlirAttribute pairType = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("gamma"));
+                MlirNamedAttribute pairTypeAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), pairType);
+                MlirAttribute plusPol = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("+"));
+                MlirNamedAttribute plusPolAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), plusPol);
+                MlirAttribute labelPair = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("pair"));
+                MlirNamedAttribute labelPairAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), labelPair);
+                MlirNamedAttribute attrs[] = {pairTypeAttr, plusPolAttr, labelPairAttr};
+                mlirOperationStateAddAttributes(&pairState, 3, attrs);
+                MlirType portType = getPicPortType(ctx);
+                MlirType types[] = {portType, portType, portType};
+                mlirOperationStateAddResults(&pairState, 3, types);
+                MlirOperation pairOp = mlirOperationCreate(&pairState);
+                mlirBlockAppendOwnedOperation(block, pairOp);
+                MlirValue p0 = mlirOperationGetResult(pairOp, 0);
+                MlirValue p1 = mlirOperationGetResult(pairOp, 1);
+                MlirValue p2 = mlirOperationGetResult(pairOp, 2);
+                linkValues(block, loc, p1, itemVal);
+                linkValues(block, loc, p2, lastVal);
+                lastVal = p0;
+            } else {
+                lastVal = itemVal;
+            }
+        }
+        if (mlirValueIsNull(lastVal)) {
+            lastVal = createEra(ctx, block, loc);
+        }
+        return lastVal;
+    }
+
     if (expr->type == AST_WHILE) {
         // Find all active variables in env
         int active_count = 0;
@@ -2209,7 +2246,7 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
                 if (typeNamesLen > 0) typeNamesBuf[typeNamesLen++] = ',';
                 memcpy(typeNamesBuf + typeNamesLen, n->as.func_decl.name, n->as.func_decl.name_len);
                 typeNamesLen += n->as.func_decl.name_len;
-            } else if (n->type == AST_BLOCK || n->type == AST_BLOCK_DATA) {
+            } else if (n->type == AST_BLOCK || n->type == AST_BLOCK_DATA || n->type == AST_BLOCK_LITERAL) {
                 for (int i = 0; i < n->as.block.count && sp < 256; i++)
                     stack[sp++] = n->as.block.statements[i];
             }

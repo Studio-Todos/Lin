@@ -334,6 +334,8 @@ static AstNode* parseImportExpr(Parser *parser) {
     return node;
 }
 
+static AstNode* parseBlockLiteral(Parser *parser);
+
 static AstNode* parseIdentifierExpr(Parser *parser) {
     Token ident = parser->current;
     parserAdvance(parser);
@@ -485,6 +487,13 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
         return node;
     }
 
+    // Handle `copy [...]` as block literal construction
+    if (ident.length == 4 && strncmp(ident.start, "copy", 4) == 0) {
+        if (parser->current.type == TOKEN_LBRACKET) {
+            return parseBlockLiteral(parser);
+        }
+    }
+
     AstNode *node = createNode(parser, AST_IDENTIFIER);
     if (!node) return NULL;
     node->as.identifier.name = ident.start;
@@ -545,10 +554,13 @@ static AstNode* parseGroupingExpr(Parser *parser) {
         // Peek at what follows to decide: call or grouped expression with postfix ops.
         // If followed by `/`, `.`, `)`, then it's a grouping (path access, field access, or bare identifier).
         // If followed by anything else (expressions), it's a function call.
+        // Note: '-' followed by a digit is unary minus (negative literal in function call),
+        // not binary minus (grouping expression).
         const char *p = parser->lexer.current;
         while (*p == ' ' || *p == '\n' || *p == '\t' || *p == '\r') p++;
+        bool isMinusNegative = (*p == '-' && isdigit((unsigned char)p[1]));
         bool isGroupingExpr = (*p == '/' || *p == '.' || *p == ']' || *p == ',' ||
-                               *p == '*' || *p == '+' || *p == '-' || *p == '<' ||
+                               *p == '*' || *p == '+' || (!isMinusNegative && *p == '-') || *p == '<' ||
                                *p == '>' || *p == '=' || *p == '!' || *p == '&' ||
                                *p == '|' || *p == '^' || *p == '%');
 
@@ -810,6 +822,60 @@ static AstNode* parseBlock(Parser *parser) {
 
     consume(parser, TOKEN_RBRACKET, "Expect ']' after block.");
     return block;
+}
+
+static AstNode* parseBlockLiteral(Parser *parser) {
+    AstNode *node = createNode(parser, AST_BLOCK_LITERAL);
+    if (!node) return NULL;
+    node->as.block.statements = NULL;
+    node->as.block.count = 0;
+    node->as.block.capacity = 0;
+
+    consume(parser, TOKEN_LBRACKET, "Expect '[' after copy.");
+
+    while (parser->current.type != TOKEN_RBRACKET && parser->current.type != TOKEN_EOF) {
+        AstNode *item = parseExpression(parser);
+        if (node->as.block.count >= node->as.block.capacity) {
+            node->as.block.capacity = node->as.block.capacity < 8 ? 8 : node->as.block.capacity * 2;
+            void *tmp = realloc(node->as.block.statements, sizeof(AstNode*) * node->as.block.capacity);
+            if (!tmp) {
+                error(parser, "Out of memory");
+                freeAst(node);
+                return NULL;
+            }
+            node->as.block.statements = (AstNode**)tmp;
+        }
+        node->as.block.statements[node->as.block.count++] = item;
+    }
+
+    consume(parser, TOKEN_RBRACKET, "Expect ']' after copy block.");
+
+    AstNode *result = node;
+    while (parser->current.type == TOKEN_DOT) {
+        result = parseFieldAccess(parser, result);
+    }
+    while (parser->current.type == TOKEN_SLASH) {
+        parserAdvance(parser);
+        Token pathSegment = parser->current;
+        if (pathSegment.type == TOKEN_NUMBER || pathSegment.type == TOKEN_IDENTIFIER) {
+            parserAdvance(parser);
+            AstNode *access = createNode(parser, AST_FIELD_ACCESS);
+            if (!access) return result;
+            access->as.field_access.base = result;
+            if (pathSegment.type == TOKEN_NUMBER) {
+                access->as.field_access.field_index = atoi(pathSegment.start) - 1;
+            } else {
+                access->as.field_access.field_index = 0;
+                access->as.field_access.field_name = pathSegment.start;
+                access->as.field_access.field_name_len = pathSegment.length;
+            }
+            result = access;
+        } else {
+            break;
+        }
+    }
+
+    return result;
 }
 
 static AstNode* parseWhile(Parser *parser) {

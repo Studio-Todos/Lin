@@ -24,7 +24,8 @@ int semanticTypeCheckAst(AstNode *node, std::unordered_set<std::string>& declare
     if (!node) return 0;
     int errors = 0;
     switch (node->type) {
-        case AST_BLOCK: {
+        case AST_BLOCK:
+        case AST_BLOCK_LITERAL: {
             for (int i = 0; i < node->as.block.count; ++i) {
                 AstNode *stmt = node->as.block.statements[i];
                 if (stmt->type == AST_FUNC_DECL)
@@ -146,6 +147,7 @@ static std::string inferType(AstNode *node, const TypeEnv &env,
         case AST_FLOAT:  return kF64Type;
         case AST_BOOL:   return kBoolType;
         case AST_STRING: return kStrType;
+        case AST_BLOCK_LITERAL: return "block";
         case AST_IDENTIFIER: {
             std::string nm(node->as.identifier.name, node->as.identifier.length);
             auto it = env.find(nm); return it != env.end() ? it->second : "";
@@ -169,20 +171,25 @@ static std::string inferType(AstNode *node, const TypeEnv &env,
 static std::string findBinVariant(const std::string &callee, const std::string &ty,
                                    const std::unordered_map<std::string, OpSig> &sigs) {
     std::vector<std::string> candidates;
+    bool startsWithF = (!callee.empty() && callee[0] == 'f');
     if (ty == "i32") {
-        candidates.push_back(callee + "32");
+        if (startsWithF) candidates.push_back(callee + "32");
+        else candidates.push_back(callee + "32");
         candidates.push_back(callee);
     } else if (ty == kDefaultType) {
-        candidates.push_back(callee + "64");
+        if (startsWithF) candidates.push_back(callee + "64");
+        else candidates.push_back(callee + "64");
         if (callee == "lt" || callee == "gt" || callee == "le" || callee == "ge")
             candidates.push_back("s" + callee + "64");
         if (callee == "eq") candidates.push_back("eq64");
         if (callee == "ne") candidates.push_back("ne64");
     } else if (ty == kF32Type) {
         candidates.push_back("f" + callee + "32");
+        if (startsWithF) candidates.push_back(callee + "32");
         candidates.push_back("f" + callee);
     } else if (ty == kF64Type) {
         candidates.push_back("f" + callee + "64");
+        if (startsWithF) candidates.push_back(callee + "64");
     }
     for (auto &c : candidates) {
         if (sigs.find(c) != sigs.end())
@@ -219,7 +226,8 @@ static void typeDirectedDispatch(AstNode *node, TypeEnv env,
             break;
         }
         case AST_BLOCK:
-        case AST_BLOCK_DATA: {
+        case AST_BLOCK_DATA:
+        case AST_BLOCK_LITERAL: {
             TypeEnv inner = env;
             for (int i = 0; i < node->as.block.count; ++i) {
                 AstNode *s = node->as.block.statements[i];
@@ -351,7 +359,8 @@ int checkstyleAst(AstNode *node, const char *source) {
             errors += checkstyleAst(node->as.binary.right, source);
             break;
         }
-        case AST_BLOCK: {
+        case AST_BLOCK:
+        case AST_BLOCK_LITERAL: {
             for (int i = 0; i < node->as.block.count; ++i) {
                 errors += checkstyleAst(node->as.block.statements[i], source);
             }
@@ -388,6 +397,7 @@ bool hasGpuAnnotation(AstNode *node) {
             return false;
         case AST_BLOCK:
         case AST_BLOCK_DATA:
+        case AST_BLOCK_LITERAL:
             for (int i = 0; i < node->as.block.count; i++) {
                 if (hasGpuAnnotation(node->as.block.statements[i])) return true;
             }

@@ -295,6 +295,7 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
                     addDecl("exp", "llvm.func @exp(f64) -> f64");
                     addDecl("log", "llvm.func @log(f64) -> f64");
                     addDecl("sqrt", "llvm.func @sqrt(f64) -> f64");
+                    addDecl("sqrtf", "llvm.func @sqrtf(f32) -> f32");
                     addDecl("pow", "llvm.func @pow(f64, f64) -> f64");
                     addDecl("fopen", "llvm.func @fopen(!llvm.ptr, !llvm.ptr) -> !llvm.ptr");
                     addDecl("fclose", "llvm.func @fclose(!llvm.ptr) -> i32");

@@ -23,7 +23,7 @@ void freeAst(AstNode *node) {
         freeAst(node->as.pair.right);
     } else if (node->type == AST_FIELD_ACCESS) {
         freeAst(node->as.field_access.base);
-    } else if (node->type == AST_BLOCK || node->type == AST_BLOCK_DATA) {
+    } else if (node->type == AST_BLOCK || node->type == AST_BLOCK_DATA || node->type == AST_BLOCK_LITERAL) {
         for (int i=0; i<node->as.block.count; i++) freeAst(node->as.block.statements[i]);
         free(node->as.block.statements);
     } else if (node->type == AST_FUNC_DECL) {
@@ -70,6 +70,7 @@ void printAst(AstNode *node, int depth) {
             break;
         case AST_BLOCK:
         case AST_BLOCK_DATA:
+        case AST_BLOCK_LITERAL:
             printf("Block\n");
             for (int i=0; i<node->as.block.count; i++) printAst(node->as.block.statements[i], depth + 1);
             break;
