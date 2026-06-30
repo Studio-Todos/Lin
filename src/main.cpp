@@ -30,9 +30,19 @@
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
+#if __has_include("mlir/Dialect/SPIRV/IR/SPIRVDialect.h") && \
+    __has_include("mlir/Dialect/SPIRV/IR/TargetAndABI.h") && \
+    __has_include("mlir/Target/SPIRV/Serialization.h")
+#define HAVE_MLIR_SPIRV 1
+#include "mlir/Dialect/SPIRV/IR/SPIRVDialect.h"
+#include "mlir/Dialect/SPIRV/IR/SPIRVOps.h"
+#include "mlir/Dialect/SPIRV/IR/SPIRVAttributes.h"
+#include "mlir/Dialect/SPIRV/IR/TargetAndABI.h"
+#include "mlir/Target/SPIRV/Serialization.h"
 #if __has_include("mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h")
 #include "mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h"
 #include "mlir/Conversion/MemRefToSPIRV/MemRefToSPIRVPass.h"
+#endif
 #if __has_include("mlir/Dialect/SPIRV/Transforms/Passes.h")
 #include "mlir/Dialect/SPIRV/Transforms/Passes.h"
 #endif
@@ -48,15 +58,6 @@
 #if __has_include("mlir/Conversion/FuncToSPIRV/FuncToSPIRVPass.h")
 #include "mlir/Conversion/FuncToSPIRV/FuncToSPIRVPass.h"
 #endif
-#endif
-#if __has_include("mlir/Dialect/SPIRV/IR/SPIRVDialect.h")
-#include "mlir/Dialect/SPIRV/IR/SPIRVDialect.h"
-#include "mlir/Dialect/SPIRV/IR/SPIRVOps.h"
-#include "mlir/Dialect/SPIRV/IR/SPIRVAttributes.h"
-#include "mlir/Dialect/SPIRV/IR/TargetAndABI.h"
-#endif
-#if __has_include("mlir/Target/SPIRV/Serialization.h")
-#include "mlir/Target/SPIRV/Serialization.h"
 #endif
 #include "mlir/Conversion/Passes.h"
 #include "mlir/Transforms/Passes.h"
@@ -557,7 +558,7 @@ static int runCompilationPipeline(
     registry.insert<mlir::scf::SCFDialect>();
     registry.insert<mlir::math::MathDialect>();
     registry.insert<mlir::cf::ControlFlowDialect>();
-#if __has_include("mlir/Dialect/SPIRV/IR/SPIRVDialect.h")
+#ifdef HAVE_MLIR_SPIRV
     registry.insert<mlir::spirv::SPIRVDialect>();
 #endif
     mlir::registerAllToLLVMIRTranslations(registry);
@@ -596,7 +597,7 @@ static int runCompilationPipeline(
 
     ModuleOp module = unwrap(cModule);
 
-#if __has_include("mlir/Dialect/SPIRV/IR/TargetAndABI.h")
+#ifdef HAVE_MLIR_SPIRV
     if (enableGPU) {
         auto targetEnv = mlir::spirv::getDefaultTargetEnv(module.getContext());
         module->setAttr(mlir::spirv::getTargetEnvAttrName(), targetEnv);
@@ -626,7 +627,7 @@ static int runCompilationPipeline(
         return 1;
     }
 
-#if __has_include("mlir/Dialect/SPIRV/IR/TargetAndABI.h")
+#ifdef HAVE_MLIR_SPIRV
     if (enableGPU) {
         module.walk([&](mlir::gpu::GPUFuncOp gpuFunc) {
             if (gpuFunc.isKernel()) {
@@ -637,7 +638,7 @@ static int runCompilationPipeline(
     }
 #endif
 
-#if __has_include("mlir/Target/SPIRV/Serialization.h")
+#ifdef HAVE_MLIR_SPIRV
     if (enableGPU) {
         module.walk([&](mlir::spirv::ModuleOp spirvModule) {
             if (spirvModule->hasAttr("vce_triple")) return;

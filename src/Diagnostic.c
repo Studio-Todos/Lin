@@ -131,7 +131,7 @@ void diagErrorWithNote(const char *source, const char *file, int line, int col,
         bool uc = diagUseColor();
         const char *cyan = uc ? "\033[36m" : "";
         const char *reset = uc ? "\033[0m" : "";
-        fprintf(stderr, "%s = %s%s%s: %s\n", cyan, reset, cyan, "note", reset, noteText);
+        fprintf(stderr, "%s = %s%s%s: %s\n", cyan, reset, cyan, "note", noteText);
     }
 }
 
