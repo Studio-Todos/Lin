@@ -164,6 +164,64 @@ void test_unterminated_string() {
     printf("test_unterminated_string passed\n");
 }
 
+void test_binary_op() {
+    const char *source = "1 + 2";
+    AstNode *ast = parse(source);
+    assert(ast != NULL);
+    assert(ast->type == AST_BLOCK);
+    assert(ast->as.block.count == 1);
+    assert(ast->as.block.statements[0]->type == AST_BINARY);
+    assert(ast->as.block.statements[0]->as.binary.left->type == AST_NUMBER);
+    assert(ast->as.block.statements[0]->as.binary.right->type == AST_NUMBER);
+    freeAst(ast);
+    printf("test_binary_op passed\n");
+}
+
+void test_negative_number() {
+    const char *source = "-42";
+    AstNode *ast = parse(source);
+    assert(ast != NULL);
+    assert(ast->type == AST_BLOCK);
+    assert(ast->as.block.count == 1);
+    assert(ast->as.block.statements[0]->type == AST_UNARY);
+    freeAst(ast);
+    printf("test_negative_number passed\n");
+}
+
+void test_field_access() {
+    const char *source = "p.0";
+    AstNode *ast = parse(source);
+    assert(ast != NULL);
+    assert(ast->type == AST_BLOCK);
+    assert(ast->as.block.count == 1);
+    assert(ast->as.block.statements[0]->type == AST_FIELD_ACCESS);
+    assert(ast->as.block.statements[0]->as.field_access.field == 0);
+    freeAst(ast);
+    printf("test_field_access passed\n");
+}
+
+void test_nested_block() {
+    const char *source = "[ 1 [ 2 3 ] ]";
+    AstNode *ast = parse(source);
+    assert(ast != NULL);
+    assert(ast->type == AST_BLOCK);
+    assert(ast->as.block.count == 1);
+    assert(ast->as.block.statements[0]->type == AST_BLOCK);
+    assert(ast->as.block.statements[0]->as.block.count == 2);
+    freeAst(ast);
+    printf("test_nested_block passed\n");
+}
+
+void test_multi_stmt() {
+    const char *source = "x: 1\ny: 2\nz: 3";
+    AstNode *ast = parse(source);
+    assert(ast != NULL);
+    assert(ast->type == AST_BLOCK);
+    assert(ast->as.block.count == 3);
+    freeAst(ast);
+    printf("test_multi_stmt passed\n");
+}
+
 int main() {
     test_number();
     test_float();
@@ -177,6 +235,11 @@ int main() {
     test_import();
     test_while();
     test_unterminated_string();
+    test_binary_op();
+    test_negative_number();
+    test_field_access();
+    test_nested_block();
+    test_multi_stmt();
     printf("All parser tests passed!\n");
     return 0;
 }

@@ -1,0 +1,10 @@
+// RUN: not %linc build %s -o %t 2>&1 | FileCheck %s
+
+// CHECK: error: Expect type identifier.
+
+my_func: func [
+    x [i32!]
+    return: [!
+][
+    x
+]

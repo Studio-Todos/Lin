@@ -1,8 +1,8 @@
 // test_rule_table_capacity.lin
 // A2b: Rule table — multiple user ops must all be registered and dispatchable.
 // Verifies the lookup_rule chain handles several distinct operations correctly.
-// RUN: %linc build %s -o %t
-// CHECK: Lowering pass successful. Generated LLVM IR:
+// RUN: %linc build %s -o %t 2>&1 | FileCheck %s
+// CHECK: Lowering pass successful.
 // CHECK: Successfully compiled and linked to
 
 let add_i32 = @[add_i32] [inputs: [x [i32] y [i32]]] {

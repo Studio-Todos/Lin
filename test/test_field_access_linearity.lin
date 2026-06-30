@@ -1,8 +1,8 @@
 // test_field_access_linearity.lin
 // Item 4d: proj_N dangling port — accessing only one field of a pair must
 // connect the unused p2 port to an eraser; without the fix it stalls.
-// RUN: %linc build %s -o %t
-// CHECK: Lowering pass successful. Generated LLVM IR:
+// RUN: %linc build %s -o %t 2>&1 | FileCheck %s
+// CHECK: Lowering pass successful.
 // CHECK: Successfully compiled and linked to
 
 let p = (42, 99)

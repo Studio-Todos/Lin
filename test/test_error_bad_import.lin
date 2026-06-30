@@ -1,0 +1,6 @@
+// RUN: not %linc build %s -o %t 2>&1 | FileCheck %s
+
+// CHECK: error: Expect string path after 'import'.
+
+import 123
+42
