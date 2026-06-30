@@ -43,11 +43,6 @@ def PicReduce_FireOpOp : PicReduce_Op<"fire_op"> {
   let arguments = (ins I32:$node_a, I32:$node_b, I64:$state, OptionalAttr<StrAttr>:$dispatch_flag);
 }
 
-// Merge boundary: [A] ⋈ [B] → [A ∪ B] (Rule 4)
-def PicReduce_MergeBoundaryOp : PicReduce_Op<"merge_boundary"> {
-  let summary = "Boundary merge rule";
-}
-
 def PicReduce_LogBondOp : PicReduce_Op<"log_bond"> {
   let summary = "Deposits an L-bond on spliced wires";
   let arguments = (ins I32Attr:$node_a_idx, I32Attr:$node_b_idx);
@@ -56,14 +51,6 @@ def PicReduce_LogBondOp : PicReduce_Op<"log_bond"> {
 def PicReduce_ReverseVectorOp : PicReduce_Op<"reverse_vector"> {
   let summary = "Reverse-Vector propagation marker";
   let arguments = (ins I32:$node_a, I32:$node_b, I64:$state, OptionalAttr<StrAttr>:$dispatch_flag);
-}
-
-def PicReduce_UncomputeOp : PicReduce_Op<"uncompute"> {
-  let summary = "Inverts a specific node pair using its log payload";
-}
-
-def PicReduce_LogStateOp : PicReduce_Op<"log_state"> {
-  let summary = "Pushes a structural delta token to the boundary history log";
 }
 
 #endif // PIC_REDUCE_DIALECT

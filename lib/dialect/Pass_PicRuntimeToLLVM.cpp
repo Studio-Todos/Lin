@@ -560,17 +560,6 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         };
         genLinPrintStr();
     }
-    /*
-    auto wType = LLVM::LLVMFunctionType::get(ptrType, {ptrType});
-    auto wFunc = builder.create<LLVM::LLVMFuncOp>(module.getLoc(), "worker_thread", wType);
-    Block *wEntry = wFunc.addEntryBlock(); builder.setInsertionPointToStart(wEntry);
-    Value wState = wEntry->getArgument(0);
-    auto getArg = [&](Value as, int i) {
-        Value o = builder.create<LLVM::ConstantOp>(module.getLoc(), i32Type, builder.getI32IntegerAttr(i));
-        return builder.create<LLVM::LoadOp>(module.getLoc(), ptrType, builder.create<LLVM::GEPOp>(module.getLoc(), ptrType, ptrType, as, ValueRange{o}));
-    };
-    Value wNet = getArg(wState, 0); Value wQueue = getArg(wState, 1); Value wHead = getArg(wState, 2); Value wTail = getArg(wState, 3); Value al = getArg(wState, 4); Value wHistoryNet = getArg(wState, 5);
-    */
 
     module.walk([&](Operation *op) {
         if (op->getName().getStringRef() == "lin.coerce") {

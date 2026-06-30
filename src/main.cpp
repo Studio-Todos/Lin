@@ -390,6 +390,113 @@ static void log(const std::string &msg) {
     if (!gQuiet) std::cout << msg << "\n";
 }
 
+// Build search paths from the compiler executable location and source file
+static std::vector<std::string> buildSearchPaths(const std::string &sourceFile,
+                                                  const std::vector<std::string> &includePaths) {
+    std::vector<std::string> searchPaths;
+    searchPaths.push_back(".");
+
+    std::filesystem::path srcPath(sourceFile);
+    if (srcPath.has_parent_path()) {
+        searchPaths.push_back(srcPath.parent_path().string());
+    }
+
+    char exePath[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
+    if (len != -1) {
+        exePath[len] = '\0';
+        std::filesystem::path ePath(exePath);
+        if (ePath.has_parent_path()) {
+            std::filesystem::path binDir = ePath.parent_path();
+            searchPaths.push_back(binDir.string());
+            for (int level = 0; level < 3; level++) {
+                if (binDir.has_parent_path()) {
+                    binDir = binDir.parent_path();
+                    searchPaths.push_back(binDir.string());
+                }
+            }
+        }
+    }
+
+    searchPaths.insert(searchPaths.end(), includePaths.begin(), includePaths.end());
+    return searchPaths;
+}
+
+// Resolve import statements by finding and flattening imported ASTs into the main block
+static bool resolveImports(AstNode *ast, const std::vector<std::string> &searchPaths,
+                           std::vector<const char*> &importSources) {
+    int total_count = 0;
+    int capacity = 16;
+    AstNode **new_stmts = static_cast<AstNode**>(malloc(sizeof(AstNode*) * capacity));
+    if (!new_stmts) {
+        std::cerr << "Out of memory\n";
+        return false;
+    }
+
+    for (int i = 0; i < ast->as.block.count; i++) {
+        if (ast->as.block.statements[i]->type == AST_IMPORT) {
+            std::string importPath = std::string(
+                ast->as.block.statements[i]->as.import_stmt.path,
+                ast->as.block.statements[i]->as.import_stmt.length);
+
+            std::ifstream importFile;
+            for (const auto& base : searchPaths) {
+                std::filesystem::path fullPath = std::filesystem::path(base) / importPath;
+                importFile.open(fullPath);
+                if (importFile.is_open()) break;
+            }
+
+            if (importFile.is_open()) {
+                std::stringstream importBuffer;
+                importBuffer << importFile.rdbuf();
+                std::string importSourceStr = importBuffer.str();
+                const char *importSource = strdup(importSourceStr.c_str());
+                importSources.push_back(importSource);
+                AstNode *importAst = parse(importSource);
+
+                if (importAst && importAst->type == AST_BLOCK) {
+                    int import_count = importAst->as.block.count;
+                    if (total_count + import_count > capacity) {
+                        while (total_count + import_count > capacity) capacity *= 2;
+                        AstNode **temp = static_cast<AstNode**>(realloc(new_stmts, sizeof(AstNode*) * capacity));
+                        if (!temp) {
+                            free(new_stmts);
+                            return false;
+                        }
+                        new_stmts = temp;
+                    }
+                    memcpy(new_stmts + total_count, importAst->as.block.statements, sizeof(AstNode*) * import_count);
+                    total_count += import_count;
+                    free(importAst->as.block.statements);
+                    free(importAst);
+                } else if (importAst) {
+                    freeAst(importAst);
+                }
+            } else {
+                std::cerr << "Failed to import file: " << importPath << "\n";
+            }
+
+            ast->as.block.statements[i]->as.import_stmt.module_block = nullptr;
+            freeAst(ast->as.block.statements[i]);
+        } else {
+            if (total_count >= capacity) {
+                capacity *= 2;
+                AstNode **temp = static_cast<AstNode**>(realloc(new_stmts, sizeof(AstNode*) * capacity));
+                if (!temp) {
+                    free(new_stmts);
+                    return false;
+                }
+                new_stmts = temp;
+            }
+            new_stmts[total_count++] = ast->as.block.statements[i];
+        }
+    }
+    free(ast->as.block.statements);
+    ast->as.block.statements = new_stmts;
+    ast->as.block.count = total_count;
+    return true;
+}
+
 static int runCompilationPipeline(
     const std::string &sourceFile,
     const std::string &outputBinary,
@@ -421,103 +528,12 @@ static int runCompilationPipeline(
     AstNode *ast = parse(patchedSource);
     if (ast) {
         if (ast->type == AST_BLOCK) {
-            std::vector<std::string> searchPaths;
-            searchPaths.push_back(".");
-
-            std::filesystem::path srcPath(sourceFile);
-            if (srcPath.has_parent_path()) {
-                searchPaths.push_back(srcPath.parent_path().string());
-            }
-
-            char exePath[PATH_MAX];
-            ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath)-1);
-            if (len != -1) {
-                exePath[len] = '\0';
-                std::filesystem::path ePath(exePath);
-                if (ePath.has_parent_path()) {
-                    std::filesystem::path binDir = ePath.parent_path();
-                    searchPaths.push_back(binDir.string());
-                    if (binDir.has_parent_path()) {
-                        searchPaths.push_back(binDir.parent_path().string());
-                        if (binDir.parent_path().has_parent_path()) {
-                            searchPaths.push_back(binDir.parent_path().parent_path().string());
-                            if (binDir.parent_path().parent_path().has_parent_path()) {
-                                searchPaths.push_back(binDir.parent_path().parent_path().parent_path().string());
-                            }
-                        }
-                    }
-                }
-            }
-
-            searchPaths.insert(searchPaths.end(), includePaths.begin(), includePaths.end());
-
-            int total_count = 0;
-            int capacity = 16;
-            AstNode **new_stmts = static_cast<AstNode**>(malloc(sizeof(AstNode*) * capacity));
-            if (!new_stmts) {
-                std::cerr << "Out of memory\n";
+            auto searchPaths = buildSearchPaths(sourceFile, includePaths);
+            if (!resolveImports(ast, searchPaths, importSources)) {
+                err("Failed to resolve imports.");
+                free((void*)patchedSource);
                 return 1;
             }
-
-            for (int i = 0; i < ast->as.block.count; i++) {
-                if (ast->as.block.statements[i]->type == AST_IMPORT) {
-                    std::string importPath = std::string(ast->as.block.statements[i]->as.import_stmt.path, ast->as.block.statements[i]->as.import_stmt.length);
-
-                    std::ifstream importFile;
-                    for (const auto& base : searchPaths) {
-                        std::filesystem::path fullPath = std::filesystem::path(base) / importPath;
-                        importFile.open(fullPath);
-                        if (importFile.is_open()) break;
-                    }
-
-                    if (importFile.is_open()) {
-                        std::stringstream importBuffer;
-                        importBuffer << importFile.rdbuf();
-                        std::string importSourceStr = importBuffer.str();
-                        const char *importSource = strdup(importSourceStr.c_str());
-                        importSources.push_back(importSource);
-                        AstNode *importAst = parse(importSource);
-
-                        if (importAst && importAst->type == AST_BLOCK) {
-                            int import_count = importAst->as.block.count;
-                            if (total_count + import_count > capacity) {
-                                while (total_count + import_count > capacity) capacity *= 2;
-                                AstNode **temp = static_cast<AstNode**>(realloc(new_stmts, sizeof(AstNode*) * capacity));
-                                if (!temp) {
-                                    free(new_stmts);
-                                    return 1;
-                                }
-                                new_stmts = temp;
-                            }
-                            memcpy(new_stmts + total_count, importAst->as.block.statements, sizeof(AstNode*) * import_count);
-                            total_count += import_count;
-                            free(importAst->as.block.statements);
-                            free(importAst);
-                        } else if (importAst) {
-                            freeAst(importAst);
-                        }
-                    } else {
-                        std::cerr << "Failed to import file: " << importPath << "\n";
-                    }
-
-                    ast->as.block.statements[i]->as.import_stmt.module_block = nullptr;
-                    freeAst(ast->as.block.statements[i]);
-                } else {
-                    if (total_count >= capacity) {
-                        capacity *= 2;
-                        AstNode **temp = static_cast<AstNode**>(realloc(new_stmts, sizeof(AstNode*) * capacity));
-                        if (!temp) {
-                            free(new_stmts);
-                            return 1;
-                        }
-                        new_stmts = temp;
-                    }
-                    new_stmts[total_count++] = ast->as.block.statements[i];
-                }
-            }
-            free(ast->as.block.statements);
-            ast->as.block.statements = new_stmts;
-            ast->as.block.count = total_count;
         }
         printAst(ast, 0);
     }
@@ -1012,83 +1028,12 @@ int main(int argc, char **argv) {
 
         AstNode *ast = parse(patchedSource);
         if (ast && ast->type == AST_BLOCK) {
-            std::vector<std::string> searchPaths;
-            searchPaths.push_back(".");
-            std::filesystem::path srcPathSF(sourceFile);
-            if (srcPathSF.has_parent_path())
-                searchPaths.push_back(srcPathSF.parent_path().string());
-            char exePath[PATH_MAX];
-            ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath)-1);
-            if (len != -1) {
-                exePath[len] = '\0';
-                std::filesystem::path ePath(exePath);
-                if (ePath.has_parent_path()) {
-                    std::filesystem::path binDir = ePath.parent_path();
-                    searchPaths.push_back(binDir.string());
-                    if (binDir.has_parent_path()) {
-                        searchPaths.push_back(binDir.parent_path().string());
-                        if (binDir.parent_path().has_parent_path()) {
-                            searchPaths.push_back(binDir.parent_path().parent_path().string());
-                            if (binDir.parent_path().parent_path().has_parent_path())
-                                searchPaths.push_back(binDir.parent_path().parent_path().parent_path().string());
-                        }
-                    }
-                }
+            auto searchPaths = buildSearchPaths(sourceFile, includePaths);
+            if (!resolveImports(ast, searchPaths, importSources)) {
+                err("Failed to resolve imports.");
+                free((void*)patchedSource);
+                return 1;
             }
-            searchPaths.insert(searchPaths.end(), includePaths.begin(), includePaths.end());
-
-            int total_count = 0;
-            int capacity = 16;
-            AstNode **new_stmts = static_cast<AstNode**>(malloc(sizeof(AstNode*) * capacity));
-            if (!new_stmts) { std::cerr << "Out of memory\n"; return 1; }
-
-            for (int i = 0; i < ast->as.block.count; i++) {
-                if (ast->as.block.statements[i]->type == AST_IMPORT) {
-                    std::string importPath(ast->as.block.statements[i]->as.import_stmt.path, ast->as.block.statements[i]->as.import_stmt.length);
-                    std::ifstream importFile;
-                    for (const auto& base : searchPaths) {
-                        std::filesystem::path fullPath = std::filesystem::path(base) / importPath;
-                        importFile.open(fullPath);
-                        if (importFile.is_open()) break;
-                    }
-                    if (importFile.is_open()) {
-                        std::stringstream importBuffer;
-                        importBuffer << importFile.rdbuf();
-                        std::string importSourceStr = importBuffer.str();
-                        const char *importSource = strdup(importSourceStr.c_str());
-                        importSources.push_back(importSource);
-                        AstNode *importAst = parse(importSource);
-                        if (importAst && importAst->type == AST_BLOCK) {
-                            int import_count = importAst->as.block.count;
-                            if (total_count + import_count > capacity) {
-                                while (total_count + import_count > capacity) capacity *= 2;
-                                AstNode **temp = static_cast<AstNode**>(realloc(new_stmts, sizeof(AstNode*) * capacity));
-                                if (!temp) { free(new_stmts); return 1; }
-                                new_stmts = temp;
-                            }
-                            memcpy(new_stmts + total_count, importAst->as.block.statements, sizeof(AstNode*) * import_count);
-                            total_count += import_count;
-                            free(importAst->as.block.statements);
-                            free(importAst);
-                        } else if (importAst) { freeAst(importAst); }
-                    } else {
-                        std::cerr << "Failed to import file: " << importPath << "\n";
-                    }
-                    ast->as.block.statements[i]->as.import_stmt.module_block = nullptr;
-                    freeAst(ast->as.block.statements[i]);
-                } else {
-                    if (total_count >= capacity) {
-                        capacity *= 2;
-                        AstNode **temp = static_cast<AstNode**>(realloc(new_stmts, sizeof(AstNode*) * capacity));
-                        if (!temp) { free(new_stmts); return 1; }
-                        new_stmts = temp;
-                    }
-                    new_stmts[total_count++] = ast->as.block.statements[i];
-                }
-            }
-            free(ast->as.block.statements);
-            ast->as.block.statements = new_stmts;
-            ast->as.block.count = total_count;
         }
 
         if (!ast) {
@@ -1152,78 +1097,11 @@ int main(int argc, char **argv) {
 
         // Apply the same import resolution as the pipeline
         if (ast->type == AST_BLOCK) {
-            std::vector<std::string> searchPaths;
-            searchPaths.push_back(".");
-            std::filesystem::path srcPath(sourceFile);
-            if (srcPath.has_parent_path())
-                searchPaths.push_back(srcPath.parent_path().string());
-            char exePath[PATH_MAX];
-            ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath)-1);
-            if (len != -1) {
-                exePath[len] = '\0';
-                std::filesystem::path ePath(exePath);
-                if (ePath.has_parent_path()) {
-                    std::filesystem::path binDir = ePath.parent_path();
-                    searchPaths.push_back(binDir.string());
-                    if (binDir.has_parent_path()) {
-                        searchPaths.push_back(binDir.parent_path().string());
-                        if (binDir.parent_path().has_parent_path())
-                            searchPaths.push_back(binDir.parent_path().parent_path().string());
-                    }
-                }
+            auto searchPaths = buildSearchPaths(sourceFile, includePaths);
+            if (!resolveImports(ast, searchPaths, testImportSources)) {
+                err("Failed to resolve imports.");
+                return 1;
             }
-            searchPaths.insert(searchPaths.end(), includePaths.begin(), includePaths.end());
-
-            int total_count = 0;
-            int capacity = 16;
-            AstNode **new_stmts = (AstNode**)malloc(sizeof(AstNode*) * capacity);
-            if (!new_stmts) { std::cerr << "Out of memory\n"; return 1; }
-
-            for (int i = 0; i < ast->as.block.count; i++) {
-                if (ast->as.block.statements[i]->type == AST_IMPORT) {
-                    std::string importPath(ast->as.block.statements[i]->as.import_stmt.path, ast->as.block.statements[i]->as.import_stmt.length);
-                    std::ifstream importFile;
-                    for (const auto& base : searchPaths) {
-                        std::filesystem::path fullPath = std::filesystem::path(base) / importPath;
-                        importFile.open(fullPath);
-                        if (importFile.is_open()) break;
-                    }
-                    if (importFile.is_open()) {
-                        std::stringstream importBuffer;
-                        importBuffer << importFile.rdbuf();
-                        std::string importSourceStr = importBuffer.str();
-                        const char *importSource = strdup(importSourceStr.c_str());
-                        testImportSources.push_back(importSource);
-                        AstNode *importAst = parse(importSource);
-                        if (importAst && importAst->type == AST_BLOCK) {
-                            int import_count = importAst->as.block.count;
-                            if (total_count + import_count > capacity) {
-                                while (total_count + import_count > capacity) capacity *= 2;
-                                AstNode **temp = (AstNode**)realloc(new_stmts, sizeof(AstNode*) * capacity);
-                                if (!temp) { free(new_stmts); return 1; }
-                                new_stmts = temp;
-                            }
-                            memcpy(new_stmts + total_count, importAst->as.block.statements, sizeof(AstNode*) * import_count);
-                            total_count += import_count;
-                            free(importAst->as.block.statements);
-                            free(importAst);
-                        } else if (importAst) { freeAst(importAst); }
-                    }
-                    ast->as.block.statements[i]->as.import_stmt.module_block = nullptr;
-                    freeAst(ast->as.block.statements[i]);
-                } else {
-                    if (total_count >= capacity) {
-                        capacity *= 2;
-                        AstNode **temp = (AstNode**)realloc(new_stmts, sizeof(AstNode*) * capacity);
-                        if (!temp) { free(new_stmts); return 1; }
-                        new_stmts = temp;
-                    }
-                    new_stmts[total_count++] = ast->as.block.statements[i];
-                }
-            }
-            free(ast->as.block.statements);
-            ast->as.block.statements = new_stmts;
-            ast->as.block.count = total_count;
         }
 
         std::cout << "\nRunning built-in checkstyle and static analysis...\n";

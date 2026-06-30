@@ -14,13 +14,19 @@ set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--allow-shlib-undefine
 
 find_package(MLIR REQUIRED CONFIG)
 
+# MLIRConfig.cmake sets MLIR_TABLEGEN_EXE to bare "mlir-tblgen" which tablegen()
+# treats as a missing build target (not an executable path). Re-find the full path.
+unset(MLIR_TABLEGEN_EXE)
+find_program(MLIR_TABLEGEN_EXE mlir-tblgen REQUIRED)
+
 message(STATUS "Found MLIR ${MLIR_VERSION} at ${MLIR_DIR}")
 
 list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
 list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
 
-find_program(MLIR_TABLEGEN_EXE mlir-tblgen REQUIRED)
-set(MLIR_TABLEGEN_EXE ${MLIR_TABLEGEN_EXE} CACHE STRING "Path to mlir-tblgen" FORCE)
+find_program(MLIR_TABLEGEN_EXE mlir-tblgen REQUIRED NO_CACHE)
+# Ensure absolute path so tablegen() uses it as an executable, not a build target
+get_filename_component(MLIR_TABLEGEN_EXE "${MLIR_TABLEGEN_EXE}" ABSOLUTE)
 
 include(TableGen)
 include(AddLLVM)
