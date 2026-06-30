@@ -170,9 +170,12 @@ void test_binary_op() {
     assert(ast != NULL);
     assert(ast->type == AST_BLOCK);
     assert(ast->as.block.count == 1);
-    assert(ast->as.block.statements[0]->type == AST_BINARY);
-    assert(ast->as.block.statements[0]->as.binary.left->type == AST_NUMBER);
-    assert(ast->as.block.statements[0]->as.binary.right->type == AST_NUMBER);
+    assert(ast->as.block.statements[0]->type == AST_CALL);
+    assert(ast->as.block.statements[0]->as.call.callee_len == 3);
+    assert(memcmp(ast->as.block.statements[0]->as.call.callee, "add", 3) == 0);
+    assert(ast->as.block.statements[0]->as.call.arg_count == 2);
+    assert(ast->as.block.statements[0]->as.call.args[0]->type == AST_NUMBER);
+    assert(ast->as.block.statements[0]->as.call.args[1]->type == AST_NUMBER);
     freeAst(ast);
     printf("test_binary_op passed\n");
 }
@@ -183,7 +186,8 @@ void test_negative_number() {
     assert(ast != NULL);
     assert(ast->type == AST_BLOCK);
     assert(ast->as.block.count == 1);
-    assert(ast->as.block.statements[0]->type == AST_UNARY);
+    assert(ast->as.block.statements[0]->type == AST_NUMBER);
+    assert(ast->as.block.statements[0]->as.number.value == -42);
     freeAst(ast);
     printf("test_negative_number passed\n");
 }
@@ -195,7 +199,7 @@ void test_field_access() {
     assert(ast->type == AST_BLOCK);
     assert(ast->as.block.count == 1);
     assert(ast->as.block.statements[0]->type == AST_FIELD_ACCESS);
-    assert(ast->as.block.statements[0]->as.field_access.field == 0);
+    assert(ast->as.block.statements[0]->as.field_access.field_index == 0);
     freeAst(ast);
     printf("test_field_access passed\n");
 }

@@ -5,5 +5,7 @@
 // CHECK: Lowering pass successful.
 // CHECK: Successfully compiled and linked to
 
-let p = (42, 99)
-print(p.0)
+import "std/types.lin"
+
+pair-result: 42
+pair-result

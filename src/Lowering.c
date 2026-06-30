@@ -245,26 +245,7 @@ static void env_free(Environment *env, MlirContext ctx, MlirBlock block, MlirLoc
     if (!mlirBlockIsNull(block)) {
         for (int i = 0; i < env->count; i++) {
             if (!mlirValueIsNull(env->vars[i].value)) {
-                MlirOperationState eraState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
-
-                MlirAttribute typeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("epsilon"));
-                MlirNamedAttribute typeNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), typeAttr);
-                MlirAttribute polAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("*"));
-                MlirNamedAttribute polNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), polAttr);
-                MlirAttribute labelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("era"));
-                MlirNamedAttribute labelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), labelAttr);
-
-                MlirNamedAttribute attrs[] = {typeNamedAttr, polNamedAttr, labelNamedAttr};
-                mlirOperationStateAddAttributes(&eraState, 3, attrs);
-
-                MlirType portType = getPicPortType(ctx);
-                MlirType eraTypes[] = {portType, portType, portType};
-                mlirOperationStateAddResults(&eraState, 3, eraTypes);
-
-                MlirOperation eraOp = mlirOperationCreate(&eraState);
-                mlirBlockAppendOwnedOperation(block, eraOp);
-
-                MlirValue eraP0 = mlirOperationGetResult(eraOp, 0);
+                MlirValue eraP0 = createEra(ctx, block, loc);
 
                 MlirOperationState linkState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
                 MlirValue linkOps[] = {eraP0, env->vars[i].value};
@@ -351,7 +332,12 @@ static void addFreeVar(FreeVars *fv, const char *name, int len) {
     }
     if (fv->count >= fv->capacity) {
         fv->capacity = fv->capacity < 8 ? 8 : fv->capacity * 2;
-        fv->names = realloc(fv->names, sizeof(*fv->names) * fv->capacity);
+        char (*tmp)[256] = realloc(fv->names, sizeof(*fv->names) * fv->capacity);
+        if (!tmp) {
+            fprintf(stderr, "Out of memory\n");
+            exit(1);
+        }
+        fv->names = tmp;
     }
     strncpy(fv->names[fv->count], name, len);
     fv->names[fv->count][len] = '\0';
@@ -693,7 +679,6 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         char cleanNames[2048] = "";
         const char *p = expr->as.mlir_op.inputs;
         int len = expr->as.mlir_op.inputs_len;
-        bool foundInputs = false;
         for (int i = 0; i < len; i++) {
             if (p[i] == '[') {
                 i++;
@@ -985,9 +970,9 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         char prefixedMacroName[256];
         char prefixedBodyName[256];
         char prefixedExitName[256];
-        sprintf(prefixedMacroName, "lin_%s", macro_func_name);
-        sprintf(prefixedBodyName, "lin_%s", body_func_name);
-        sprintf(prefixedExitName, "lin_%s", exit_func_name);
+        snprintf(prefixedMacroName, sizeof(prefixedMacroName), "lin_%s", macro_func_name);
+        snprintf(prefixedBodyName, sizeof(prefixedBodyName), "lin_%s", body_func_name);
+        snprintf(prefixedExitName, sizeof(prefixedExitName), "lin_%s", exit_func_name);
 
         // 1. Generate _loop_exit_X
         {
@@ -1408,7 +1393,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
 
         MlirOperationState funcState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.func"), loc);
         char prefixedName[512];
-        sprintf(prefixedName, "lin_%s", funcNameStr);
+        snprintf(prefixedName, sizeof(prefixedName), "lin_%s", funcNameStr);
         MlirAttribute fnNameAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(prefixedName));
         MlirNamedAttribute fnNameNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("sym_name")), fnNameAttr);
         MlirAttribute fnTypeAttr = mlirTypeAttrGet(funcType);

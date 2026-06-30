@@ -174,7 +174,8 @@ Token scanToken(Lexer *lexer) {
         case '|': if (match(lexer, '|')) return makeToken(lexer, TOKEN_OR);
                   return makeToken(lexer, TOKEN_OR);
         case '^': return makeToken(lexer, TOKEN_POW);
-        case '=': if (match(lexer, '=')) return makeToken(lexer, TOKEN_EQUAL_EQUAL); break;
+        case '=': if (match(lexer, '=')) return makeToken(lexer, TOKEN_EQUAL_EQUAL);
+                  return makeToken(lexer, TOKEN_ASSIGN);
         case '<': if (match(lexer, '=')) return makeToken(lexer, TOKEN_LESS_EQUAL);
                   else if (match(lexer, '<')) return makeToken(lexer, TOKEN_LESS); // << shift
                   return makeToken(lexer, TOKEN_LESS);
@@ -183,7 +184,7 @@ Token scanToken(Lexer *lexer) {
                   return makeToken(lexer, TOKEN_GREATER);
         case '+': return makeToken(lexer, TOKEN_PLUS);
         case '-': return makeToken(lexer, TOKEN_MINUS);
-        case '%': return makeToken(lexer, TOKEN_IDENTIFIER);
+        case '%': return makeToken(lexer, TOKEN_PERCENT);
         case '.': return makeToken(lexer, TOKEN_DOT);
         case '@': {
             if (isalpha(peek(lexer)) || peek(lexer) == '_') {
@@ -196,7 +197,7 @@ Token scanToken(Lexer *lexer) {
             }
             return makeToken(lexer, TOKEN_ERROR);
         }
-        case ',': return makeToken(lexer, TOKEN_IDENTIFIER);
+        case ',': return makeToken(lexer, TOKEN_COMMA);
         case '0': case '1': case '2': case '3': case '4':
         case '5': case '6': case '7': case '8': case '9': return number(lexer);
     }

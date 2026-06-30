@@ -55,6 +55,9 @@ typedef enum {
     TOKEN_DOT,
     TOKEN_ANNOTATION,
     TOKEN_POW,
+    TOKEN_ASSIGN,    // =
+    TOKEN_PERCENT,   // %
+    TOKEN_COMMA,     // ,
 } TokenType;
 
 typedef struct {

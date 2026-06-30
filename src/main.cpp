@@ -92,6 +92,8 @@ using namespace mlir;
 #define LINC_VERSION "0.1.0"
 #define LINC_EDITION "2025"
 
+static constexpr const char* kStandardPreamble = "import \"std/types.lin\"\nimport \"std/io.lin\"\n";
+
 // ── Color / Terminal support ────────────────────────────────────────────────
 
 enum Color { C_RESET, C_RED, C_GREEN, C_YELLOW, C_CYAN, C_BOLD };
@@ -411,7 +413,7 @@ static int runCompilationPipeline(
 
     // Implicitly inject std/types.lin and std/io.lin at the beginning of the AST
     // std/io.lin is needed for print/read I/O operations to register their rules and user-op functions.
-    std::string fullSource = "import \"std/types.lin\"\nimport \"std/io.lin\"\n" + source_str;
+    std::string fullSource = kStandardPreamble + source_str;
     const char *patchedSource = strdup(fullSource.c_str());
     importSources.push_back(patchedSource);
 
@@ -554,7 +556,7 @@ static int runCompilationPipeline(
     mlir::MLIRContext context(registry);
     context.loadAllAvailableDialects();
 
-    log("PIC dialects registered successfully.\n");
+    log("PIC dialects registered successfully.");
 
     if (hasGpuAnnotation(ast)) {
         enableGPU = true;
@@ -618,8 +620,6 @@ static int runCompilationPipeline(
         });
     }
 #endif
-
-    if (enableGPU) {}
 
 #if __has_include("mlir/Target/SPIRV/Serialization.h")
     if (enableGPU) {
@@ -835,7 +835,7 @@ static int runCompilationPipeline(
                 execvp("gcc", args.data());
             }
             perror("execvp failed");
-            exit(1);
+            _exit(1);
         } else {
             int status;
             waitpid(pid, &status, 0);
@@ -1006,7 +1006,7 @@ int main(int argc, char **argv) {
         std::stringstream buffer;
         buffer << file.rdbuf();
         std::string source_str = buffer.str();
-        std::string fullSource = "import \"std/types.lin\"\nimport \"std/io.lin\"\n" + source_str;
+        std::string fullSource = kStandardPreamble + source_str;
         const char *patchedSource = strdup(fullSource.c_str());
         importSources.push_back(patchedSource);
 
@@ -1141,7 +1141,7 @@ int main(int argc, char **argv) {
         std::stringstream buffer;
         buffer << file.rdbuf();
         std::string source_str = buffer.str();
-        std::string fullSource = "import \"std/types.lin\"\nimport \"std/io.lin\"\n" + source_str;
+        std::string fullSource = kStandardPreamble + source_str;
         const char *patchedSource = strdup(fullSource.c_str());
         std::vector<const char*> testImportSources;
         testImportSources.push_back(patchedSource);

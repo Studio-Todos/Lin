@@ -2,9 +2,10 @@
 // CHECK: Lowering pass successful.
 // CHECK: Successfully compiled and linked to
 
-// Tests: Math modulus
+// Tests: Math modulus via rem function
 import "std/types.lin"
+import "std/math.lin"
 
-rem: func [a [i32!] b [i32!] return: [i32!]] [a % b]
+rem: func [a [i32!] b [i32!] return: [i32!]] [(rems32 a b)]
 
 (rem 17 5)

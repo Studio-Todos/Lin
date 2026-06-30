@@ -5,27 +5,13 @@
 // CHECK: Lowering pass successful.
 // CHECK: Successfully compiled and linked to
 
-let add_i32 = @[add_i32] [inputs: [x [i32] y [i32]]] {
-    %res = arith.addi %x, %y : i32
-    lin.coerce %res : i32 to i64
-}
-let mul_i32 = @[mul_i32] [inputs: [x [i32] y [i32]]] {
-    %res = arith.muli %x, %y : i32
-    lin.coerce %res : i32 to i64
-}
-let sub_i32 = @[sub_i32] [inputs: [x [i32] y [i32]]] {
-    %res = arith.subi %x, %y : i32
-    lin.coerce %res : i32 to i64
-}
-let divs_i32 = @[divs_i32] [inputs: [x [i32] y [i32]]] {
-    %res = arith.divsi %x, %y : i32
-    lin.coerce %res : i32 to i64
-}
-let rems_i32 = @[rems_i32] [inputs: [x [i32] y [i32]]] {
-    %res = arith.remsi %x, %y : i32
-    lin.coerce %res : i32 to i64
-}
+import "std/math.lin"
+import "std/io.lin"
 
-print(add_i32(7, 8))
-print(mul_i32(10, 10))
-print(rems_i32(10, 3))
+main: func [return: [i32!]] [
+    state: 0
+    state: print_i32 state (add 7 8)
+    state: print_i32 state (mul 10 10)
+    state: print_i32 state (rems32 10 3)
+    0
+]
