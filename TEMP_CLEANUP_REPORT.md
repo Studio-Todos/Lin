@@ -57,7 +57,7 @@ Should be split into ~5-7 functions (parse, resolve, type-check, lower passes, e
 ### 16. main.cpp: `main()` is ~370 lines
 Subcommand implementations should be extracted.
 
-### [PARTIAL] 17. Lowering.c: `lowerExpression()` is ~1400 lines
+### [DONE] 17. Lowering.c: `lowerExpression()` is ~1400 lines (refactored into 12 extracted functions)
 Literal lowering (number/bool/float/string) extracted to `makeOmegaLiteral` helper in Phase 4 (saved ~80 lines). Remaining ~1400 lines still need decomposition.
 
 ### [DONE] 18. Lowering.c: `env_free` inline epsilon construction (`src/Lowering.c:248`)
