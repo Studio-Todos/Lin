@@ -31,8 +31,8 @@
 // CHECK-NEXT:   Import(std/math.lin)
 // CHECK-NEXT:   MlirOp(my-op)
 
-// CHECK: --- Binary Type (Manual) ---
-// CHECK: Binary(20)
+// CHECK: --- Call Expression (Manual) ---
+// CHECK: Call(add)
 // CHECK-NEXT:   Number(1)
 // CHECK-NEXT:   Number(2)
 

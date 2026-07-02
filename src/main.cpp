@@ -870,8 +870,6 @@ static int runCompilationPipeline(
         }
         log("Successfully compiled and linked to '" + outputBinary + "'.");
         llvm::sys::fs::remove(objFile);
-        std::string spirvPath = outputBinary + ".spv";
-        llvm::sys::fs::remove(spirvPath);
     } else {
         log("Compilation complete.");
     }
