@@ -4,14 +4,12 @@
 
 void freeAst(AstNode *node) {
     if (!node) return;
-    if (node->type == AST_BINARY) {
-        freeAst(node->as.binary.left);
-        freeAst(node->as.binary.right);
-    } else if (node->type == AST_ASSIGNMENT) {
+    if (node->type == AST_ASSIGNMENT) {
         freeAst(node->as.assignment.value);
     } else if (node->type == AST_CALL) {
+        if (node->as.call.callee_owned) free((void*)node->as.call.callee);
         if (node->as.call.resolved_callee) free((void*)node->as.call.resolved_callee);
-        for (int i=0; i<node->as.call.arg_count; i++) freeAst(node->as.call.args[i]);
+        for (int i = 0; i < node->as.call.arg_count; i++) freeAst(node->as.call.args[i]);
         free(node->as.call.args);
     } else if (node->type == AST_WHILE) {
         freeAst(node->as.while_loop.condition);
@@ -21,14 +19,14 @@ void freeAst(AstNode *node) {
         freeAst(node->as.pair.right);
     } else if (node->type == AST_FIELD_ACCESS) {
         freeAst(node->as.field_access.base);
+        freeAst(node->as.field_access.computed_index);
     } else if (node->type == AST_BLOCK || node->type == AST_BLOCK_DATA) {
-        for (int i=0; i<node->as.block.count; i++) freeAst(node->as.block.statements[i]);
+        for (int i = 0; i < node->as.block.count; i++) freeAst(node->as.block.statements[i]);
         free(node->as.block.statements);
     } else if (node->type == AST_FUNC_DECL) {
         freeAst(node->as.func_decl.body);
         free(node->as.func_decl.args);
     } else if (node->type == AST_IMPORT) {
-        // do nothing for imported AST root nodes to avoid double free
     }
     free(node);
 }
@@ -43,11 +41,6 @@ void printAst(AstNode *node, int depth) {
         case AST_STRING: printf("String(%.*s)\n", node->as.string.length, node->as.string.value); break;
         case AST_BOOL: printf("Bool(%s)\n", node->as.boolean.value ? "true" : "false"); break;
         case AST_IDENTIFIER: printf("Ident(%.*s)\n", node->as.identifier.length, node->as.identifier.name); break;
-        case AST_BINARY:
-            printf("Binary(%d)\n", node->as.binary.op);
-            printAst(node->as.binary.left, depth + 1);
-            printAst(node->as.binary.right, depth + 1);
-            break;
         case AST_CALL:
             printf("Call(%.*s)\n", node->as.call.callee_len, node->as.call.callee);
             for (int i=0; i<node->as.call.arg_count; i++) printAst(node->as.call.args[i], depth + 1);

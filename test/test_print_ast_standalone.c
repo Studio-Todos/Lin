@@ -31,27 +31,27 @@ void test_print_complex() {
     }
 }
 
-void test_print_binary_manual() {
-    printf("--- Binary Type (Manual) ---\n");
-    // AST_BINARY is not produced by the parser currently (it produces AST_CALL),
-    // so we construct it manually to test the printAst case.
-    AstNode *left = calloc(1, sizeof(AstNode));
-    left->type = AST_NUMBER;
-    left->as.number.value = 1;
+void test_print_call_expr() {
+    printf("--- Call Expression (Manual) ---\n");
+    AstNode *arg1 = calloc(1, sizeof(AstNode));
+    arg1->type = AST_NUMBER;
+    arg1->as.number.value = 1;
 
-    AstNode *right = calloc(1, sizeof(AstNode));
-    right->type = AST_NUMBER;
-    right->as.number.value = 2;
+    AstNode *arg2 = calloc(1, sizeof(AstNode));
+    arg2->type = AST_NUMBER;
+    arg2->as.number.value = 2;
 
-    AstNode *bin = calloc(1, sizeof(AstNode));
-    bin->type = AST_BINARY;
-    bin->as.binary.left = left;
-    bin->as.binary.right = right;
-    bin->as.binary.op = TOKEN_PLUS;
+    AstNode *call = calloc(1, sizeof(AstNode));
+    call->type = AST_CALL;
+    call->as.call.callee = "add";
+    call->as.call.callee_len = 3;
+    call->as.call.arg_count = 2;
+    call->as.call.args = malloc(sizeof(AstNode*) * 2);
+    call->as.call.args[0] = arg1;
+    call->as.call.args[1] = arg2;
 
-    printAst(bin, 0);
-
-    freeAst(bin);
+    printAst(call, 0);
+    freeAst(call);
 }
 
 void test_print_field_access() {
@@ -67,7 +67,7 @@ void test_print_field_access() {
 int main() {
     test_print_simple();
     test_print_complex();
-    test_print_binary_manual();
+    test_print_call_expr();
     test_print_field_access();
     return 0;
 }

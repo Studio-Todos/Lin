@@ -721,6 +721,7 @@ static AstNode* parseExpression(Parser *parser) {
 
         AstNode *call = createNode(parser, AST_CALL);
         call->as.call.callee = strdup(funcName);
+        call->as.call.callee_owned = true;
         call->as.call.callee_len = strlen(funcName);
         call->as.call.arg_count = 2;
         call->as.call.resolved_callee = NULL;

@@ -235,11 +235,13 @@ typedef struct {
     EnvVar *vars;
     int count;
     int capacity;
+    bool had_error;
 } Environment;
 
 static void env_init(Environment *env) {
     env->capacity = 16;
     env->count = 0;
+    env->had_error = false;
     env->vars = (EnvVar*)malloc(sizeof(EnvVar) * env->capacity);
     if (!env->vars) {
         fprintf(stderr, "Out of memory\n");
@@ -371,11 +373,6 @@ static void findFreeVars(AstNode *node, FreeVars *fv, const char **bound, int bo
             findFreeVars(node->as.assignment.value, fv, bound, bound_count);
             break;
         }
-        case AST_BINARY: {
-            findFreeVars(node->as.binary.left, fv, bound, bound_count);
-            findFreeVars(node->as.binary.right, fv, bound, bound_count);
-            break;
-        }
         case AST_CALL: {
             // Callee might be a variable
             bool is_bound = false;
@@ -486,11 +483,6 @@ static int count_var_usage(AstNode *node, const char *name, int name_len) {
             return 1;
         }
         return 0;
-    }
-
-    if (node->type == AST_BINARY) {
-        return count_var_usage(node->as.binary.left, name, name_len) +
-               count_var_usage(node->as.binary.right, name, name_len);
     }
 
     if (node->type == AST_BLOCK) {
@@ -634,6 +626,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         MlirValue val = env_fetch(ctx, block, loc, env, expr->as.identifier.name, expr->as.identifier.length);
         if (mlirValueIsNull(val)) {
             fprintf(stderr, "Unbound variable: %.*s\n", expr->as.identifier.length, expr->as.identifier.name);
+            env->had_error = true;
         }
         return val;
     }
@@ -650,7 +643,8 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
         MlirNamedAttribute payloadNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("payload")), payloadAttr);
 
         // Pass the cleaned-up inputs as [%name1][%name2]...
-        char cleanNames[2048] = "";
+char cleanNames[2048] = "";
+        size_t cleanRem = sizeof(cleanNames) - 1;
         const char *p = expr->as.mlir_op.inputs;
         int len = expr->as.mlir_op.inputs_len;
         for (int i = 0; i < len; i++) {
@@ -661,7 +655,7 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
                     i += 7;
                     while (i < len && p[i] != '[') i++;
                     if (i < len && p[i] == '[') {
-                        i++; // Enter [arg [type] ...]
+                        i++;
                         while (i < len && p[i] != ']') {
                             while (i < len && isspace((unsigned char)p[i])) i++;
                             if (i >= len || p[i] == ']') break;
@@ -670,10 +664,11 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
                             while (i < len && !isspace((unsigned char)p[i]) && p[i] != '[' && p[i] != ']') i++;
                             int nameLen = (int)(p + i - nameStart);
 
-                            if (nameLen > 0) {
+                            if (nameLen > 0 && cleanRem > 10) {
                                 strcat(cleanNames, "[%");
                                 strncat(cleanNames, nameStart, nameLen);
-                                
+                                cleanRem = sizeof(cleanNames) - strlen(cleanNames) - 1;
+
                                 while (i < len && isspace((unsigned char)p[i])) i++;
                                 if (i < len && p[i] == '[') {
                                     i++;
@@ -682,11 +677,12 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
                                         i++;
                                     }
                                     int typeLen = (int)(p + i - typeStart);
-                                    if (typeLen > 0) {
+                                    if (typeLen > 0 && cleanRem > 10) {
                                         strcat(cleanNames, "_");
                                         strncat(cleanNames, typeStart, typeLen);
+                                        cleanRem = sizeof(cleanNames) - strlen(cleanNames) - 1;
                                     }
-                                    
+
                                     int depth = 1;
                                     while (i < len && depth > 0) {
                                         if (p[i] == '[') depth++;
@@ -694,7 +690,8 @@ static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation 
                                         i++;
                                     }
                                 }
-                                strcat(cleanNames, "]");
+                                if (cleanRem > 1) strcat(cleanNames, "]");
+                                cleanRem = sizeof(cleanNames) - strlen(cleanNames) - 1;
                             }
                         }
                     }

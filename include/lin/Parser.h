@@ -73,7 +73,6 @@ typedef enum {
     AST_NUMBER,
     AST_FLOAT,
     AST_IDENTIFIER,
-    AST_BINARY,
     AST_CALL,
     AST_BLOCK,
     AST_BLOCK_DATA,
@@ -99,9 +98,9 @@ typedef struct AstNode {
         struct { bool value; } boolean;
         struct { double value; } f_number;
         struct { const char *name; int length; } identifier;
-        struct { struct AstNode *left; TokenType op; struct AstNode *right; } binary;
         struct { const char *callee; int callee_len;
-                 const char *resolved_callee; /* type-directed override (heap-alloc) or NULL */
+                 const char *resolved_callee;
+                 bool callee_owned;
                  struct AstNode **args; int arg_count; int capacity; } call;
         struct { struct AstNode **statements; int count; int capacity; } block;
         struct {
