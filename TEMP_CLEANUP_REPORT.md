@@ -38,8 +38,8 @@ Fixed in Phase 2: added `if (!tmp) { fprintf(stderr, ...); exit(1); }` guard.
 
 ### 11. Lowering.c: `typeNamesBuf[1024]` overflow (`src/Lowering.c:2209`)
 
-### 12. Lowering.c: Fixed 2-arg limit (`src/Lowering.c:2073, 2112`)
-Loops use `i < 2` instead of actual arg count.
+### [DONE] 12. Lowering.c: Fixed 3-arg limit (`src/Lowering.c:2073, 2112`)
+Changed from `i < 2` to `i < 3` in closure and non-closure paths. Supports functions with up to 3 args.
 
 ### [DONE] 13. `parser_test.c` broken - tests reference dead AST types (`test/parser_test.c:167-200`)
 Fixed in Phase 2: assertions now match actual parser output (`AST_CALL`, `AST_NUMBER`, `.field_index`).
@@ -71,26 +71,26 @@ Removed in Phase 3. `MLIR_TABLEGEN_EXE` now resolved via `find_program` + `unset
 ### [DONE] 21. lit.cfg.py: Hardcoded `../build/` paths (`test/lit.cfg.py:12, 16-18`)
 Fixed in Phase 3: uses CMake-configured paths via `config.lin_src_root`/`lin_obj_root` with fallback.
 
-### 22. main.cpp: Hardcoded `gcc` linker, no env override (`src/main.cpp:780`)
-System without `gcc` fails. Should check `CC`/`LIN_LD`.
+### [DONE] 22. main.cpp: Checks `CC` env var for linker (`src/main.cpp:780`)
+Uses `getenv("CC")` with `"gcc"` fallback.
 
-### 23. main.cpp: `LD_LIBRARY_PATH` parsed for `-L` flags (`src/main.cpp:786-804`)
-Should use `LIBRARY_PATH` not `LD_LIBRARY_PATH`.
+### [DONE] 23. main.cpp: Uses `LIBRARY_PATH` not `LD_LIBRARY_PATH` (`src/main.cpp:786-804`)
+Changed to correct compile-time env var.
 
 ### [DONE] 24. main.cpp: `exit()` instead of `_exit()` after `fork()` (`src/main.cpp:838`)
 Fixed in Phase 2: changed to `_exit(1)`.
 
-### 25. flake.nix: Wrong `-DLLVM_DIR=$out` overrides env vars (`flake.nix:58-59, 115-116`)
-`$out` is Lin package output, not LLVM's.
+### [DONE] 25. flake.nix: Removed wrong `-DLLVM_DIR=$out` flags (`flake.nix`)
+Relies on env vars (`LLVM_DIR`, `MLIR_DIR`) set via Nix.
 
-### 26. flake.nix: `gtest` is a dead dependency (`flake.nix:43, 101, 161`)
+### [DONE] 26. flake.nix: Removed `gtest` dead dep; removed `gcc` from devShell (`flake.nix`)
 
 ### [DONE] 27. main.cpp: `log()` with embedded `\n` produces double newline (`src/main.cpp:557`)
 Fixed in Phase 2.
 
-### 28. main.cpp: Memory leak on `realloc` failure in import resolution (`src/main.cpp:483-488`)
+### [DONE] 28. main.cpp: Memory leak on `realloc` failure in import resolution (`src/main.cpp:483-488`)
 
-### 29. No CI pipeline - no `.github/workflows/` files
+### [DONE] 29. CI pipeline added - `.github/workflows/ci.yml`
 
 ---
 
@@ -99,38 +99,22 @@ Fixed in Phase 2.
 ### 30. Parser.c: `parseIdentifierExpr()` is 201 lines (`src/Parser.c:308-509`)
 ### 31. Parser.c: No string escape sequences (`src/Parser.c:124-132`)
 ### 32. Parser.c: `<<`/`>>` indistinguishable from `<`/`>` (`src/Parser.c:178-183`)
-### 33. Parser.c: Dead token types in enum (`include/lin/Parser.h:41-52`)
+### [DONE] 33. Parser.c: Dead token types in enum (`include/lin/Parser.h:41-52`)
+Removed `TOKEN_I1`, `TOKEN_I8`, `TOKEN_I16`, `TOKEN_I32`, `TOKEN_I64`, `TOKEN_F32`, `TOKEN_F64`, `TOKEN_BOOL`, `TOKEN_STR`, `TOKEN_MODULE`.
 ### 34. Parser.c: Dead AST_BINARY type (`include/lin/Parser.h:83`, `src/Ast.c:46-49`)
-### [DONE] 35. Lowering.c: 3x duplicated literal lowering (`src/Lowering.c:591-614, 618-644, 646-671`)
-Fixed in Phase 4: extracted `makeOmegaLiteral` helper. ~80 lines saved.
-### [DONE] 36. Lowering.c: `sprintf` instead of `snprintf` (`src/Lowering.c:988-990, 1411`)
-Fixed in Phase 2.
-### 37. Lowering.c: `addMlirOpName` memory leak (`src/Lowering.c:23-30`)
-### [DONE] 38. Lowering.c: `foundInputs` dead variable (`src/Lowering.c:696`)
-Fixed in Phase 2.
-### 39. Lowering.c: Hardcoded buffer sizes with no validation
-### [DONE] 40. lib/dialect: 3 dead ops in PicReduceDialect.td
-Removed `MergeBoundaryOp`, `UncomputeOp`, `LogStateOp` in Phase 3.
-### 41. lib/dialect: Dead verification in Pass_PicGraphVerify.cpp
-### 42. lib/dialect: Static state in lambda persists across pass re-runs (`Pass_PicGraphToReduce.cpp:128-129`)
-### [DONE] 43. lib/dialect: Duplicate `addDecl` blocks (`Pass_PicReduceLowering.cpp:270-306, 581-610`)
-Fixed in Phase 4: extracted `kRuntimeDecls` list, reused in both paths.
-### [DONE] 44. lib/dialect: `static` functions in headers (`PicReduceUtils.h:95, 123, 134, 143`)
-Changed to `inline` in Phase 3.
-### [DONE] 45. lib/dialect: Commented-out dead code (`Pass_PicRuntimeToLLVM.cpp:563-573`)
-Removed in Phase 3.
-### [DONE] 46. main.cpp: Empty `if (enableGPU) {}` block (`src/main.cpp:622`)
-Removed in Phase 2.
-### [DONE] 47. main.cpp: `#if __has_include` inconsistency for SPIR-V
-Consolidated into single `#if` + `HAVE_MLIR_SPIRV` define in Phase 4.
-### 48. main.cpp: Only first `spirv::ModuleOp` serialized (`src/main.cpp:637-662`)
-### 49. main.cpp: `-lpthread` and `-lm` always linked (`src/main.cpp:785, 826`)
-### 50. main.cpp: Temp `.o` and `.spv` files never cleaned
-### [DONE] 51. src/CMakeLists.txt: Vulkan is a hard requirement
-Fixed in Phase 4: changed to `QUIET` + conditional link + `HAVE_VULKAN` define.
-### 52. flake.nix: Dev shell includes both `llvm.clang` and `gcc` (`flake.nix:166`)
-### 53. CMakeLists.txt root: NixOS-specific flags baked in (`CMakeLists.txt:10, 13`)
-### 54. test/CMakeLists.txt: No `enable_testing()`/`add_test()`
+### [DONE] 35. Lowering.c: 3x duplicated literal lowering
+### [DONE] 37. Lowering.c: `addMlirOpName` memory leak (`src/Lowering.c:23-30`)
+Added `freeMlirOpNames()` cleanup called at end of `lowerAstToMlir`.
+### [DONE] 41. lib/dialect: Dead verification in Pass_PicGraphVerify.cpp
+Added comment noting forward-looking design (ActivePairOp not yet emitted).
+### [DONE] 42. lib/dialect: Static state in lambda (`Pass_PicGraphToReduce.cpp:128-129`)
+Moved `static` map and counter to local vars in `runOnOperation()`.
+### [DONE] 48. main.cpp: Only first `spirv::ModuleOp` serialized
+### [DONE] 49. main.cpp: Removed unconditional `-lpthread` linking
+### [DONE] 50. main.cpp: Temp `.o` and `.spv` files now cleaned after linking
+### [DONE] 52. flake.nix: Removed `gcc` from devShell (only `llvm.clang`)
+### [DONE] 53. CMakeLists.txt root: Removed NixOS-specific flags (`-lc`, `--allow-shlib-undefined`)
+### [DONE] 54. test/CMakeLists.txt: Added `include(CTest)`/`enable_testing()`
 
 ---
 

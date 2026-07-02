@@ -30,7 +30,7 @@
 
             src = ./.;
 
-            nativeBuildInputs = [
+              nativeBuildInputs = [
               llvm.llvm
               llvm.bintools
               llvm.clang
@@ -40,7 +40,6 @@
               final.ninja
               final.python3
               final.lit
-              final.gtest
               final.spirv-tools
               final.vulkan-headers
               vulkan-loader
@@ -55,8 +54,6 @@
 
               rm -rf build
               cmake -G Ninja -B build \
-                -DLLVM_DIR=$out/lib/cmake/llvm \
-                -DMLIR_DIR=$out/lib/cmake/mlir \
                 -DCMAKE_BUILD_TYPE=Release \
                 .
             '';
@@ -98,7 +95,6 @@
               final.ninja
               final.python3
               final.lit
-              final.gtest
               final.spirv-tools
               final.vulkan-headers
               vulkan-loader
@@ -112,8 +108,6 @@
               export VK_LAYER_PATH="${vulkan-validation-layers}/share/vulkan/explicit_layer.d"
 
               cmake -G Ninja -B build \
-                -DLLVM_DIR=$out/lib/cmake/llvm \
-                -DMLIR_DIR=$out/lib/cmake/mlir \
                 -DCMAKE_BUILD_TYPE=Release \
                 .
             '';
@@ -158,12 +152,10 @@
             pkgs.ninja
             pkgs.python3
             pkgs.lit
-            pkgs.gtest
             pkgs.spirv-tools
             pkgs.vulkan-headers
             vulkan-loader
             vulkan-validation-layers
-            pkgs.gcc
           ];
 
           shellHook = ''

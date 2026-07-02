@@ -794,13 +794,13 @@ static int runCompilationPipeline(
                 args.push_back(nullptr);
                 execvp("wasm-ld", args.data());
             } else {
-                args.push_back(const_cast<char*>("gcc"));
+                const char* cc = getenv("CC");
+                args.push_back(const_cast<char*>(cc && cc[0] ? cc : "gcc"));
                 args.push_back(const_cast<char*>(objFile.c_str()));
                 for (auto &cf : linkCFiles) args.push_back(const_cast<char*>(cf.c_str()));
                 args.push_back(const_cast<char*>("-o"));
                 args.push_back(const_cast<char*>(outputBinary.c_str()));
-                args.push_back(const_cast<char*>("-lpthread"));
-                const char* ldPath = getenv("LD_LIBRARY_PATH");
+                const char* ldPath = getenv("LIBRARY_PATH");
                 if (ldPath) {
                     std::string s(ldPath);
                     size_t pos = 0;
@@ -869,6 +869,9 @@ static int runCompilationPipeline(
             }
         }
         log("Successfully compiled and linked to '" + outputBinary + "'.");
+        llvm::sys::fs::remove(objFile);
+        std::string spirvPath = outputBinary + ".spv";
+        llvm::sys::fs::remove(spirvPath);
     } else {
         log("Compilation complete.");
     }

@@ -17,6 +17,10 @@ struct PicGraphVerifyPass : public PassWrapper<PicGraphVerifyPass, OperationPass
     return "Verifies Invariant 1: each principal port connects to at most one active pair";
   }
 
+  // Note: ActivePairOp is a future op. Lowering.c currently emits agent pairs
+  // directly without ActivePairOp markers. This pass is forward-looking and
+  // will verify the invariant once ActivePairOp is emitted.
+
   void runOnOperation() override {
     ModuleOp module = getOperation();
     int errorCount = 0;

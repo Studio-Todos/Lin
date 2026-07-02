@@ -29,6 +29,14 @@ static void addMlirOpName(const char *name, int len) {
     }
 }
 
+static void freeMlirOpNames(void) {
+    for (int i = 0; i < mlirOpCount; i++) {
+        free((void*)mlirOpNames[i]);
+        mlirOpNames[i] = NULL;
+    }
+    mlirOpCount = 0;
+}
+
 static int isMlirOpName(const char *name, int len) {
     for (int i = 0; i < mlirOpCount; i++) {
         if ((int)strlen(mlirOpNames[i]) == len && strncmp(mlirOpNames[i], name, len) == 0)
@@ -2021,7 +2029,7 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
             mlirBlockAppendOwnedOperation(moduleBody, funcOp);
 
             int lin_arg_count = ast->as.func_decl.arg_count;
-            for (int i = 0; i < lin_arg_count && i < 2; i++) {
+            for (int i = 0; i < lin_arg_count && i < 3; i++) {
                 MlirValue eraVal = createEra(ctx, block, loc);
                 env_add(&env, ast->as.func_decl.args[i].name, ast->as.func_decl.args[i].name_len, eraVal);
             }
@@ -2060,7 +2068,7 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
             mlirBlockAppendOwnedOperation(moduleBody, funcOp);
 
             int lin_arg_count = ast->as.func_decl.arg_count;
-            for (int i = 0; i < lin_arg_count && i < 2; i++) {
+            for (int i = 0; i < lin_arg_count && i < 3; i++) {
                 MlirValue argValue = mlirBlockGetArgument(block, i);
                 env_add(&env, ast->as.func_decl.args[i].name, ast->as.func_decl.args[i].name_len, argValue);
             }
@@ -2074,7 +2082,7 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
             MlirNamedAttribute eraLabelNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), eraLabelAttr);
             MlirNamedAttribute eraAttrs[] = {eraTypeNamed, starPolNamed, eraLabelNamed};
 
-            for (int i = lin_arg_count; i < 2; i++) {
+            for (int i = lin_arg_count; i < 3; i++) {
                 MlirOperationState eraState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
                 mlirOperationStateAddAttributes(&eraState, 3, eraAttrs);
                 MlirType agentTypes[] = {portType, portType, portType};
@@ -2171,6 +2179,7 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
         mlirOperationSetAttributeByName(mlirModuleGetOperation(module), mlirStringRefCreateFromCString("lin.type_names"), typeAttr);
     }
 
+    freeMlirOpNames();
     return module;
 }
 

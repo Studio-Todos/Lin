@@ -1,3 +1,6 @@
+include(CTest)
+enable_testing()
+
 find_program(LIT_EXECUTABLE lit)
 
 configure_file(lit.site.cfg.py.in lit.site.cfg.py @ONLY)

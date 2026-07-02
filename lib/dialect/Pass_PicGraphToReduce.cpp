@@ -34,6 +34,9 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
     ModuleOp module = getOperation();
     OpBuilder builder(module.getContext());
 
+    std::map<std::string, int> strIndexMap;
+    int nextStrIndex = 0;
+
     std::vector<std::string> userOpLabels;
     module.walk([&](pic::graph::RegistryOp op) {
         if (auto attr = op->getAttrOfType<StringAttr>("op_name")) {
@@ -125,8 +128,6 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
         }
 
         uint32_t val = 0;
-        static std::map<std::string, int> strIndexMap;
-        static int nextStrIndex = 0;
         if (label == "num" && op.getValue()) val = op.getValue().value();
         else if (label == "str" && op.getStrVal()) {
             val = opcodeForLabel("str");
