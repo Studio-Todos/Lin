@@ -232,6 +232,194 @@ static bool mkdirP(const std::string &path) {
     return std::filesystem::create_directories(path, ec);
 }
 
+// ── Forward declarations ──────────────────────────────────────────────────
+
+static void printHelp();
+static void printVersion();
+extern bool gQuiet;
+static void log(const std::string &msg);
+static std::vector<std::string> buildSearchPaths(const std::string &sourceFile,
+                                                  const std::vector<std::string> &includePaths);
+static bool resolveImports(AstNode *ast, const std::vector<std::string> &searchPaths,
+                            std::vector<const char*> &importSources);
+static int runCompilationPipeline(
+    const std::string &sourceFile,
+    const std::string &outputBinary,
+    bool enableGPU,
+    bool enableWasm,
+    bool doLink,
+    const std::vector<std::string> &includePaths,
+    std::vector<const char*> &importSources,
+    std::vector<std::string> &linkCFiles,
+    std::vector<std::string> &linkLibs
+);
+
+// ── CLI argument parsing ─────────────────────────────────────────────────
+
+struct CommandLineArgs {
+    std::string command;
+    std::string sourceFile;
+    std::string outputBinary = "linc_out";
+    bool enableGPU = false;
+    bool enableWasm = false;
+    std::vector<std::string> includePaths;
+    std::vector<const char*> importSources;
+    std::vector<std::string> linkCFiles;
+    std::vector<std::string> linkLibs;
+    bool checkOnly = false;
+    bool doLink = false;
+    bool doRun = false;
+    bool doTest = false;
+};
+
+static bool parseCommandLine(int argc, char **argv, CommandLineArgs &args) {
+    // Recognized subcommands
+    auto isSubcommand = [](const std::string &s) -> bool {
+        return s == "build" || s == "test" || s == "run" || s == "check"
+            || s == "new" || s == "init" || s == "help";
+    };
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--help" || arg == "-h") {
+            args.command = "help";
+            return true;
+        }
+        if (arg == "--version" || arg == "-V") {
+            printHelp();
+            exit(0);
+        }
+        if (arg == "--quiet" || arg == "-q") {
+            gQuiet = true;
+            continue;
+        }
+        if (isSubcommand(arg)) {
+            args.command = arg;
+            for (int j = i + 1; j < argc; ++j) {
+                std::string opt = argv[j];
+                if (opt == "-o" && j + 1 < argc) {
+                    args.outputBinary = argv[++j];
+                } else if (opt == "-I" && j + 1 < argc) {
+                    args.includePaths.push_back(argv[++j]);
+                } else if (opt == "--quiet" || opt == "-q") {
+                    gQuiet = true;
+                } else if (opt == "--gpu" || opt == "-gpu") {
+                    args.enableGPU = true;
+                } else if (opt == "--wasm" || opt == "-wasm") {
+                    args.enableWasm = true;
+                } else if ((opt == "--link-c" || opt == "-link-c") && j + 1 < argc) {
+                    args.linkCFiles.push_back(argv[++j]);
+                } else if ((opt == "--link-libs" || opt == "-link-libs") && j + 1 < argc) {
+                    args.linkLibs.push_back(argv[++j]);
+                } else if (args.sourceFile.empty()) {
+                    args.sourceFile = opt;
+                }
+            }
+            break;
+        }
+    }
+
+    if (args.command.empty()) {
+        err("No valid subcommand found. Use 'linc help'.");
+        return false;
+    }
+
+    args.checkOnly = (args.command == "check");
+    args.doLink = (args.command == "build");
+    args.doRun = (args.command == "run");
+    args.doTest = (args.command == "test");
+
+    return true;
+}
+
+// ── `check` subcommand ────────────────────────────────────────────────────
+
+static int handleCheckSubcommand(const std::string &sourceFile, const std::vector<std::string> &includePaths) {
+    std::ifstream file(sourceFile);
+    if (!file.is_open()) { err("Failed to open file: " + sourceFile); return 1; }
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string source_str = buffer.str();
+    std::string fullSource = kStandardPreamble + source_str;
+    const char *patchedSource = strdup(fullSource.c_str());
+    std::vector<const char*> importSources;
+    importSources.push_back(patchedSource);
+
+    AstNode *ast = parse(patchedSource);
+    if (ast && ast->type == AST_BLOCK) {
+        auto searchPaths = buildSearchPaths(sourceFile, includePaths);
+        if (!resolveImports(ast, searchPaths, importSources)) {
+            err("Failed to resolve imports.");
+            free((void*)patchedSource);
+            return 1;
+        }
+    }
+
+    if (!ast) {
+        err("Parse failed.");
+        for (const char *src : importSources) free((void*)src);
+        return 1;
+    }
+
+    std::unordered_set<std::string> declaredTypes;
+    int errors = semanticTypeCheckAst(ast, declaredTypes, patchedSource);
+    if (ast) freeAst(ast);
+    for (const char *src : importSources) free((void*)src);
+
+    if (errors > 0) {
+        err("Type-check failed with " + std::to_string(errors) + " error(s).");
+        return 1;
+    }
+    green("Type-check passed (no errors).");
+    return 0;
+}
+
+// ── `test` subcommand ─────────────────────────────────────────────────────
+
+static int handleTestSubcommand(const std::string &sourceFile, const std::vector<std::string> &includePaths,
+                                 bool enableGPU, bool enableWasm,
+                                 std::vector<const char*> &importSources,
+                                 std::vector<std::string> &linkCFiles,
+                                 std::vector<std::string> &linkLibs) {
+    int ret = runCompilationPipeline(sourceFile, "linc_out", enableGPU, enableWasm, false,
+                                      includePaths, importSources, linkCFiles, linkLibs);
+    if (ret != 0) return ret;
+
+    std::ifstream file(sourceFile);
+    if (!file.is_open()) { err("Failed to open file."); return 1; }
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string source_str = buffer.str();
+    std::string fullSource = kStandardPreamble + source_str;
+    const char *patchedSource = strdup(fullSource.c_str());
+    std::vector<const char*> testImportSources;
+    testImportSources.push_back(patchedSource);
+
+    AstNode *ast = parse(patchedSource);
+    if (!ast) { err("Parse failed."); return 1; }
+
+    if (ast->type == AST_BLOCK) {
+        auto searchPaths = buildSearchPaths(sourceFile, includePaths);
+        if (!resolveImports(ast, searchPaths, testImportSources)) {
+            err("Failed to resolve imports.");
+            return 1;
+        }
+    }
+
+    std::cout << "\nRunning built-in checkstyle and static analysis...\n";
+    int styleErrors = checkstyleAst(ast, patchedSource);
+    if (ast) freeAst(ast);
+    for (const char *src : testImportSources) free((void*)src);
+
+    if (styleErrors > 0) {
+        std::cerr << "Checkstyle and static analysis failed with " << styleErrors << " error(s).\n";
+        return 1;
+    }
+    std::cout << "Built-in checkstyle and static analysis passed.\n";
+    std::cout << "Compilation complete.\n";
+    return 0;
+}
+
 // ── Template for `linc new` ─────────────────────────────────────────────────
 
 static const char *TEMPLATE_MAIN = R"(main: func [
@@ -385,7 +573,7 @@ static void printHelp() {
 
 // ── Compilation pipeline (core logic extracted from main) ───────────────────
 
-static bool gQuiet = false;
+bool gQuiet = false;
 
 static void log(const std::string &msg) {
     if (!gQuiet) std::cout << msg << "\n";
@@ -915,234 +1103,73 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Scan for global flags and subcommands at any position.
-    // The LIT substitution passes `-I <path>` before the subcommand:
-    //   build/src/linc -I /projectroot build file.lin -o tmp
-    // So we cannot assume argv[1] is the subcommand.
+    CommandLineArgs args;
+    if (!parseCommandLine(argc, argv, args)) return 1;
 
-    std::string command;
-    std::string sourceFile;
-    std::string outputBinary = "linc_out";
-    bool enableGPU = false;
-    bool enableWasm = false;
-    std::vector<std::string> includePaths;
-    std::vector<const char*> importSources;
-    std::vector<std::string> linkCFiles;
-    std::vector<std::string> linkLibs;
+    if (args.command == "help") { printHelp(); return 0; }
 
-    // Recognized subcommands
-    auto isSubcommand = [](const std::string &s) -> bool {
-        return s == "build" || s == "test" || s == "run" || s == "check"
-            || s == "new" || s == "init" || s == "help";
-    };
+    if (args.command == "version") { printVersion(); return 0; }
 
-    // First pass: find subcommand and collect positional args
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-
-        // Handle global flags
-        if (arg == "--help" || arg == "-h") {
-            printHelp();
-            return 0;
-        }
-        if (arg == "--version" || arg == "-V") {
-            printVersion();
-            return 0;
-        }
-        if (arg == "--quiet" || arg == "-q") {
-            gQuiet = true;
-            continue;
-        }
-
-        if (isSubcommand(arg)) {
-            command = arg;
-            // Parse remaining args as subcommand-specific flags
-            for (int j = i + 1; j < argc; ++j) {
-                std::string opt = argv[j];
-                if (opt == "-o" && j + 1 < argc) {
-                    outputBinary = argv[++j];
-                } else if (opt == "-I" && j + 1 < argc) {
-                    includePaths.push_back(argv[++j]);
-                } else if (opt == "--quiet" || opt == "-q") {
-                    gQuiet = true;
-                } else if (opt == "--gpu" || opt == "-gpu") {
-                    enableGPU = true;
-                } else if (opt == "--wasm" || opt == "-wasm") {
-                    enableWasm = true;
-                } else if ((opt == "--link-c" || opt == "-link-c") && j + 1 < argc) {
-                    linkCFiles.push_back(argv[++j]);
-                } else if ((opt == "--link-libs" || opt == "-link-libs") && j + 1 < argc) {
-                    linkLibs.push_back(argv[++j]);
-                } else if (sourceFile.empty()) {
-                    sourceFile = opt;
-                }
-            }
-            break;
-        }
-    }
-
-    if (command.empty()) {
-        err("No valid subcommand found. Use 'linc help'.");
-        return 1;
-    }
-
-    // ── `help` subcommand ───────────────────────────────────────────────────
-    if (command == "help") {
-        printHelp();
-        return 0;
-    }
-
-    // ── `new` subcommand ───────────────────────────────────────────────────
-    if (command == "new") {
-        if (sourceFile.empty()) {
+    if (args.command == "new") {
+        if (args.sourceFile.empty()) {
             err("Usage: linc new <project-name>");
             return 1;
         }
-        return cmdNewProject(sourceFile);
+        return cmdNewProject(args.sourceFile);
     }
 
-    // ── `init` subcommand ─────────────────────────────────────────────────
-    if (command == "init") {
-        std::string dir = sourceFile.empty() ? "." : sourceFile;
-        return cmdInitProject(dir);
+    if (args.command == "init") {
+        return cmdInitProject(args.sourceFile.empty() ? "." : args.sourceFile);
     }
 
-    // All remaining subcommands require a source file
-    bool checkOnly = (command == "check");
-    bool doLink = (command == "build");
-    bool doRun = (command == "run");
-    bool doTest = (command == "test");
-
-    if (sourceFile.empty()) {
+    if (args.sourceFile.empty()) {
         err("No source file provided.");
-        note("Usage: linc " + command + " <source_file.lin> [-o output]");
+        note("Usage: linc " + args.command + " <source_file.lin> [-o output]");
         return 1;
     }
 
-    if (!outputBinary.empty() && outputBinary[0] == '-') {
+    if (!args.outputBinary.empty() && args.outputBinary[0] == '-') {
         err("Output binary name cannot start with a hyphen.");
         return 1;
     }
 
-    // Check for Lin.toml in the source directory for extended include resolution
-    std::filesystem::path srcPath(sourceFile);
-    std::string searchDir = srcPath.has_parent_path() ? srcPath.parent_path().string() : ".";
-    std::string tomlPath = searchDir + "/Lin.toml";
-    if (std::filesystem::exists(tomlPath)) {
-        ProjectConfig cfg = parseProjectConfig(tomlPath);
-        if (cfg.valid) {
-            for (const auto &inc : cfg.includes) {
-                includePaths.push_back(inc);
+    // Load project config for include paths
+    {
+        std::filesystem::path srcPath(args.sourceFile);
+        std::string searchDir = srcPath.has_parent_path() ? srcPath.parent_path().string() : ".";
+        std::string tomlPath = searchDir + "/Lin.toml";
+        if (std::filesystem::exists(tomlPath)) {
+            ProjectConfig cfg = parseProjectConfig(tomlPath);
+            if (cfg.valid) {
+                for (const auto &inc : cfg.includes) {
+                    args.includePaths.push_back(inc);
+                }
             }
         }
     }
 
-    // ── `check` subcommand ─────────────────────────────────────────────────
-    if (checkOnly) {
-        // type-check only — skip codegen
-        // We reuse the pipeline but skip the MLIR lowering and linking
-        std::ifstream file(sourceFile);
-        if (!file.is_open()) {
-            err("Failed to open file: " + sourceFile);
-            return 1;
-        }
-        std::stringstream buffer;
-        buffer << file.rdbuf();
-        std::string source_str = buffer.str();
-        std::string fullSource = kStandardPreamble + source_str;
-        const char *patchedSource = strdup(fullSource.c_str());
-        importSources.push_back(patchedSource);
-
-        AstNode *ast = parse(patchedSource);
-        if (ast && ast->type == AST_BLOCK) {
-            auto searchPaths = buildSearchPaths(sourceFile, includePaths);
-            if (!resolveImports(ast, searchPaths, importSources)) {
-                err("Failed to resolve imports.");
-                free((void*)patchedSource);
-                return 1;
-            }
-        }
-
-        if (!ast) {
-            err("Parse failed.");
-            for (const char *src : importSources) free((void*)src);
-            return 1;
-        }
-
-        std::unordered_set<std::string> declaredTypes;
-        int errors = semanticTypeCheckAst(ast, declaredTypes, patchedSource);
-        if (ast) freeAst(ast);
-        for (const char *src : importSources) free((void*)src);
-
-        if (errors > 0) {
-            err("Type-check failed with " + std::to_string(errors) + " error(s).");
-            return 1;
-        }
-        green("Type-check passed (no errors).");
-        return 0;
+    if (args.command == "check") {
+        return handleCheckSubcommand(args.sourceFile, args.includePaths);
     }
 
-    // ── `build` subcommand ─────────────────────────────────────────────────
-    if (doLink) {
-        int ret = runCompilationPipeline(sourceFile, outputBinary, enableGPU, enableWasm, true, includePaths, importSources, linkCFiles, linkLibs);
-        if (ret == 0) {
-            green("Compiled and linked to '" + outputBinary + "'.");
-        }
+    if (args.command == "build") {
+        int ret = runCompilationPipeline(args.sourceFile, args.outputBinary, args.enableGPU, args.enableWasm, true,
+                                         args.includePaths, args.importSources, args.linkCFiles, args.linkLibs);
+        if (ret == 0) green("Compiled and linked to '" + args.outputBinary + "'.");
         return ret;
     }
 
-    // ── `run` subcommand ───────────────────────────────────────────────────
-    if (doRun) {
-        int ret = runCompilationPipeline(sourceFile, outputBinary, enableGPU, enableWasm, true, includePaths, importSources, linkCFiles, linkLibs);
+    if (args.command == "run") {
+        int ret = runCompilationPipeline(args.sourceFile, args.outputBinary, args.enableGPU, args.enableWasm, true,
+                                         args.includePaths, args.importSources, args.linkCFiles, args.linkLibs);
         if (ret != 0) return ret;
-
-        std::cout << "Running " << outputBinary << "...\n";
-        int exitCode = system(outputBinary.c_str());
-        exitCode = WEXITSTATUS(exitCode);
-        return exitCode;
+        std::cout << "Running " << args.outputBinary << "...\n";
+        return WEXITSTATUS(system(args.outputBinary.c_str()));
     }
 
-    // ── `test` subcommand ─────────────────────────────────────────────────
-    if (doTest) {
-        int ret = runCompilationPipeline(sourceFile, outputBinary, enableGPU, enableWasm, false, includePaths, importSources, linkCFiles, linkLibs);
-        if (ret != 0) return ret;
-
-        // Re-parse the source for checkstyle (runs on original source, not import-resolved AST)
-        std::ifstream file(sourceFile);
-        if (!file.is_open()) { err("Failed to open file."); return 1; }
-        std::stringstream buffer;
-        buffer << file.rdbuf();
-        std::string source_str = buffer.str();
-        std::string fullSource = kStandardPreamble + source_str;
-        const char *patchedSource = strdup(fullSource.c_str());
-        std::vector<const char*> testImportSources;
-        testImportSources.push_back(patchedSource);
-
-        // Resolve imports to match original behavior
-        AstNode *ast = parse(patchedSource);
-        if (!ast) { err("Parse failed."); return 1; }
-
-        // Apply the same import resolution as the pipeline
-        if (ast->type == AST_BLOCK) {
-            auto searchPaths = buildSearchPaths(sourceFile, includePaths);
-            if (!resolveImports(ast, searchPaths, testImportSources)) {
-                err("Failed to resolve imports.");
-                return 1;
-            }
-        }
-
-        std::cout << "\nRunning built-in checkstyle and static analysis...\n";
-        int styleErrors = checkstyleAst(ast, patchedSource);
-        if (ast) freeAst(ast);
-        for (const char *src : testImportSources) free((void*)src);
-
-        if (styleErrors > 0) {
-            std::cerr << "Checkstyle and static analysis failed with " << styleErrors << " error(s).\n";
-            return 1;
-        }
-        std::cout << "Built-in checkstyle and static analysis passed.\n";
-        std::cout << "Compilation complete.\n";
-        return 0;
+    if (args.command == "test") {
+        return handleTestSubcommand(args.sourceFile, args.includePaths, args.enableGPU, args.enableWasm,
+                                    args.importSources, args.linkCFiles, args.linkLibs);
     }
 
     return 0;
