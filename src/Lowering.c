@@ -257,10 +257,7 @@ static void env_free(Environment *env, MlirContext ctx, MlirBlock block, MlirLoc
             if (!mlirValueIsNull(env->vars[i].value)) {
                 MlirValue eraP0 = createEra(ctx, block, loc);
 
-                MlirOperationState linkState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-                MlirValue linkOps[] = {eraP0, env->vars[i].value};
-                mlirOperationStateAddOperands(&linkState, 2, linkOps);
-                mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkState));
+                linkValues(block, loc, eraP0, env->vars[i].value);
             }
         }
     }
@@ -320,11 +317,7 @@ static MlirValue env_fetch(MlirContext ctx, MlirBlock block, MlirLocation loc, E
     MlirValue dupP1 = mlirOperationGetResult(dupOp, 1); // aux l
     MlirValue dupP2 = mlirOperationGetResult(dupOp, 2); // aux r
 
-    MlirOperationState linkState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-    MlirValue linkOps[] = {dupP0, val};
-    mlirOperationStateAddOperands(&linkState, 2, linkOps);
-    mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkState));
-
+    linkValues(block, loc, dupP0, val);
     env_set(env, name, name_len, dupP2);
     return dupP1;
 }
@@ -790,16 +783,8 @@ char cleanNames[2048] = "";
         MlirValue p1 = mlirOperationGetResult(pairOp, 1);
         MlirValue p2 = mlirOperationGetResult(pairOp, 2);
 
-        MlirOperationState linkLeftState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-        MlirValue leftOps[] = {p1, left};
-        mlirOperationStateAddOperands(&linkLeftState, 2, leftOps);
-        mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkLeftState));
-
-        MlirOperationState linkRightState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-        MlirValue rightOps[] = {p2, right};
-        mlirOperationStateAddOperands(&linkRightState, 2, rightOps);
-        mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkRightState));
-
+        linkValues(block, loc, p1, left);
+        linkValues(block, loc, p2, right);
         return p0;
     }
 
@@ -832,12 +817,7 @@ char cleanNames[2048] = "";
         MlirValue p1 = mlirOperationGetResult(selOp, 1);
         MlirValue p2 = mlirOperationGetResult(selOp, 2);
         
-        MlirOperationState linkState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-        MlirValue linkOps[] = {p1, base_val};
-        mlirOperationStateAddOperands(&linkState, 2, linkOps);
-        mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkState));
-        
-        // Item 4d: p2 is unused when only one field is accessed; attach an eraser so no
+        linkValues(block, loc, p1, base_val);// Item 4d: p2 is unused when only one field is accessed; attach an eraser so no
         // port is left dangling (a dangling principal port causes the reduction to stall).
         linkToEra(ctx, block, loc, p2);
         
@@ -1414,12 +1394,7 @@ char cleanNames[2048] = "";
         MlirValue envBundle = mlirOperationGetResult(unpackMainOp, 1);
         MlirValue mainArg = mlirOperationGetResult(unpackMainOp, 2);
 
-        MlirOperationState linkMainState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-        MlirValue linkMainOps[] = {umP0, inputBundle};
-        mlirOperationStateAddOperands(&linkMainState, 2, linkMainOps);
-        mlirBlockAppendOwnedOperation(innerBlock, mlirOperationCreate(&linkMainState));
-
-        // Unpack captures from envBundle
+        linkValues(innerBlock, loc, umP0, inputBundle);// Unpack captures from envBundle
         MlirValue currentBundle = envBundle;
         for (int i = 0; i < fv.count; i++) {
             MlirOperationState unpackState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
@@ -1433,11 +1408,7 @@ char cleanNames[2048] = "";
             MlirValue p1 = mlirOperationGetResult(unpackOp, 1);
             MlirValue p2 = mlirOperationGetResult(unpackOp, 2);
 
-            MlirOperationState linkState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-            MlirValue linkOps[] = {p0, currentBundle};
-            mlirOperationStateAddOperands(&linkState, 2, linkOps);
-            mlirBlockAppendOwnedOperation(innerBlock, mlirOperationCreate(&linkState));
-
+            linkValues(innerBlock, loc, p0, currentBundle);
             env_add(&innerEnv, fv.names[i], strlen(fv.names[i]), p1);
             currentBundle = p2;
         }
@@ -1454,12 +1425,7 @@ char cleanNames[2048] = "";
         mlirOperationStateAddResults(&eraInnerState, 3, agentTypes);
         MlirOperation eraInnerOp = mlirOperationCreate(&eraInnerState);
         mlirBlockAppendOwnedOperation(innerBlock, eraInnerOp);
-        MlirOperationState linkEraState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-        MlirValue eraOps[] = {mlirOperationGetResult(eraInnerOp, 0), currentBundle};
-        mlirOperationStateAddOperands(&linkEraState, 2, eraOps);
-        mlirBlockAppendOwnedOperation(innerBlock, mlirOperationCreate(&linkEraState));
-
-        // Add main argument to env
+        linkValues(innerBlock, loc, mlirOperationGetResult(eraInnerOp, 0), currentBundle);// Add main argument to env
         if (arg_count > 0) {
             // Multi-arg support: unpack the pair chain to bind N arguments
             MlirValue unpackChainArg = mainArg;
@@ -1473,10 +1439,7 @@ char cleanNames[2048] = "";
                 MlirValue uP0 = mlirOperationGetResult(unpackOp, 0);
                 MlirValue uP1 = mlirOperationGetResult(unpackOp, 1);
                 MlirValue uP2 = mlirOperationGetResult(unpackOp, 2);
-                MlirOperationState linkState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-                MlirValue linkOps[] = {uP0, unpackChainArg};
-                mlirOperationStateAddOperands(&linkState, 2, linkOps);
-                mlirBlockAppendOwnedOperation(innerBlock, mlirOperationCreate(&linkState));
+                linkValues(innerBlock, loc, uP0, unpackChainArg);
                 env_add(&innerEnv, expr->as.func_decl.args[ai].name, expr->as.func_decl.args[ai].name_len, uP1);
                 unpackChainArg = uP2;
             }
@@ -1487,10 +1450,7 @@ char cleanNames[2048] = "";
                 mlirOperationStateAddResults(&eraArgState, 3, agentTypes);
                 MlirOperation eraArgOp = mlirOperationCreate(&eraArgState);
                 mlirBlockAppendOwnedOperation(innerBlock, eraArgOp);
-                MlirOperationState linkEraArgState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-                MlirValue eraArgOps[] = {mlirOperationGetResult(eraArgOp, 0), unpackChainArg};
-                mlirOperationStateAddOperands(&linkEraArgState, 2, eraArgOps);
-                mlirBlockAppendOwnedOperation(innerBlock, mlirOperationCreate(&linkEraArgState));
+                linkValues(innerBlock, loc, mlirOperationGetResult(eraArgOp, 0), unpackChainArg);
             }
         } else {
             MlirOperationState eraArgState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
@@ -1498,20 +1458,13 @@ char cleanNames[2048] = "";
             mlirOperationStateAddResults(&eraArgState, 3, agentTypes);
             MlirOperation eraArgOp = mlirOperationCreate(&eraArgState);
             mlirBlockAppendOwnedOperation(innerBlock, eraArgOp);
-            MlirOperationState linkEraArgState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-            MlirValue eraArgOps[] = {mlirOperationGetResult(eraArgOp, 0), mainArg};
-            mlirOperationStateAddOperands(&linkEraArgState, 2, eraArgOps);
-            mlirBlockAppendOwnedOperation(innerBlock, mlirOperationCreate(&linkEraArgState));
-        }
+            linkValues(innerBlock, loc, mlirOperationGetResult(eraArgOp, 0), mainArg);
+            }
 
         MlirValue bodyResult = lowerExpression(ctx, innerBlock, loc, expr->as.func_decl.body, &innerEnv, true);
         env_free(&innerEnv, ctx, innerBlock, loc);
 
-        MlirOperationState linkBodyState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-        MlirValue bodyLinkOps[] = {bodyResult, resultPort};
-        mlirOperationStateAddOperands(&linkBodyState, 2, bodyLinkOps);
-        mlirBlockAppendOwnedOperation(innerBlock, mlirOperationCreate(&linkBodyState));
-
+        linkValues(innerBlock, loc, bodyResult, resultPort);
         MlirOperationState retState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
         mlirOperationStateAddOperands(&retState, 1, &resultPort);
         mlirBlockAppendOwnedOperation(innerBlock, mlirOperationCreate(&retState));
@@ -1594,16 +1547,8 @@ char cleanNames[2048] = "";
             MlirValue p1 = mlirOperationGetResult(packOp, 1);
             MlirValue p2 = mlirOperationGetResult(packOp, 2);
 
-            MlirOperationState linkCapState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-            MlirValue capLinkOps[] = {p1, capVal};
-            mlirOperationStateAddOperands(&linkCapState, 2, capLinkOps);
-            mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkCapState));
-
-            MlirOperationState linkNextState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-            MlirValue nextLinkOps[] = {p2, currentOuterBundle};
-            mlirOperationStateAddOperands(&linkNextState, 2, nextLinkOps);
-            mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkNextState));
-
+            linkValues(block, loc, p1, capVal);
+            linkValues(block, loc, p2, currentOuterBundle);
             currentOuterBundle = p0;
         }
 
@@ -1618,16 +1563,8 @@ char cleanNames[2048] = "";
         MlirValue closureP1 = mlirOperationGetResult(closureOp, 1);
         MlirValue closureP2 = mlirOperationGetResult(closureOp, 2);
 
-        MlirOperationState linkFState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-        MlirValue fLinkOps[] = {closureP1, omegaP0};
-        mlirOperationStateAddOperands(&linkFState, 2, fLinkOps);
-        mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkFState));
-
-        MlirOperationState linkEnvState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-        MlirValue envLinkOps[] = {closureP2, currentOuterBundle};
-        mlirOperationStateAddOperands(&linkEnvState, 2, envLinkOps);
-        mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkEnvState));
-
+        linkValues(block, loc, closureP1, omegaP0);
+        linkValues(block, loc, closureP2, currentOuterBundle);
         MlirValue currentVal = closureP0;
 
         if (expr->as.func_decl.name_len > 0) {
@@ -1670,14 +1607,8 @@ char cleanNames[2048] = "";
             MlirValue p0 = mlirOperationGetResult(pairOp, 0);
             MlirValue p1 = mlirOperationGetResult(pairOp, 1);
             MlirValue p2 = mlirOperationGetResult(pairOp, 2);
-            MlirOperationState lls = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-            MlirValue lOps[] = {p1, left};
-            mlirOperationStateAddOperands(&lls, 2, lOps);
-            mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&lls));
-            MlirOperationState lrs = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-            MlirValue rOps[] = {p2, right};
-            mlirOperationStateAddOperands(&lrs, 2, rOps);
-            mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&lrs));
+            linkValues(block, loc, p1, left);
+            linkValues(block, loc, p2, right);
             return p0;
         }
 
@@ -1758,14 +1689,8 @@ char cleanNames[2048] = "";
                     MlirValue p0 = mlirOperationGetResult(packOp, 0);
                     MlirValue p1 = mlirOperationGetResult(packOp, 1);
                     MlirValue p2 = mlirOperationGetResult(packOp, 2);
-                    MlirOperationState link1State = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-                    MlirValue l1Ops[] = {p1, argVal};
-                    mlirOperationStateAddOperands(&link1State, 2, l1Ops);
-                    mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&link1State));
-                    MlirOperationState link2State = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-                    MlirValue l2Ops[] = {p2, argsPack};
-                    mlirOperationStateAddOperands(&link2State, 2, l2Ops);
-                    mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&link2State));
+                    linkValues(block, loc, p1, argVal);
+                    linkValues(block, loc, p2, argsPack);
                     argsPack = p0;
                 }
             }
@@ -1782,12 +1707,7 @@ char cleanNames[2048] = "";
             MlirValue uP1 = mlirOperationGetResult(unpackOp, 1); // f
             MlirValue uP2 = mlirOperationGetResult(unpackOp, 2); // env_bundle
 
-            MlirOperationState linkUState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-            MlirValue linkUOps[] = {uP0, currentVal};
-            mlirOperationStateAddOperands(&linkUState, 2, linkUOps);
-            mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkUState));
-
-            // Now bundle (env_bundle, argsPack) into a pair for the call
+            linkValues(block, loc, uP0, currentVal);// Now bundle (env_bundle, argsPack) into a pair for the call
             // Use omega- for the call trigger
             MlirOperationState appState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
                 MlirAttribute omegaType = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("omega"));
@@ -1808,12 +1728,7 @@ char cleanNames[2048] = "";
                 MlirValue appP2 = mlirOperationGetResult(appOp, 2); // result
 
                 // Link appP0 ↔ uP1 (the function pointer)
-                MlirOperationState linkFState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-                MlirValue fLinkOps[] = {appP0, uP1};
-                mlirOperationStateAddOperands(&linkFState, 2, fLinkOps);
-                mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkFState));
-
-                // Create the pair(env, args)
+                linkValues(block, loc, appP0, uP1);// Create the pair(env, args)
                 MlirOperationState packState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
                 MlirNamedAttribute packAttrs[] = {pairTypeAttr, plusPolAttr, labelPairAttr};
                 mlirOperationStateAddAttributes(&packState, 3, packAttrs);
@@ -1826,23 +1741,9 @@ char cleanNames[2048] = "";
                 MlirValue pP2 = mlirOperationGetResult(packOp, 2); // args
 
                 // Link pP1 ↔ uP2
-                MlirOperationState linkEnvState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-                MlirValue envLinkOps[] = {pP1, uP2};
-                mlirOperationStateAddOperands(&linkEnvState, 2, envLinkOps);
-                mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkEnvState));
-
-                // Link pP2 ↔ argsPack (all args packed as nested pair)
-                MlirOperationState linkArgState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-                MlirValue argLinkOps[] = {pP2, argsPack};
-                mlirOperationStateAddOperands(&linkArgState, 2, argLinkOps);
-                mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkArgState));
-
-                // Link appP1 ↔ pP0
-                MlirOperationState linkCallState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-                MlirValue callLinkOps[] = {appP1, pP0};
-                mlirOperationStateAddOperands(&linkCallState, 2, callLinkOps);
-                mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkCallState));
-
+                linkValues(block, loc, pP1, uP2);// Link pP2 ↔ argsPack (all args packed as nested pair)
+                linkValues(block, loc, pP2, argsPack);// Link appP1 ↔ pP0
+                linkValues(block, loc, appP1, pP0);
                 currentVal = appP2;
 
             return currentVal;
@@ -2087,10 +1988,7 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
                 MlirOperation eraOp = mlirOperationCreate(&eraState);
                 mlirBlockAppendOwnedOperation(block, eraOp);
                 
-                MlirOperationState linkState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.link"), loc);
-                MlirValue linkOps[] = {mlirOperationGetResult(eraOp, 0), mlirBlockGetArgument(block, i)};
-                mlirOperationStateAddOperands(&linkState, 2, linkOps);
-                mlirBlockAppendOwnedOperation(block, mlirOperationCreate(&linkState));
+                linkValues(block, loc, mlirOperationGetResult(eraOp, 0), mlirBlockGetArgument(block, i));
             }
 
             MlirValue result = lowerExpression(ctx, block, loc, ast->as.func_decl.body, &env, true);

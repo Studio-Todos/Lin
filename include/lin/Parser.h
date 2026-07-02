@@ -29,6 +29,8 @@ typedef enum {
     TOKEN_NOT_EQUAL,   // !=
     TOKEN_GREATER_EQUAL, // >=
     TOKEN_LESS_EQUAL,   // <=
+    TOKEN_LESS_LESS,    // <<
+    TOKEN_GREATER_GREATER, // >>
     TOKEN_PLUS,         // +
     TOKEN_MINUS,        // -
     TOKEN_AND,         // &&
