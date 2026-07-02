@@ -51,7 +51,7 @@ Fixed in Phase 2: assertions now match actual parser output (`AST_CALL`, `AST_NU
 ### [DONE] 14. main.cpp: Import resolution copy-pasted 3 times (`src/main.cpp:420-519, 1014-1092, 1154-1227`)
 Extracted into `buildSearchPaths()` and `resolveImports()` helpers in Phase 3. ~240 lines saved.
 
-### 15. main.cpp: `runCompilationPipeline()` is ~420 lines
+### [DONE] 15. main.cpp: runCompilationPipeline (383 -> 130 lines, linkBinary + runPassesAndEmitObject extracted)
 Should be split into ~5-7 functions (parse, resolve, type-check, lower passes, emit object, link).
 
 ### 16. main.cpp: `main()` is ~370 lines

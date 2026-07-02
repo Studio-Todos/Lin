@@ -498,118 +498,10 @@ static bool resolveImports(AstNode *ast, const std::vector<std::string> &searchP
     return true;
 }
 
-static int runCompilationPipeline(
-    const std::string &sourceFile,
-    const std::string &outputBinary,
-    bool enableGPU,
-    bool enableWasm,
-    bool doLink,
-    const std::vector<std::string> &includePaths,
-    std::vector<const char*> &importSources,
-    std::vector<std::string> &linkCFiles,
-    std::vector<std::string> &linkLibs
-) {
-    std::ifstream file(sourceFile);
-    if (!file.is_open()) {
-        err("Failed to open file: " + sourceFile);
-        return 1;
-    }
-
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    std::string source_str = buffer.str();
-
-    // Implicitly inject std/types.lin and std/io.lin at the beginning of the AST
-    // std/io.lin is needed for print/read I/O operations to register their rules and user-op functions.
-    std::string fullSource = kStandardPreamble + source_str;
-    const char *patchedSource = strdup(fullSource.c_str());
-    importSources.push_back(patchedSource);
-
-    log("Parsing Source:\n" + fullSource);
-    AstNode *ast = parse(patchedSource);
-    if (ast) {
-        if (ast->type == AST_BLOCK) {
-            auto searchPaths = buildSearchPaths(sourceFile, includePaths);
-            if (!resolveImports(ast, searchPaths, importSources)) {
-                err("Failed to resolve imports.");
-                free((void*)patchedSource);
-                return 1;
-            }
-        }
-        printAst(ast, 0);
-    }
-
-    if (!ast) {
-        err("Parse failed.");
-        return 1;
-    }
-
-    log("Initializing Lin Compiler...");
-
-    mlir::DialectRegistry registry;
-    registry.insert<mlir::pic::graph::PicGraphDialect>();
-    registry.insert<mlir::pic::reduce::PicReduceDialect>();
-    registry.insert<mlir::pic::runtime::PicRuntimeDialect>();
-    registry.insert<mlir::func::FuncDialect>();
-    registry.insert<mlir::arith::ArithDialect>();
-    registry.insert<mlir::memref::MemRefDialect>();
-    registry.insert<mlir::LLVM::LLVMDialect>();
-    registry.insert<mlir::gpu::GPUDialect>();
-    registry.insert<mlir::scf::SCFDialect>();
-    registry.insert<mlir::math::MathDialect>();
-    registry.insert<mlir::cf::ControlFlowDialect>();
-#ifdef HAVE_MLIR_SPIRV
-    registry.insert<mlir::spirv::SPIRVDialect>();
-#endif
-    mlir::registerAllToLLVMIRTranslations(registry);
-    mlir::registerConvertMathToLLVMInterface(registry);
-
-    llvm::InitializeAllTargetInfos();
-    llvm::InitializeAllTargets();
-    llvm::InitializeAllTargetMCs();
-    llvm::InitializeAllAsmPrinters();
-    llvm::InitializeAllAsmParsers();
-
-    mlir::MLIRContext context(registry);
-    context.loadAllAvailableDialects();
-
-    log("PIC dialects registered successfully.");
-
-    if (hasGpuAnnotation(ast)) {
-        enableGPU = true;
-    }
-
-    std::unordered_set<std::string> declaredTypes;
-    int semanticErrors = semanticTypeCheckAst(ast, declaredTypes, patchedSource);
-    if (semanticErrors > 0) {
-        err("Semantic analysis failed with " + std::to_string(semanticErrors) + " error(s).");
-        if (ast) freeAst(ast);
-        for (const char *src : importSources) free((void*)src);
-        return 1;
-    }
-
-    // Type-check ran above; proceed to codegen + linking
-
-    performTypeDirectedDispatch(ast);
-
-    MlirContext cCtx = wrap(&context);
-    MlirModule cModule = lowerAstToMlir(cCtx, ast);
-
-    ModuleOp module = unwrap(cModule);
-
-#ifdef HAVE_MLIR_SPIRV
-    if (enableGPU) {
-        auto targetEnv = mlir::spirv::getDefaultTargetEnv(module.getContext());
-        module->setAttr(mlir::spirv::getTargetEnvAttrName(), targetEnv);
-    }
-#endif
-
-    log("Generated MLIR (before lowering):");
-    if (!gQuiet) {
-        module.print(llvm::outs());
-        llvm::outs().flush();
-    }
-
+static int runPassesAndEmitObject(ModuleOp &module, MLIRContext &context,
+                                  const std::string &outputBinary,
+                                  bool enableGPU, bool enableWasm,
+                                  std::string &objFile) {
     PassManager pm(&context);
     pm.addPass(createPicGraphVerifyPass());
     pm.addPass(createPicGraphEGraphPass());
@@ -754,7 +646,7 @@ static int runCompilationPipeline(
     llvmModule->setDataLayout(targetMachine->createDataLayout());
     llvmModule->setTargetTriple(targetTriple);
 
-    std::string objFile = outputBinary + ".o";
+    objFile = outputBinary + ".o";
     std::error_code ec;
     llvm::raw_fd_ostream dest(objFile, ec, llvm::sys::fs::OF_None);
     if (ec) {
@@ -775,101 +667,234 @@ static int runCompilationPipeline(
     log("Successfully emitted object file to " + objFile);
 
     delete targetMachine;
+    return 0;
+}
 
-    if (doLink) {
-        pid_t pid = fork();
-        if (pid == -1) {
-            err("Failed to fork process for linking.");
-            return 1;
-        } else if (pid == 0) {
-            std::vector<char*> args;
-            if (enableWasm) {
-                args.push_back(const_cast<char*>("wasm-ld"));
-                args.push_back(const_cast<char*>(objFile.c_str()));
-                for (auto &cf : linkCFiles) args.push_back(const_cast<char*>(cf.c_str()));
-                args.push_back(const_cast<char*>("-o"));
-                args.push_back(const_cast<char*>(outputBinary.c_str()));
-                args.push_back(const_cast<char*>("--no-entry"));
-                args.push_back(const_cast<char*>("--export-all"));
-                args.push_back(nullptr);
-                execvp("wasm-ld", args.data());
-            } else {
-                const char* cc = getenv("CC");
-                args.push_back(const_cast<char*>(cc && cc[0] ? cc : "gcc"));
-                args.push_back(const_cast<char*>(objFile.c_str()));
-                for (auto &cf : linkCFiles) args.push_back(const_cast<char*>(cf.c_str()));
-                args.push_back(const_cast<char*>("-o"));
-                args.push_back(const_cast<char*>(outputBinary.c_str()));
-                const char* ldPath = getenv("LIBRARY_PATH");
-                if (ldPath) {
-                    std::string s(ldPath);
-                    size_t pos = 0;
-                    while ((pos = s.find(":")) != std::string::npos) {
-                        std::string path = s.substr(0, pos);
-                        if (!path.empty()) {
-                            char* arg = new char[path.length() + 3];
-                            sprintf(arg, "-L%s", path.c_str());
-                            args.push_back(arg);
-                        }
-                        s.erase(0, pos + 1);
-                    }
-                    if (!s.empty()) {
-                        char* arg = new char[s.length() + 3];
-                        sprintf(arg, "-L%s", s.c_str());
+
+static int linkBinary(
+    const std::string &outputBinary,
+    const std::string &objFile,
+    bool enableWasm,
+    bool enableGPU,
+    const std::vector<std::string> &linkCFiles,
+    const std::vector<std::string> &linkLibs
+) {
+    pid_t pid = fork();
+    if (pid == -1) {
+        err("Failed to fork process for linking.");
+        return 1;
+    } else if (pid == 0) {
+        std::vector<char*> args;
+        if (enableWasm) {
+            args.push_back(const_cast<char*>("wasm-ld"));
+            args.push_back(const_cast<char*>(objFile.c_str()));
+            for (auto &cf : linkCFiles) args.push_back(const_cast<char*>(cf.c_str()));
+            args.push_back(const_cast<char*>("-o"));
+            args.push_back(const_cast<char*>(outputBinary.c_str()));
+            args.push_back(const_cast<char*>("--no-entry"));
+            args.push_back(const_cast<char*>("--export-all"));
+            args.push_back(nullptr);
+            execvp("wasm-ld", args.data());
+        } else {
+            const char* cc = getenv("CC");
+            args.push_back(const_cast<char*>(cc && cc[0] ? cc : "gcc"));
+            args.push_back(const_cast<char*>(objFile.c_str()));
+            for (auto &cf : linkCFiles) args.push_back(const_cast<char*>(cf.c_str()));
+            args.push_back(const_cast<char*>("-o"));
+            args.push_back(const_cast<char*>(outputBinary.c_str()));
+            const char* ldPath = getenv("LIBRARY_PATH");
+            if (ldPath) {
+                std::string s(ldPath);
+                size_t pos = 0;
+                while ((pos = s.find(":")) != std::string::npos) {
+                    std::string path = s.substr(0, pos);
+                    if (!path.empty()) {
+                        char* arg = new char[path.length() + 3];
+                        sprintf(arg, "-L%s", path.c_str());
                         args.push_back(arg);
                     }
+                    s.erase(0, pos + 1);
                 }
-                std::string gpuRuntimePath = "src/gpu_runtime.c";
-                if (enableGPU) {
-                    char exePath[PATH_MAX];
-                    ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath)-1);
-                    if (len != -1) {
-                        exePath[len] = '\0';
-                        std::filesystem::path ePath(exePath);
-                        std::filesystem::path binDir = ePath.parent_path();
-                        std::filesystem::path pDir = binDir.parent_path();
-                        if (pDir.has_parent_path()) {
-                            std::filesystem::path candidate = pDir.parent_path() / "src" / "gpu_runtime.c";
+                if (!s.empty()) {
+                    char* arg = new char[s.length() + 3];
+                    sprintf(arg, "-L%s", s.c_str());
+                    args.push_back(arg);
+                }
+            }
+            std::string gpuRuntimePath = "src/gpu_runtime.c";
+            if (enableGPU) {
+                char exePath[PATH_MAX];
+                ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath)-1);
+                if (len != -1) {
+                    exePath[len] = '\0';
+                    std::filesystem::path ePath(exePath);
+                    std::filesystem::path binDir = ePath.parent_path();
+                    std::filesystem::path pDir = binDir.parent_path();
+                    if (pDir.has_parent_path()) {
+                        std::filesystem::path candidate = pDir.parent_path() / "src" / "gpu_runtime.c";
+                        if (std::filesystem::exists(candidate)) gpuRuntimePath = candidate.string();
+                        else {
+                            candidate = pDir / "src" / "gpu_runtime.c";
                             if (std::filesystem::exists(candidate)) gpuRuntimePath = candidate.string();
-                            else {
-                                candidate = pDir / "src" / "gpu_runtime.c";
-                                if (std::filesystem::exists(candidate)) gpuRuntimePath = candidate.string();
-                            }
                         }
                     }
-                    args.push_back(const_cast<char*>(gpuRuntimePath.c_str()));
-                    args.push_back(const_cast<char*>("-lvulkan"));
                 }
-                args.push_back(const_cast<char*>("-lm"));
-                for (auto &lib : linkLibs) {
-                    std::istringstream libStream(lib);
-                    std::string singleLib;
-                    while (libStream >> singleLib) {
-                        args.push_back(const_cast<char*>(strdup(singleLib.c_str())));
-                    }
-                }
-                args.push_back(nullptr);
-                execvp("gcc", args.data());
+                args.push_back(const_cast<char*>(gpuRuntimePath.c_str()));
+                args.push_back(const_cast<char*>("-lvulkan"));
             }
-            perror("execvp failed");
-            _exit(1);
-        } else {
-            int status;
-            waitpid(pid, &status, 0);
-            if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
-                err("Linking failed (exit code " + std::to_string(WEXITSTATUS(status)) + ").");
-                return 1;
-            } else if (WIFSIGNALED(status)) {
-                if (llvm::sys::fs::exists(outputBinary)) {
-                    warn("Linker terminated by signal " + std::to_string(WTERMSIG(status)) + ", but output binary was created.");
-                } else {
-                    err("Linking failed (signal " + std::to_string(WTERMSIG(status)) + ").");
-                    return 1;
+            args.push_back(const_cast<char*>("-lm"));
+            for (auto &lib : linkLibs) {
+                std::istringstream libStream(lib);
+                std::string singleLib;
+                while (libStream >> singleLib) {
+                    args.push_back(const_cast<char*>(strdup(singleLib.c_str())));
                 }
+            }
+            args.push_back(nullptr);
+            execvp("gcc", args.data());
+        }
+        perror("execvp failed");
+        _exit(1);
+    } else {
+        int status;
+        waitpid(pid, &status, 0);
+        if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+            err("Linking failed (exit code " + std::to_string(WEXITSTATUS(status)) + ").");
+            return 1;
+        } else if (WIFSIGNALED(status)) {
+            if (llvm::sys::fs::exists(outputBinary)) {
+                warn("Linker terminated by signal " + std::to_string(WTERMSIG(status)) + ", but output binary was created.");
+            } else {
+                err("Linking failed (signal " + std::to_string(WTERMSIG(status)) + ").");
+                return 1;
             }
         }
-        log("Successfully compiled and linked to '" + outputBinary + "'.");
-        llvm::sys::fs::remove(objFile);
+    }
+    log("Successfully compiled and linked to '" + outputBinary + "'.");
+    llvm::sys::fs::remove(objFile);
+    return 0;
+}
+
+
+static int runCompilationPipeline(
+    const std::string &sourceFile,
+    const std::string &outputBinary,
+    bool enableGPU,
+    bool enableWasm,
+    bool doLink,
+    const std::vector<std::string> &includePaths,
+    std::vector<const char*> &importSources,
+    std::vector<std::string> &linkCFiles,
+    std::vector<std::string> &linkLibs
+) {
+    std::ifstream file(sourceFile);
+    if (!file.is_open()) {
+        err("Failed to open file: " + sourceFile);
+        return 1;
+    }
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string source_str = buffer.str();
+
+    // Implicitly inject std/types.lin and std/io.lin at the beginning of the AST
+    // std/io.lin is needed for print/read I/O operations to register their rules and user-op functions.
+    std::string fullSource = kStandardPreamble + source_str;
+    const char *patchedSource = strdup(fullSource.c_str());
+    importSources.push_back(patchedSource);
+
+    log("Parsing Source:\n" + fullSource);
+    AstNode *ast = parse(patchedSource);
+    if (ast) {
+        if (ast->type == AST_BLOCK) {
+            auto searchPaths = buildSearchPaths(sourceFile, includePaths);
+            if (!resolveImports(ast, searchPaths, importSources)) {
+                err("Failed to resolve imports.");
+                free((void*)patchedSource);
+                return 1;
+            }
+        }
+        printAst(ast, 0);
+    }
+
+    if (!ast) {
+        err("Parse failed.");
+        return 1;
+    }
+
+    log("Initializing Lin Compiler...");
+
+    mlir::DialectRegistry registry;
+    registry.insert<mlir::pic::graph::PicGraphDialect>();
+    registry.insert<mlir::pic::reduce::PicReduceDialect>();
+    registry.insert<mlir::pic::runtime::PicRuntimeDialect>();
+    registry.insert<mlir::func::FuncDialect>();
+    registry.insert<mlir::arith::ArithDialect>();
+    registry.insert<mlir::memref::MemRefDialect>();
+    registry.insert<mlir::LLVM::LLVMDialect>();
+    registry.insert<mlir::gpu::GPUDialect>();
+    registry.insert<mlir::scf::SCFDialect>();
+    registry.insert<mlir::math::MathDialect>();
+    registry.insert<mlir::cf::ControlFlowDialect>();
+#ifdef HAVE_MLIR_SPIRV
+    registry.insert<mlir::spirv::SPIRVDialect>();
+#endif
+    mlir::registerAllToLLVMIRTranslations(registry);
+    mlir::registerConvertMathToLLVMInterface(registry);
+
+    llvm::InitializeAllTargetInfos();
+    llvm::InitializeAllTargets();
+    llvm::InitializeAllTargetMCs();
+    llvm::InitializeAllAsmPrinters();
+    llvm::InitializeAllAsmParsers();
+
+    mlir::MLIRContext context(registry);
+    context.loadAllAvailableDialects();
+
+    log("PIC dialects registered successfully.");
+
+    if (hasGpuAnnotation(ast)) {
+        enableGPU = true;
+    }
+
+    std::unordered_set<std::string> declaredTypes;
+    int semanticErrors = semanticTypeCheckAst(ast, declaredTypes, patchedSource);
+    if (semanticErrors > 0) {
+        err("Semantic analysis failed with " + std::to_string(semanticErrors) + " error(s).");
+        if (ast) freeAst(ast);
+        for (const char *src : importSources) free((void*)src);
+        return 1;
+    }
+
+    // Type-check ran above; proceed to codegen + linking
+
+    performTypeDirectedDispatch(ast);
+
+    MlirContext cCtx = wrap(&context);
+    MlirModule cModule = lowerAstToMlir(cCtx, ast);
+
+    ModuleOp module = unwrap(cModule);
+
+#ifdef HAVE_MLIR_SPIRV
+    if (enableGPU) {
+        auto targetEnv = mlir::spirv::getDefaultTargetEnv(module.getContext());
+        module->setAttr(mlir::spirv::getTargetEnvAttrName(), targetEnv);
+    }
+#endif
+
+    log("Generated MLIR (before lowering):");
+    if (!gQuiet) {
+        module.print(llvm::outs());
+        llvm::outs().flush();
+    }
+
+    std::string objFile;
+    int ret = runPassesAndEmitObject(module, context, outputBinary, enableGPU, enableWasm, objFile);
+    if (ret) return ret;
+
+    if (doLink) {
+        int ret = linkBinary(outputBinary, objFile, enableWasm, enableGPU, linkCFiles, linkLibs);
+        if (ret) return ret;
     } else {
         log("Compilation complete.");
     }
