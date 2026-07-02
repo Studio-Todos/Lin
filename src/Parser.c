@@ -221,7 +221,6 @@ typedef struct {
 } Parser;
 
 static void errorAt(Parser *parser, const Token *token, const char *message) {
-    if (parser->hadError) return;
     const char *source = parser->lexer.start;
     if (token->type == TOKEN_EOF) {
         diagError(source, NULL, token->line, token->col, message);
@@ -233,6 +232,31 @@ static void errorAt(Parser *parser, const Token *token, const char *message) {
 
 static void error(Parser *parser, const char *message) {
     errorAt(parser, &parser->previous, message);
+}
+
+static void parserAdvance(Parser *parser);
+
+static void synchronize(Parser *parser) {
+    while (!isAtEnd(&parser->lexer)) {
+        if (parser->current.type == TOKEN_RBRACKET ||
+            parser->current.type == TOKEN_RPAREN ||
+            parser->current.type == TOKEN_EOF) return;
+        switch (parser->current.type) {
+            case TOKEN_IDENTIFIER:
+            case TOKEN_NUMBER:
+            case TOKEN_FLOAT:
+            case TOKEN_STRING:
+            case TOKEN_LBRACKET:
+            case TOKEN_FUNC:
+            case TOKEN_IMPORT:
+            case TOKEN_WHILE:
+            case TOKEN_EITHER:
+            case TOKEN_ANNOTATION:
+                return;
+            default:
+                parserAdvance(parser);
+        }
+    }
 }
 
 static void parserAdvance(Parser *parser) {
@@ -250,6 +274,7 @@ static void consume(Parser *parser, TokenType type, const char *message) {
         return;
     }
     errorAt(parser, &parser->current, message);
+    synchronize(parser);
 }
 
 static AstNode* parseExpression(Parser *parser);
@@ -695,47 +720,75 @@ static AstNode* parsePrimary(Parser *parser) {
     }
 }
 
-static AstNode* parseExpression(Parser *parser) {
-    AstNode *expr = parsePrimary(parser);
+static int getBinaryPrecedence(TokenType type) {
+    switch (type) {
+        case TOKEN_OR: return 1;
+        case TOKEN_AND: return 2;
+        case TOKEN_POW: return 3;
+        case TOKEN_EQUAL_EQUAL: case TOKEN_NOT_EQUAL: return 4;
+        case TOKEN_LESS: case TOKEN_GREATER:
+        case TOKEN_LESS_EQUAL: case TOKEN_GREATER_EQUAL: return 5;
+        case TOKEN_LESS_LESS: case TOKEN_GREATER_GREATER: return 6;
+        case TOKEN_PLUS: case TOKEN_MINUS: return 7;
+        case TOKEN_STAR: case TOKEN_SLASH: return 8;
+        default: return -1;
+    }
+}
 
-    while (parser->current.type == TOKEN_LESS || parser->current.type == TOKEN_PLUS || parser->current.type == TOKEN_MINUS ||
-           parser->current.type == TOKEN_STAR || parser->current.type == TOKEN_GREATER ||
-           parser->current.type == TOKEN_EQUAL_EQUAL || parser->current.type == TOKEN_NOT_EQUAL ||
-           parser->current.type == TOKEN_GREATER_EQUAL || parser->current.type == TOKEN_LESS_EQUAL ||
-           parser->current.type == TOKEN_LESS_LESS || parser->current.type == TOKEN_GREATER_GREATER ||
-           parser->current.type == TOKEN_AND || parser->current.type == TOKEN_OR ||
-           parser->current.type == TOKEN_POW) {
+static const char* tokenToOpName(TokenType op) {
+    switch (op) {
+        case TOKEN_PLUS: return "add";
+        case TOKEN_MINUS: return "sub";
+        case TOKEN_STAR: return "mul";
+        case TOKEN_SLASH: return "div";
+        case TOKEN_LESS: return "lt";
+        case TOKEN_GREATER: return "gt";
+        case TOKEN_LESS_EQUAL: return "le";
+        case TOKEN_GREATER_EQUAL: return "ge";
+        case TOKEN_LESS_LESS: return "shl";
+        case TOKEN_GREATER_GREATER: return "shr";
+        case TOKEN_EQUAL_EQUAL: return "eq";
+        case TOKEN_NOT_EQUAL: return "ne";
+        case TOKEN_AND: return "and";
+        case TOKEN_OR: return "std.or";
+        case TOKEN_POW: return "xor";
+        default: return "add";
+    }
+}
+
+static AstNode* parseBinary(Parser *parser, int minPrec, AstNode *left) {
+    while (true) {
+        int prec = getBinaryPrecedence(parser->current.type);
+        if (prec < minPrec) break;
+
         TokenType op = parser->current.type;
         parserAdvance(parser);
-        AstNode *right = parsePrimary(parser);
 
-        const char* funcName = "add";
-        if (op == TOKEN_MINUS) funcName = "sub";
-        else if (op == TOKEN_STAR) funcName = "mul";
-        else if (op == TOKEN_SLASH) funcName = "div";
-        else if (op == TOKEN_LESS) funcName = "lt";
-        else if (op == TOKEN_GREATER) funcName = "gt";
-        else if (op == TOKEN_LESS_EQUAL) funcName = "le";
-        else if (op == TOKEN_GREATER_EQUAL) funcName = "ge";
-        else if (op == TOKEN_LESS_LESS) funcName = "shl";
-        else if (op == TOKEN_GREATER_GREATER) funcName = "shr";
-        else if (op == TOKEN_EQUAL_EQUAL) funcName = "eq";
-        else if (op == TOKEN_NOT_EQUAL) funcName = "ne";
-        else if (op == TOKEN_AND) funcName = "and";
-        else if (op == TOKEN_OR) funcName = "std.or";
-        else if (op == TOKEN_POW) funcName = "xor";
+        AstNode *right = parsePrimary(parser);
+        if (!right) return left;
+
+        right = parseBinary(parser, prec + 1, right);
 
         AstNode *call = createNode(parser, AST_CALL);
-        call->as.call.callee = strdup(funcName);
+        call->as.call.callee = strdup(tokenToOpName(op));
         call->as.call.callee_owned = true;
-        call->as.call.callee_len = strlen(funcName);
+        call->as.call.callee_len = strlen(call->as.call.callee);
         call->as.call.arg_count = 2;
         call->as.call.resolved_callee = NULL;
         call->as.call.args = malloc(sizeof(AstNode*) * 2);
-        call->as.call.args[0] = expr;
+        call->as.call.args[0] = left;
         call->as.call.args[1] = right;
-        expr = call;
+        left = call;
     }
+    return left;
+}
+
+static AstNode* parseExpression(Parser *parser) {
+    AstNode *expr = parsePrimary(parser);
+    if (!expr) return NULL;
+
+    // Binary operators with precedence
+    expr = parseBinary(parser, 0, expr);
 
     // Post-expression path access: expr/path
     while (parser->current.type == TOKEN_SLASH) {
