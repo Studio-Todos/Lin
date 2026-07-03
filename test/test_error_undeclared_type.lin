@@ -1,0 +1,10 @@
+// RUN: not %linc build %s -o %t 2>&1 | FileCheck %s
+
+// CHECK: error: Undeclared type 'nonexistent_type' in argument 'x'
+
+my_func: func [
+    x [nonexistent_type!]
+    return: [i32!]
+][
+    x
+]

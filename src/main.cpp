@@ -30,9 +30,19 @@
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
+#if __has_include("mlir/Dialect/SPIRV/IR/SPIRVDialect.h") && \
+    __has_include("mlir/Dialect/SPIRV/IR/TargetAndABI.h") && \
+    __has_include("mlir/Target/SPIRV/Serialization.h")
+#define HAVE_MLIR_SPIRV 1
+#include "mlir/Dialect/SPIRV/IR/SPIRVDialect.h"
+#include "mlir/Dialect/SPIRV/IR/SPIRVOps.h"
+#include "mlir/Dialect/SPIRV/IR/SPIRVAttributes.h"
+#include "mlir/Dialect/SPIRV/IR/TargetAndABI.h"
+#include "mlir/Target/SPIRV/Serialization.h"
 #if __has_include("mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h")
 #include "mlir/Conversion/GPUToSPIRV/GPUToSPIRVPass.h"
 #include "mlir/Conversion/MemRefToSPIRV/MemRefToSPIRVPass.h"
+#endif
 #if __has_include("mlir/Dialect/SPIRV/Transforms/Passes.h")
 #include "mlir/Dialect/SPIRV/Transforms/Passes.h"
 #endif
@@ -48,15 +58,6 @@
 #if __has_include("mlir/Conversion/FuncToSPIRV/FuncToSPIRVPass.h")
 #include "mlir/Conversion/FuncToSPIRV/FuncToSPIRVPass.h"
 #endif
-#endif
-#if __has_include("mlir/Dialect/SPIRV/IR/SPIRVDialect.h")
-#include "mlir/Dialect/SPIRV/IR/SPIRVDialect.h"
-#include "mlir/Dialect/SPIRV/IR/SPIRVOps.h"
-#include "mlir/Dialect/SPIRV/IR/SPIRVAttributes.h"
-#include "mlir/Dialect/SPIRV/IR/TargetAndABI.h"
-#endif
-#if __has_include("mlir/Target/SPIRV/Serialization.h")
-#include "mlir/Target/SPIRV/Serialization.h"
 #endif
 #include "mlir/Conversion/Passes.h"
 #include "mlir/Transforms/Passes.h"
@@ -91,6 +92,8 @@ using namespace mlir;
 
 #define LINC_VERSION "0.1.0"
 #define LINC_EDITION "2025"
+
+static constexpr const char* kStandardPreamble = "import \"std/types.lin\"\nimport \"std/io.lin\"\n";
 
 // ── Color / Terminal support ────────────────────────────────────────────────
 
@@ -227,6 +230,194 @@ static bool writeFile(const std::string &path, const std::string &content) {
 static bool mkdirP(const std::string &path) {
     std::error_code ec;
     return std::filesystem::create_directories(path, ec);
+}
+
+// ── Forward declarations ──────────────────────────────────────────────────
+
+static void printHelp();
+static void printVersion();
+extern bool gQuiet;
+static void log(const std::string &msg);
+static std::vector<std::string> buildSearchPaths(const std::string &sourceFile,
+                                                  const std::vector<std::string> &includePaths);
+static bool resolveImports(AstNode *ast, const std::vector<std::string> &searchPaths,
+                            std::vector<const char*> &importSources);
+static int runCompilationPipeline(
+    const std::string &sourceFile,
+    const std::string &outputBinary,
+    bool enableGPU,
+    bool enableWasm,
+    bool doLink,
+    const std::vector<std::string> &includePaths,
+    std::vector<const char*> &importSources,
+    std::vector<std::string> &linkCFiles,
+    std::vector<std::string> &linkLibs
+);
+
+// ── CLI argument parsing ─────────────────────────────────────────────────
+
+struct CommandLineArgs {
+    std::string command;
+    std::string sourceFile;
+    std::string outputBinary = "linc_out";
+    bool enableGPU = false;
+    bool enableWasm = false;
+    std::vector<std::string> includePaths;
+    std::vector<const char*> importSources;
+    std::vector<std::string> linkCFiles;
+    std::vector<std::string> linkLibs;
+    bool checkOnly = false;
+    bool doLink = false;
+    bool doRun = false;
+    bool doTest = false;
+};
+
+static bool parseCommandLine(int argc, char **argv, CommandLineArgs &args) {
+    // Recognized subcommands
+    auto isSubcommand = [](const std::string &s) -> bool {
+        return s == "build" || s == "test" || s == "run" || s == "check"
+            || s == "new" || s == "init" || s == "help";
+    };
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--help" || arg == "-h") {
+            args.command = "help";
+            return true;
+        }
+        if (arg == "--version" || arg == "-V") {
+            printHelp();
+            exit(0);
+        }
+        if (arg == "--quiet" || arg == "-q") {
+            gQuiet = true;
+            continue;
+        }
+        if (isSubcommand(arg)) {
+            args.command = arg;
+            for (int j = i + 1; j < argc; ++j) {
+                std::string opt = argv[j];
+                if (opt == "-o" && j + 1 < argc) {
+                    args.outputBinary = argv[++j];
+                } else if (opt == "-I" && j + 1 < argc) {
+                    args.includePaths.push_back(argv[++j]);
+                } else if (opt == "--quiet" || opt == "-q") {
+                    gQuiet = true;
+                } else if (opt == "--gpu" || opt == "-gpu") {
+                    args.enableGPU = true;
+                } else if (opt == "--wasm" || opt == "-wasm") {
+                    args.enableWasm = true;
+                } else if ((opt == "--link-c" || opt == "-link-c") && j + 1 < argc) {
+                    args.linkCFiles.push_back(argv[++j]);
+                } else if ((opt == "--link-libs" || opt == "-link-libs") && j + 1 < argc) {
+                    args.linkLibs.push_back(argv[++j]);
+                } else if (args.sourceFile.empty()) {
+                    args.sourceFile = opt;
+                }
+            }
+            break;
+        }
+    }
+
+    if (args.command.empty()) {
+        err("No valid subcommand found. Use 'linc help'.");
+        return false;
+    }
+
+    args.checkOnly = (args.command == "check");
+    args.doLink = (args.command == "build");
+    args.doRun = (args.command == "run");
+    args.doTest = (args.command == "test");
+
+    return true;
+}
+
+// ── `check` subcommand ────────────────────────────────────────────────────
+
+static int handleCheckSubcommand(const std::string &sourceFile, const std::vector<std::string> &includePaths) {
+    std::ifstream file(sourceFile);
+    if (!file.is_open()) { err("Failed to open file: " + sourceFile); return 1; }
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string source_str = buffer.str();
+    std::string fullSource = kStandardPreamble + source_str;
+    const char *patchedSource = strdup(fullSource.c_str());
+    std::vector<const char*> importSources;
+    importSources.push_back(patchedSource);
+
+    AstNode *ast = parse(patchedSource);
+    if (ast && ast->type == AST_BLOCK) {
+        auto searchPaths = buildSearchPaths(sourceFile, includePaths);
+        if (!resolveImports(ast, searchPaths, importSources)) {
+            err("Failed to resolve imports.");
+            free((void*)patchedSource);
+            return 1;
+        }
+    }
+
+    if (!ast) {
+        err("Parse failed.");
+        for (const char *src : importSources) free((void*)src);
+        return 1;
+    }
+
+    std::unordered_set<std::string> declaredTypes;
+    int errors = semanticTypeCheckAst(ast, declaredTypes, patchedSource);
+    if (ast) freeAst(ast);
+    for (const char *src : importSources) free((void*)src);
+
+    if (errors > 0) {
+        err("Type-check failed with " + std::to_string(errors) + " error(s).");
+        return 1;
+    }
+    green("Type-check passed (no errors).");
+    return 0;
+}
+
+// ── `test` subcommand ─────────────────────────────────────────────────────
+
+static int handleTestSubcommand(const std::string &sourceFile, const std::vector<std::string> &includePaths,
+                                 bool enableGPU, bool enableWasm,
+                                 std::vector<const char*> &importSources,
+                                 std::vector<std::string> &linkCFiles,
+                                 std::vector<std::string> &linkLibs) {
+    int ret = runCompilationPipeline(sourceFile, "linc_out", enableGPU, enableWasm, false,
+                                      includePaths, importSources, linkCFiles, linkLibs);
+    if (ret != 0) return ret;
+
+    std::ifstream file(sourceFile);
+    if (!file.is_open()) { err("Failed to open file."); return 1; }
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string source_str = buffer.str();
+    std::string fullSource = kStandardPreamble + source_str;
+    const char *patchedSource = strdup(fullSource.c_str());
+    std::vector<const char*> testImportSources;
+    testImportSources.push_back(patchedSource);
+
+    AstNode *ast = parse(patchedSource);
+    if (!ast) { err("Parse failed."); return 1; }
+
+    if (ast->type == AST_BLOCK) {
+        auto searchPaths = buildSearchPaths(sourceFile, includePaths);
+        if (!resolveImports(ast, searchPaths, testImportSources)) {
+            err("Failed to resolve imports.");
+            return 1;
+        }
+    }
+
+    std::cout << "\nRunning built-in checkstyle and static analysis...\n";
+    int styleErrors = checkstyleAst(ast, patchedSource);
+    if (ast) freeAst(ast);
+    for (const char *src : testImportSources) free((void*)src);
+
+    if (styleErrors > 0) {
+        std::cerr << "Checkstyle and static analysis failed with " << styleErrors << " error(s).\n";
+        return 1;
+    }
+    std::cout << "Built-in checkstyle and static analysis passed.\n";
+    std::cout << "Compilation complete.\n";
+    return 0;
 }
 
 // ── Template for `linc new` ─────────────────────────────────────────────────
@@ -382,215 +573,123 @@ static void printHelp() {
 
 // ── Compilation pipeline (core logic extracted from main) ───────────────────
 
-static bool gQuiet = false;
+bool gQuiet = false;
 
 static void log(const std::string &msg) {
     if (!gQuiet) std::cout << msg << "\n";
 }
 
-static int runCompilationPipeline(
-    const std::string &sourceFile,
-    const std::string &outputBinary,
-    bool enableGPU,
-    bool enableWasm,
-    bool doLink,
-    const std::vector<std::string> &includePaths,
-    std::vector<const char*> &importSources,
-    std::vector<std::string> &linkCFiles,
-    std::vector<std::string> &linkLibs
-) {
-    std::ifstream file(sourceFile);
-    if (!file.is_open()) {
-        err("Failed to open file: " + sourceFile);
-        return 1;
+// Build search paths from the compiler executable location and source file
+static std::vector<std::string> buildSearchPaths(const std::string &sourceFile,
+                                                  const std::vector<std::string> &includePaths) {
+    std::vector<std::string> searchPaths;
+    searchPaths.push_back(".");
+
+    std::filesystem::path srcPath(sourceFile);
+    if (srcPath.has_parent_path()) {
+        searchPaths.push_back(srcPath.parent_path().string());
     }
 
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    std::string source_str = buffer.str();
-
-    // Implicitly inject std/types.lin and std/io.lin at the beginning of the AST
-    // std/io.lin is needed for print/read I/O operations to register their rules and user-op functions.
-    std::string fullSource = "import \"std/types.lin\"\nimport \"std/io.lin\"\n" + source_str;
-    const char *patchedSource = strdup(fullSource.c_str());
-    importSources.push_back(patchedSource);
-
-    log("Parsing Source:\n" + fullSource);
-    AstNode *ast = parse(patchedSource);
-    if (ast) {
-        if (ast->type == AST_BLOCK) {
-            std::vector<std::string> searchPaths;
-            searchPaths.push_back(".");
-
-            std::filesystem::path srcPath(sourceFile);
-            if (srcPath.has_parent_path()) {
-                searchPaths.push_back(srcPath.parent_path().string());
-            }
-
-            char exePath[PATH_MAX];
-            ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath)-1);
-            if (len != -1) {
-                exePath[len] = '\0';
-                std::filesystem::path ePath(exePath);
-                if (ePath.has_parent_path()) {
-                    std::filesystem::path binDir = ePath.parent_path();
+    char exePath[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
+    if (len != -1) {
+        exePath[len] = '\0';
+        std::filesystem::path ePath(exePath);
+        if (ePath.has_parent_path()) {
+            std::filesystem::path binDir = ePath.parent_path();
+            searchPaths.push_back(binDir.string());
+            for (int level = 0; level < 3; level++) {
+                if (binDir.has_parent_path()) {
+                    binDir = binDir.parent_path();
                     searchPaths.push_back(binDir.string());
-                    if (binDir.has_parent_path()) {
-                        searchPaths.push_back(binDir.parent_path().string());
-                        if (binDir.parent_path().has_parent_path()) {
-                            searchPaths.push_back(binDir.parent_path().parent_path().string());
-                            if (binDir.parent_path().parent_path().has_parent_path()) {
-                                searchPaths.push_back(binDir.parent_path().parent_path().parent_path().string());
-                            }
-                        }
-                    }
                 }
             }
+        }
+    }
 
-            searchPaths.insert(searchPaths.end(), includePaths.begin(), includePaths.end());
+    searchPaths.insert(searchPaths.end(), includePaths.begin(), includePaths.end());
+    return searchPaths;
+}
 
-            int total_count = 0;
-            int capacity = 16;
-            AstNode **new_stmts = static_cast<AstNode**>(malloc(sizeof(AstNode*) * capacity));
-            if (!new_stmts) {
-                std::cerr << "Out of memory\n";
-                return 1;
+// Resolve import statements by finding and flattening imported ASTs into the main block
+static bool resolveImports(AstNode *ast, const std::vector<std::string> &searchPaths,
+                           std::vector<const char*> &importSources) {
+    int total_count = 0;
+    int capacity = 16;
+    AstNode **new_stmts = static_cast<AstNode**>(malloc(sizeof(AstNode*) * capacity));
+    if (!new_stmts) {
+        std::cerr << "Out of memory\n";
+        return false;
+    }
+
+    for (int i = 0; i < ast->as.block.count; i++) {
+        if (ast->as.block.statements[i]->type == AST_IMPORT) {
+            std::string importPath = std::string(
+                ast->as.block.statements[i]->as.import_stmt.path,
+                ast->as.block.statements[i]->as.import_stmt.length);
+
+            std::ifstream importFile;
+            for (const auto& base : searchPaths) {
+                std::filesystem::path fullPath = std::filesystem::path(base) / importPath;
+                importFile.open(fullPath);
+                if (importFile.is_open()) break;
             }
 
-            for (int i = 0; i < ast->as.block.count; i++) {
-                if (ast->as.block.statements[i]->type == AST_IMPORT) {
-                    std::string importPath = std::string(ast->as.block.statements[i]->as.import_stmt.path, ast->as.block.statements[i]->as.import_stmt.length);
+            if (importFile.is_open()) {
+                std::stringstream importBuffer;
+                importBuffer << importFile.rdbuf();
+                std::string importSourceStr = importBuffer.str();
+                const char *importSource = strdup(importSourceStr.c_str());
+                importSources.push_back(importSource);
+                AstNode *importAst = parse(importSource);
 
-                    std::ifstream importFile;
-                    for (const auto& base : searchPaths) {
-                        std::filesystem::path fullPath = std::filesystem::path(base) / importPath;
-                        importFile.open(fullPath);
-                        if (importFile.is_open()) break;
-                    }
-
-                    if (importFile.is_open()) {
-                        std::stringstream importBuffer;
-                        importBuffer << importFile.rdbuf();
-                        std::string importSourceStr = importBuffer.str();
-                        const char *importSource = strdup(importSourceStr.c_str());
-                        importSources.push_back(importSource);
-                        AstNode *importAst = parse(importSource);
-
-                        if (importAst && importAst->type == AST_BLOCK) {
-                            int import_count = importAst->as.block.count;
-                            if (total_count + import_count > capacity) {
-                                while (total_count + import_count > capacity) capacity *= 2;
-                                AstNode **temp = static_cast<AstNode**>(realloc(new_stmts, sizeof(AstNode*) * capacity));
-                                if (!temp) {
-                                    free(new_stmts);
-                                    return 1;
-                                }
-                                new_stmts = temp;
-                            }
-                            memcpy(new_stmts + total_count, importAst->as.block.statements, sizeof(AstNode*) * import_count);
-                            total_count += import_count;
-                            free(importAst->as.block.statements);
-                            free(importAst);
-                        } else if (importAst) {
-                            freeAst(importAst);
-                        }
-                    } else {
-                        std::cerr << "Failed to import file: " << importPath << "\n";
-                    }
-
-                    ast->as.block.statements[i]->as.import_stmt.module_block = nullptr;
-                    freeAst(ast->as.block.statements[i]);
-                } else {
-                    if (total_count >= capacity) {
-                        capacity *= 2;
+                if (importAst && importAst->type == AST_BLOCK) {
+                    int import_count = importAst->as.block.count;
+                    if (total_count + import_count > capacity) {
+                        while (total_count + import_count > capacity) capacity *= 2;
                         AstNode **temp = static_cast<AstNode**>(realloc(new_stmts, sizeof(AstNode*) * capacity));
                         if (!temp) {
                             free(new_stmts);
-                            return 1;
+                            return false;
                         }
                         new_stmts = temp;
                     }
-                    new_stmts[total_count++] = ast->as.block.statements[i];
+                    memcpy(new_stmts + total_count, importAst->as.block.statements, sizeof(AstNode*) * import_count);
+                    total_count += import_count;
+                    free(importAst->as.block.statements);
+                    free(importAst);
+                } else if (importAst) {
+                    freeAst(importAst);
                 }
+            } else {
+                std::cerr << "Failed to import file: " << importPath << "\n";
             }
-            free(ast->as.block.statements);
-            ast->as.block.statements = new_stmts;
-            ast->as.block.count = total_count;
+
+            ast->as.block.statements[i]->as.import_stmt.module_block = nullptr;
+            freeAst(ast->as.block.statements[i]);
+        } else {
+            if (total_count >= capacity) {
+                capacity *= 2;
+                AstNode **temp = static_cast<AstNode**>(realloc(new_stmts, sizeof(AstNode*) * capacity));
+                if (!temp) {
+                    free(new_stmts);
+                    return false;
+                }
+                new_stmts = temp;
+            }
+            new_stmts[total_count++] = ast->as.block.statements[i];
         }
-        printAst(ast, 0);
     }
+    free(ast->as.block.statements);
+    ast->as.block.statements = new_stmts;
+    ast->as.block.count = total_count;
+    return true;
+}
 
-    if (!ast) {
-        err("Parse failed.");
-        return 1;
-    }
-
-    log("Initializing Lin Compiler...");
-
-    mlir::DialectRegistry registry;
-    registry.insert<mlir::pic::graph::PicGraphDialect>();
-    registry.insert<mlir::pic::reduce::PicReduceDialect>();
-    registry.insert<mlir::pic::runtime::PicRuntimeDialect>();
-    registry.insert<mlir::func::FuncDialect>();
-    registry.insert<mlir::arith::ArithDialect>();
-    registry.insert<mlir::memref::MemRefDialect>();
-    registry.insert<mlir::LLVM::LLVMDialect>();
-    registry.insert<mlir::gpu::GPUDialect>();
-    registry.insert<mlir::scf::SCFDialect>();
-    registry.insert<mlir::math::MathDialect>();
-    registry.insert<mlir::cf::ControlFlowDialect>();
-#if __has_include("mlir/Dialect/SPIRV/IR/SPIRVDialect.h")
-    registry.insert<mlir::spirv::SPIRVDialect>();
-#endif
-    mlir::registerAllToLLVMIRTranslations(registry);
-    mlir::registerConvertMathToLLVMInterface(registry);
-
-    llvm::InitializeAllTargetInfos();
-    llvm::InitializeAllTargets();
-    llvm::InitializeAllTargetMCs();
-    llvm::InitializeAllAsmPrinters();
-    llvm::InitializeAllAsmParsers();
-
-    mlir::MLIRContext context(registry);
-    context.loadAllAvailableDialects();
-
-    log("PIC dialects registered successfully.\n");
-
-    if (hasGpuAnnotation(ast)) {
-        enableGPU = true;
-    }
-
-    std::unordered_set<std::string> declaredTypes;
-    int semanticErrors = semanticTypeCheckAst(ast, declaredTypes, patchedSource);
-    if (semanticErrors > 0) {
-        err("Semantic analysis failed with " + std::to_string(semanticErrors) + " error(s).");
-        if (ast) freeAst(ast);
-        for (const char *src : importSources) free((void*)src);
-        return 1;
-    }
-
-    // Type-check ran above; proceed to codegen + linking
-
-    performTypeDirectedDispatch(ast);
-
-    MlirContext cCtx = wrap(&context);
-    MlirModule cModule = lowerAstToMlir(cCtx, ast);
-
-    ModuleOp module = unwrap(cModule);
-
-#if __has_include("mlir/Dialect/SPIRV/IR/TargetAndABI.h")
-    if (enableGPU) {
-        auto targetEnv = mlir::spirv::getDefaultTargetEnv(module.getContext());
-        module->setAttr(mlir::spirv::getTargetEnvAttrName(), targetEnv);
-    }
-#endif
-
-    log("Generated MLIR (before lowering):");
-    if (!gQuiet) {
-        module.print(llvm::outs());
-        llvm::outs().flush();
-    }
-
+static int runPassesAndEmitObject(ModuleOp &module, MLIRContext &context,
+                                  const std::string &outputBinary,
+                                  bool enableGPU, bool enableWasm,
+                                  std::string &objFile) {
     PassManager pm(&context);
     pm.addPass(createPicGraphVerifyPass());
     pm.addPass(createPicGraphEGraphPass());
@@ -608,7 +707,7 @@ static int runCompilationPipeline(
         return 1;
     }
 
-#if __has_include("mlir/Dialect/SPIRV/IR/TargetAndABI.h")
+#ifdef HAVE_MLIR_SPIRV
     if (enableGPU) {
         module.walk([&](mlir::gpu::GPUFuncOp gpuFunc) {
             if (gpuFunc.isKernel()) {
@@ -619,9 +718,7 @@ static int runCompilationPipeline(
     }
 #endif
 
-    if (enableGPU) {}
-
-#if __has_include("mlir/Target/SPIRV/Serialization.h")
+#ifdef HAVE_MLIR_SPIRV
     if (enableGPU) {
         module.walk([&](mlir::spirv::ModuleOp spirvModule) {
             if (spirvModule->hasAttr("vce_triple")) return;
@@ -737,7 +834,7 @@ static int runCompilationPipeline(
     llvmModule->setDataLayout(targetMachine->createDataLayout());
     llvmModule->setTargetTriple(targetTriple);
 
-    std::string objFile = outputBinary + ".o";
+    objFile = outputBinary + ".o";
     std::error_code ec;
     llvm::raw_fd_ostream dest(objFile, ec, llvm::sys::fs::OF_None);
     if (ec) {
@@ -758,100 +855,234 @@ static int runCompilationPipeline(
     log("Successfully emitted object file to " + objFile);
 
     delete targetMachine;
+    return 0;
+}
 
-    if (doLink) {
-        pid_t pid = fork();
-        if (pid == -1) {
-            err("Failed to fork process for linking.");
-            return 1;
-        } else if (pid == 0) {
-            std::vector<char*> args;
-            if (enableWasm) {
-                args.push_back(const_cast<char*>("wasm-ld"));
-                args.push_back(const_cast<char*>(objFile.c_str()));
-                for (auto &cf : linkCFiles) args.push_back(const_cast<char*>(cf.c_str()));
-                args.push_back(const_cast<char*>("-o"));
-                args.push_back(const_cast<char*>(outputBinary.c_str()));
-                args.push_back(const_cast<char*>("--no-entry"));
-                args.push_back(const_cast<char*>("--export-all"));
-                args.push_back(nullptr);
-                execvp("wasm-ld", args.data());
-            } else {
-                args.push_back(const_cast<char*>("gcc"));
-                args.push_back(const_cast<char*>(objFile.c_str()));
-                for (auto &cf : linkCFiles) args.push_back(const_cast<char*>(cf.c_str()));
-                args.push_back(const_cast<char*>("-o"));
-                args.push_back(const_cast<char*>(outputBinary.c_str()));
-                args.push_back(const_cast<char*>("-lpthread"));
-                const char* ldPath = getenv("LD_LIBRARY_PATH");
-                if (ldPath) {
-                    std::string s(ldPath);
-                    size_t pos = 0;
-                    while ((pos = s.find(":")) != std::string::npos) {
-                        std::string path = s.substr(0, pos);
-                        if (!path.empty()) {
-                            char* arg = new char[path.length() + 3];
-                            sprintf(arg, "-L%s", path.c_str());
-                            args.push_back(arg);
-                        }
-                        s.erase(0, pos + 1);
-                    }
-                    if (!s.empty()) {
-                        char* arg = new char[s.length() + 3];
-                        sprintf(arg, "-L%s", s.c_str());
+
+static int linkBinary(
+    const std::string &outputBinary,
+    const std::string &objFile,
+    bool enableWasm,
+    bool enableGPU,
+    const std::vector<std::string> &linkCFiles,
+    const std::vector<std::string> &linkLibs
+) {
+    pid_t pid = fork();
+    if (pid == -1) {
+        err("Failed to fork process for linking.");
+        return 1;
+    } else if (pid == 0) {
+        std::vector<char*> args;
+        if (enableWasm) {
+            args.push_back(const_cast<char*>("wasm-ld"));
+            args.push_back(const_cast<char*>(objFile.c_str()));
+            for (auto &cf : linkCFiles) args.push_back(const_cast<char*>(cf.c_str()));
+            args.push_back(const_cast<char*>("-o"));
+            args.push_back(const_cast<char*>(outputBinary.c_str()));
+            args.push_back(const_cast<char*>("--no-entry"));
+            args.push_back(const_cast<char*>("--export-all"));
+            args.push_back(nullptr);
+            execvp("wasm-ld", args.data());
+        } else {
+            const char* cc = getenv("CC");
+            args.push_back(const_cast<char*>(cc && cc[0] ? cc : "gcc"));
+            args.push_back(const_cast<char*>(objFile.c_str()));
+            for (auto &cf : linkCFiles) args.push_back(const_cast<char*>(cf.c_str()));
+            args.push_back(const_cast<char*>("-o"));
+            args.push_back(const_cast<char*>(outputBinary.c_str()));
+            const char* ldPath = getenv("LIBRARY_PATH");
+            if (ldPath) {
+                std::string s(ldPath);
+                size_t pos = 0;
+                while ((pos = s.find(":")) != std::string::npos) {
+                    std::string path = s.substr(0, pos);
+                    if (!path.empty()) {
+                        char* arg = new char[path.length() + 3];
+                        sprintf(arg, "-L%s", path.c_str());
                         args.push_back(arg);
                     }
+                    s.erase(0, pos + 1);
                 }
-                std::string gpuRuntimePath = "src/gpu_runtime.c";
-                if (enableGPU) {
-                    char exePath[PATH_MAX];
-                    ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath)-1);
-                    if (len != -1) {
-                        exePath[len] = '\0';
-                        std::filesystem::path ePath(exePath);
-                        std::filesystem::path binDir = ePath.parent_path();
-                        std::filesystem::path pDir = binDir.parent_path();
-                        if (pDir.has_parent_path()) {
-                            std::filesystem::path candidate = pDir.parent_path() / "src" / "gpu_runtime.c";
+                if (!s.empty()) {
+                    char* arg = new char[s.length() + 3];
+                    sprintf(arg, "-L%s", s.c_str());
+                    args.push_back(arg);
+                }
+            }
+            std::string gpuRuntimePath = "src/gpu_runtime.c";
+            if (enableGPU) {
+                char exePath[PATH_MAX];
+                ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath)-1);
+                if (len != -1) {
+                    exePath[len] = '\0';
+                    std::filesystem::path ePath(exePath);
+                    std::filesystem::path binDir = ePath.parent_path();
+                    std::filesystem::path pDir = binDir.parent_path();
+                    if (pDir.has_parent_path()) {
+                        std::filesystem::path candidate = pDir.parent_path() / "src" / "gpu_runtime.c";
+                        if (std::filesystem::exists(candidate)) gpuRuntimePath = candidate.string();
+                        else {
+                            candidate = pDir / "src" / "gpu_runtime.c";
                             if (std::filesystem::exists(candidate)) gpuRuntimePath = candidate.string();
-                            else {
-                                candidate = pDir / "src" / "gpu_runtime.c";
-                                if (std::filesystem::exists(candidate)) gpuRuntimePath = candidate.string();
-                            }
                         }
                     }
-                    args.push_back(const_cast<char*>(gpuRuntimePath.c_str()));
-                    args.push_back(const_cast<char*>("-lvulkan"));
                 }
-                args.push_back(const_cast<char*>("-lm"));
-                for (auto &lib : linkLibs) {
-                    std::istringstream libStream(lib);
-                    std::string singleLib;
-                    while (libStream >> singleLib) {
-                        args.push_back(const_cast<char*>(strdup(singleLib.c_str())));
-                    }
-                }
-                args.push_back(nullptr);
-                execvp("gcc", args.data());
+                args.push_back(const_cast<char*>(gpuRuntimePath.c_str()));
+                args.push_back(const_cast<char*>("-lvulkan"));
             }
-            perror("execvp failed");
-            exit(1);
-        } else {
-            int status;
-            waitpid(pid, &status, 0);
-            if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
-                err("Linking failed (exit code " + std::to_string(WEXITSTATUS(status)) + ").");
-                return 1;
-            } else if (WIFSIGNALED(status)) {
-                if (llvm::sys::fs::exists(outputBinary)) {
-                    warn("Linker terminated by signal " + std::to_string(WTERMSIG(status)) + ", but output binary was created.");
-                } else {
-                    err("Linking failed (signal " + std::to_string(WTERMSIG(status)) + ").");
-                    return 1;
+            args.push_back(const_cast<char*>("-lm"));
+            for (auto &lib : linkLibs) {
+                std::istringstream libStream(lib);
+                std::string singleLib;
+                while (libStream >> singleLib) {
+                    args.push_back(const_cast<char*>(strdup(singleLib.c_str())));
                 }
+            }
+            args.push_back(nullptr);
+            execvp("gcc", args.data());
+        }
+        perror("execvp failed");
+        _exit(1);
+    } else {
+        int status;
+        waitpid(pid, &status, 0);
+        if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+            err("Linking failed (exit code " + std::to_string(WEXITSTATUS(status)) + ").");
+            return 1;
+        } else if (WIFSIGNALED(status)) {
+            if (llvm::sys::fs::exists(outputBinary)) {
+                warn("Linker terminated by signal " + std::to_string(WTERMSIG(status)) + ", but output binary was created.");
+            } else {
+                err("Linking failed (signal " + std::to_string(WTERMSIG(status)) + ").");
+                return 1;
             }
         }
-        log("Successfully compiled and linked to '" + outputBinary + "'.");
+    }
+    log("Successfully compiled and linked to '" + outputBinary + "'.");
+    llvm::sys::fs::remove(objFile);
+    return 0;
+}
+
+
+static int runCompilationPipeline(
+    const std::string &sourceFile,
+    const std::string &outputBinary,
+    bool enableGPU,
+    bool enableWasm,
+    bool doLink,
+    const std::vector<std::string> &includePaths,
+    std::vector<const char*> &importSources,
+    std::vector<std::string> &linkCFiles,
+    std::vector<std::string> &linkLibs
+) {
+    std::ifstream file(sourceFile);
+    if (!file.is_open()) {
+        err("Failed to open file: " + sourceFile);
+        return 1;
+    }
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string source_str = buffer.str();
+
+    // Implicitly inject std/types.lin and std/io.lin at the beginning of the AST
+    // std/io.lin is needed for print/read I/O operations to register their rules and user-op functions.
+    std::string fullSource = kStandardPreamble + source_str;
+    const char *patchedSource = strdup(fullSource.c_str());
+    importSources.push_back(patchedSource);
+
+    log("Parsing Source:\n" + fullSource);
+    AstNode *ast = parse(patchedSource);
+    if (ast) {
+        if (ast->type == AST_BLOCK) {
+            auto searchPaths = buildSearchPaths(sourceFile, includePaths);
+            if (!resolveImports(ast, searchPaths, importSources)) {
+                err("Failed to resolve imports.");
+                free((void*)patchedSource);
+                return 1;
+            }
+        }
+        printAst(ast, 0);
+    }
+
+    if (!ast) {
+        err("Parse failed.");
+        return 1;
+    }
+
+    log("Initializing Lin Compiler...");
+
+    mlir::DialectRegistry registry;
+    registry.insert<mlir::pic::graph::PicGraphDialect>();
+    registry.insert<mlir::pic::reduce::PicReduceDialect>();
+    registry.insert<mlir::pic::runtime::PicRuntimeDialect>();
+    registry.insert<mlir::func::FuncDialect>();
+    registry.insert<mlir::arith::ArithDialect>();
+    registry.insert<mlir::memref::MemRefDialect>();
+    registry.insert<mlir::LLVM::LLVMDialect>();
+    registry.insert<mlir::gpu::GPUDialect>();
+    registry.insert<mlir::scf::SCFDialect>();
+    registry.insert<mlir::math::MathDialect>();
+    registry.insert<mlir::cf::ControlFlowDialect>();
+#ifdef HAVE_MLIR_SPIRV
+    registry.insert<mlir::spirv::SPIRVDialect>();
+#endif
+    mlir::registerAllToLLVMIRTranslations(registry);
+    mlir::registerConvertMathToLLVMInterface(registry);
+
+    llvm::InitializeAllTargetInfos();
+    llvm::InitializeAllTargets();
+    llvm::InitializeAllTargetMCs();
+    llvm::InitializeAllAsmPrinters();
+    llvm::InitializeAllAsmParsers();
+
+    mlir::MLIRContext context(registry);
+    context.loadAllAvailableDialects();
+
+    log("PIC dialects registered successfully.");
+
+    if (hasGpuAnnotation(ast)) {
+        enableGPU = true;
+    }
+
+    std::unordered_set<std::string> declaredTypes;
+    int semanticErrors = semanticTypeCheckAst(ast, declaredTypes, patchedSource);
+    if (semanticErrors > 0) {
+        err("Semantic analysis failed with " + std::to_string(semanticErrors) + " error(s).");
+        if (ast) freeAst(ast);
+        for (const char *src : importSources) free((void*)src);
+        return 1;
+    }
+
+    // Type-check ran above; proceed to codegen + linking
+
+    performTypeDirectedDispatch(ast);
+
+    MlirContext cCtx = wrap(&context);
+    MlirModule cModule = lowerAstToMlir(cCtx, ast);
+
+    ModuleOp module = unwrap(cModule);
+
+#ifdef HAVE_MLIR_SPIRV
+    if (enableGPU) {
+        auto targetEnv = mlir::spirv::getDefaultTargetEnv(module.getContext());
+        module->setAttr(mlir::spirv::getTargetEnvAttrName(), targetEnv);
+    }
+#endif
+
+    log("Generated MLIR (before lowering):");
+    if (!gQuiet) {
+        module.print(llvm::outs());
+        llvm::outs().flush();
+    }
+
+    std::string objFile;
+    int ret = runPassesAndEmitObject(module, context, outputBinary, enableGPU, enableWasm, objFile);
+    if (ret) return ret;
+
+    if (doLink) {
+        int ret = linkBinary(outputBinary, objFile, enableWasm, enableGPU, linkCFiles, linkLibs);
+        if (ret) return ret;
     } else {
         log("Compilation complete.");
     }
@@ -872,372 +1103,73 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Scan for global flags and subcommands at any position.
-    // The LIT substitution passes `-I <path>` before the subcommand:
-    //   build/src/linc -I /projectroot build file.lin -o tmp
-    // So we cannot assume argv[1] is the subcommand.
+    CommandLineArgs args;
+    if (!parseCommandLine(argc, argv, args)) return 1;
 
-    std::string command;
-    std::string sourceFile;
-    std::string outputBinary = "linc_out";
-    bool enableGPU = false;
-    bool enableWasm = false;
-    std::vector<std::string> includePaths;
-    std::vector<const char*> importSources;
-    std::vector<std::string> linkCFiles;
-    std::vector<std::string> linkLibs;
+    if (args.command == "help") { printHelp(); return 0; }
 
-    // Recognized subcommands
-    auto isSubcommand = [](const std::string &s) -> bool {
-        return s == "build" || s == "test" || s == "run" || s == "check"
-            || s == "new" || s == "init" || s == "help";
-    };
+    if (args.command == "version") { printVersion(); return 0; }
 
-    // First pass: find subcommand and collect positional args
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-
-        // Handle global flags
-        if (arg == "--help" || arg == "-h") {
-            printHelp();
-            return 0;
-        }
-        if (arg == "--version" || arg == "-V") {
-            printVersion();
-            return 0;
-        }
-        if (arg == "--quiet" || arg == "-q") {
-            gQuiet = true;
-            continue;
-        }
-
-        if (isSubcommand(arg)) {
-            command = arg;
-            // Parse remaining args as subcommand-specific flags
-            for (int j = i + 1; j < argc; ++j) {
-                std::string opt = argv[j];
-                if (opt == "-o" && j + 1 < argc) {
-                    outputBinary = argv[++j];
-                } else if (opt == "-I" && j + 1 < argc) {
-                    includePaths.push_back(argv[++j]);
-                } else if (opt == "--quiet" || opt == "-q") {
-                    gQuiet = true;
-                } else if (opt == "--gpu" || opt == "-gpu") {
-                    enableGPU = true;
-                } else if (opt == "--wasm" || opt == "-wasm") {
-                    enableWasm = true;
-                } else if ((opt == "--link-c" || opt == "-link-c") && j + 1 < argc) {
-                    linkCFiles.push_back(argv[++j]);
-                } else if ((opt == "--link-libs" || opt == "-link-libs") && j + 1 < argc) {
-                    linkLibs.push_back(argv[++j]);
-                } else if (sourceFile.empty()) {
-                    sourceFile = opt;
-                }
-            }
-            break;
-        }
-    }
-
-    if (command.empty()) {
-        err("No valid subcommand found. Use 'linc help'.");
-        return 1;
-    }
-
-    // ── `help` subcommand ───────────────────────────────────────────────────
-    if (command == "help") {
-        printHelp();
-        return 0;
-    }
-
-    // ── `new` subcommand ───────────────────────────────────────────────────
-    if (command == "new") {
-        if (sourceFile.empty()) {
+    if (args.command == "new") {
+        if (args.sourceFile.empty()) {
             err("Usage: linc new <project-name>");
             return 1;
         }
-        return cmdNewProject(sourceFile);
+        return cmdNewProject(args.sourceFile);
     }
 
-    // ── `init` subcommand ─────────────────────────────────────────────────
-    if (command == "init") {
-        std::string dir = sourceFile.empty() ? "." : sourceFile;
-        return cmdInitProject(dir);
+    if (args.command == "init") {
+        return cmdInitProject(args.sourceFile.empty() ? "." : args.sourceFile);
     }
 
-    // All remaining subcommands require a source file
-    bool checkOnly = (command == "check");
-    bool doLink = (command == "build");
-    bool doRun = (command == "run");
-    bool doTest = (command == "test");
-
-    if (sourceFile.empty()) {
+    if (args.sourceFile.empty()) {
         err("No source file provided.");
-        note("Usage: linc " + command + " <source_file.lin> [-o output]");
+        note("Usage: linc " + args.command + " <source_file.lin> [-o output]");
         return 1;
     }
 
-    if (!outputBinary.empty() && outputBinary[0] == '-') {
+    if (!args.outputBinary.empty() && args.outputBinary[0] == '-') {
         err("Output binary name cannot start with a hyphen.");
         return 1;
     }
 
-    // Check for Lin.toml in the source directory for extended include resolution
-    std::filesystem::path srcPath(sourceFile);
-    std::string searchDir = srcPath.has_parent_path() ? srcPath.parent_path().string() : ".";
-    std::string tomlPath = searchDir + "/Lin.toml";
-    if (std::filesystem::exists(tomlPath)) {
-        ProjectConfig cfg = parseProjectConfig(tomlPath);
-        if (cfg.valid) {
-            for (const auto &inc : cfg.includes) {
-                includePaths.push_back(inc);
+    // Load project config for include paths
+    {
+        std::filesystem::path srcPath(args.sourceFile);
+        std::string searchDir = srcPath.has_parent_path() ? srcPath.parent_path().string() : ".";
+        std::string tomlPath = searchDir + "/Lin.toml";
+        if (std::filesystem::exists(tomlPath)) {
+            ProjectConfig cfg = parseProjectConfig(tomlPath);
+            if (cfg.valid) {
+                for (const auto &inc : cfg.includes) {
+                    args.includePaths.push_back(inc);
+                }
             }
         }
     }
 
-    // ── `check` subcommand ─────────────────────────────────────────────────
-    if (checkOnly) {
-        // type-check only — skip codegen
-        // We reuse the pipeline but skip the MLIR lowering and linking
-        std::ifstream file(sourceFile);
-        if (!file.is_open()) {
-            err("Failed to open file: " + sourceFile);
-            return 1;
-        }
-        std::stringstream buffer;
-        buffer << file.rdbuf();
-        std::string source_str = buffer.str();
-        std::string fullSource = "import \"std/types.lin\"\nimport \"std/io.lin\"\n" + source_str;
-        const char *patchedSource = strdup(fullSource.c_str());
-        importSources.push_back(patchedSource);
-
-        AstNode *ast = parse(patchedSource);
-        if (ast && ast->type == AST_BLOCK) {
-            std::vector<std::string> searchPaths;
-            searchPaths.push_back(".");
-            std::filesystem::path srcPathSF(sourceFile);
-            if (srcPathSF.has_parent_path())
-                searchPaths.push_back(srcPathSF.parent_path().string());
-            char exePath[PATH_MAX];
-            ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath)-1);
-            if (len != -1) {
-                exePath[len] = '\0';
-                std::filesystem::path ePath(exePath);
-                if (ePath.has_parent_path()) {
-                    std::filesystem::path binDir = ePath.parent_path();
-                    searchPaths.push_back(binDir.string());
-                    if (binDir.has_parent_path()) {
-                        searchPaths.push_back(binDir.parent_path().string());
-                        if (binDir.parent_path().has_parent_path()) {
-                            searchPaths.push_back(binDir.parent_path().parent_path().string());
-                            if (binDir.parent_path().parent_path().has_parent_path())
-                                searchPaths.push_back(binDir.parent_path().parent_path().parent_path().string());
-                        }
-                    }
-                }
-            }
-            searchPaths.insert(searchPaths.end(), includePaths.begin(), includePaths.end());
-
-            int total_count = 0;
-            int capacity = 16;
-            AstNode **new_stmts = static_cast<AstNode**>(malloc(sizeof(AstNode*) * capacity));
-            if (!new_stmts) { std::cerr << "Out of memory\n"; return 1; }
-
-            for (int i = 0; i < ast->as.block.count; i++) {
-                if (ast->as.block.statements[i]->type == AST_IMPORT) {
-                    std::string importPath(ast->as.block.statements[i]->as.import_stmt.path, ast->as.block.statements[i]->as.import_stmt.length);
-                    std::ifstream importFile;
-                    for (const auto& base : searchPaths) {
-                        std::filesystem::path fullPath = std::filesystem::path(base) / importPath;
-                        importFile.open(fullPath);
-                        if (importFile.is_open()) break;
-                    }
-                    if (importFile.is_open()) {
-                        std::stringstream importBuffer;
-                        importBuffer << importFile.rdbuf();
-                        std::string importSourceStr = importBuffer.str();
-                        const char *importSource = strdup(importSourceStr.c_str());
-                        importSources.push_back(importSource);
-                        AstNode *importAst = parse(importSource);
-                        if (importAst && importAst->type == AST_BLOCK) {
-                            int import_count = importAst->as.block.count;
-                            if (total_count + import_count > capacity) {
-                                while (total_count + import_count > capacity) capacity *= 2;
-                                AstNode **temp = static_cast<AstNode**>(realloc(new_stmts, sizeof(AstNode*) * capacity));
-                                if (!temp) { free(new_stmts); return 1; }
-                                new_stmts = temp;
-                            }
-                            memcpy(new_stmts + total_count, importAst->as.block.statements, sizeof(AstNode*) * import_count);
-                            total_count += import_count;
-                            free(importAst->as.block.statements);
-                            free(importAst);
-                        } else if (importAst) { freeAst(importAst); }
-                    } else {
-                        std::cerr << "Failed to import file: " << importPath << "\n";
-                    }
-                    ast->as.block.statements[i]->as.import_stmt.module_block = nullptr;
-                    freeAst(ast->as.block.statements[i]);
-                } else {
-                    if (total_count >= capacity) {
-                        capacity *= 2;
-                        AstNode **temp = static_cast<AstNode**>(realloc(new_stmts, sizeof(AstNode*) * capacity));
-                        if (!temp) { free(new_stmts); return 1; }
-                        new_stmts = temp;
-                    }
-                    new_stmts[total_count++] = ast->as.block.statements[i];
-                }
-            }
-            free(ast->as.block.statements);
-            ast->as.block.statements = new_stmts;
-            ast->as.block.count = total_count;
-        }
-
-        if (!ast) {
-            err("Parse failed.");
-            for (const char *src : importSources) free((void*)src);
-            return 1;
-        }
-
-        std::unordered_set<std::string> declaredTypes;
-        int errors = semanticTypeCheckAst(ast, declaredTypes, patchedSource);
-        if (ast) freeAst(ast);
-        for (const char *src : importSources) free((void*)src);
-
-        if (errors > 0) {
-            err("Type-check failed with " + std::to_string(errors) + " error(s).");
-            return 1;
-        }
-        green("Type-check passed (no errors).");
-        return 0;
+    if (args.command == "check") {
+        return handleCheckSubcommand(args.sourceFile, args.includePaths);
     }
 
-    // ── `build` subcommand ─────────────────────────────────────────────────
-    if (doLink) {
-        int ret = runCompilationPipeline(sourceFile, outputBinary, enableGPU, enableWasm, true, includePaths, importSources, linkCFiles, linkLibs);
-        if (ret == 0) {
-            green("Compiled and linked to '" + outputBinary + "'.");
-        }
+    if (args.command == "build") {
+        int ret = runCompilationPipeline(args.sourceFile, args.outputBinary, args.enableGPU, args.enableWasm, true,
+                                         args.includePaths, args.importSources, args.linkCFiles, args.linkLibs);
+        if (ret == 0) green("Compiled and linked to '" + args.outputBinary + "'.");
         return ret;
     }
 
-    // ── `run` subcommand ───────────────────────────────────────────────────
-    if (doRun) {
-        int ret = runCompilationPipeline(sourceFile, outputBinary, enableGPU, enableWasm, true, includePaths, importSources, linkCFiles, linkLibs);
+    if (args.command == "run") {
+        int ret = runCompilationPipeline(args.sourceFile, args.outputBinary, args.enableGPU, args.enableWasm, true,
+                                         args.includePaths, args.importSources, args.linkCFiles, args.linkLibs);
         if (ret != 0) return ret;
-
-        std::cout << "Running " << outputBinary << "...\n";
-        int exitCode = system(outputBinary.c_str());
-        exitCode = WEXITSTATUS(exitCode);
-        return exitCode;
+        std::cout << "Running " << args.outputBinary << "...\n";
+        return WEXITSTATUS(system(args.outputBinary.c_str()));
     }
 
-    // ── `test` subcommand ─────────────────────────────────────────────────
-    if (doTest) {
-        int ret = runCompilationPipeline(sourceFile, outputBinary, enableGPU, enableWasm, false, includePaths, importSources, linkCFiles, linkLibs);
-        if (ret != 0) return ret;
-
-        // Re-parse the source for checkstyle (runs on original source, not import-resolved AST)
-        std::ifstream file(sourceFile);
-        if (!file.is_open()) { err("Failed to open file."); return 1; }
-        std::stringstream buffer;
-        buffer << file.rdbuf();
-        std::string source_str = buffer.str();
-        std::string fullSource = "import \"std/types.lin\"\nimport \"std/io.lin\"\n" + source_str;
-        const char *patchedSource = strdup(fullSource.c_str());
-        std::vector<const char*> testImportSources;
-        testImportSources.push_back(patchedSource);
-
-        // Resolve imports to match original behavior
-        AstNode *ast = parse(patchedSource);
-        if (!ast) { err("Parse failed."); return 1; }
-
-        // Apply the same import resolution as the pipeline
-        if (ast->type == AST_BLOCK) {
-            std::vector<std::string> searchPaths;
-            searchPaths.push_back(".");
-            std::filesystem::path srcPath(sourceFile);
-            if (srcPath.has_parent_path())
-                searchPaths.push_back(srcPath.parent_path().string());
-            char exePath[PATH_MAX];
-            ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath)-1);
-            if (len != -1) {
-                exePath[len] = '\0';
-                std::filesystem::path ePath(exePath);
-                if (ePath.has_parent_path()) {
-                    std::filesystem::path binDir = ePath.parent_path();
-                    searchPaths.push_back(binDir.string());
-                    if (binDir.has_parent_path()) {
-                        searchPaths.push_back(binDir.parent_path().string());
-                        if (binDir.parent_path().has_parent_path())
-                            searchPaths.push_back(binDir.parent_path().parent_path().string());
-                    }
-                }
-            }
-            searchPaths.insert(searchPaths.end(), includePaths.begin(), includePaths.end());
-
-            int total_count = 0;
-            int capacity = 16;
-            AstNode **new_stmts = (AstNode**)malloc(sizeof(AstNode*) * capacity);
-            if (!new_stmts) { std::cerr << "Out of memory\n"; return 1; }
-
-            for (int i = 0; i < ast->as.block.count; i++) {
-                if (ast->as.block.statements[i]->type == AST_IMPORT) {
-                    std::string importPath(ast->as.block.statements[i]->as.import_stmt.path, ast->as.block.statements[i]->as.import_stmt.length);
-                    std::ifstream importFile;
-                    for (const auto& base : searchPaths) {
-                        std::filesystem::path fullPath = std::filesystem::path(base) / importPath;
-                        importFile.open(fullPath);
-                        if (importFile.is_open()) break;
-                    }
-                    if (importFile.is_open()) {
-                        std::stringstream importBuffer;
-                        importBuffer << importFile.rdbuf();
-                        std::string importSourceStr = importBuffer.str();
-                        const char *importSource = strdup(importSourceStr.c_str());
-                        testImportSources.push_back(importSource);
-                        AstNode *importAst = parse(importSource);
-                        if (importAst && importAst->type == AST_BLOCK) {
-                            int import_count = importAst->as.block.count;
-                            if (total_count + import_count > capacity) {
-                                while (total_count + import_count > capacity) capacity *= 2;
-                                AstNode **temp = (AstNode**)realloc(new_stmts, sizeof(AstNode*) * capacity);
-                                if (!temp) { free(new_stmts); return 1; }
-                                new_stmts = temp;
-                            }
-                            memcpy(new_stmts + total_count, importAst->as.block.statements, sizeof(AstNode*) * import_count);
-                            total_count += import_count;
-                            free(importAst->as.block.statements);
-                            free(importAst);
-                        } else if (importAst) { freeAst(importAst); }
-                    }
-                    ast->as.block.statements[i]->as.import_stmt.module_block = nullptr;
-                    freeAst(ast->as.block.statements[i]);
-                } else {
-                    if (total_count >= capacity) {
-                        capacity *= 2;
-                        AstNode **temp = (AstNode**)realloc(new_stmts, sizeof(AstNode*) * capacity);
-                        if (!temp) { free(new_stmts); return 1; }
-                        new_stmts = temp;
-                    }
-                    new_stmts[total_count++] = ast->as.block.statements[i];
-                }
-            }
-            free(ast->as.block.statements);
-            ast->as.block.statements = new_stmts;
-            ast->as.block.count = total_count;
-        }
-
-        std::cout << "\nRunning built-in checkstyle and static analysis...\n";
-        int styleErrors = checkstyleAst(ast, patchedSource);
-        if (ast) freeAst(ast);
-        for (const char *src : testImportSources) free((void*)src);
-
-        if (styleErrors > 0) {
-            std::cerr << "Checkstyle and static analysis failed with " << styleErrors << " error(s).\n";
-            return 1;
-        }
-        std::cout << "Built-in checkstyle and static analysis passed.\n";
-        std::cout << "Compilation complete.\n";
-        return 0;
+    if (args.command == "test") {
+        return handleTestSubcommand(args.sourceFile, args.includePaths, args.enableGPU, args.enableWasm,
+                                    args.importSources, args.linkCFiles, args.linkLibs);
     }
 
     return 0;

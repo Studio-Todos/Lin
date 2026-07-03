@@ -1,5 +1,5 @@
-// RUN: %linc build %s -o %t
-// CHECK: Lowering pass successful. Generated LLVM IR:
+// RUN: %linc build %s -o %t 2>&1 | FileCheck %s
+// CHECK: Lowering pass successful.
 // CHECK: Successfully compiled and linked to
 
 // Tests: All primitive type literals (i32, i64, f32, f64, bool)

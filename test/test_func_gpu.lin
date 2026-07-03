@@ -1,13 +1,13 @@
-// RUN: %linc build %s -o %t
-// CHECK: Lowering pass successful. Generated LLVM IR:
+// RUN: %linc build %s -o %t 2>&1 | FileCheck %s
+// CHECK: Lowering pass successful.
 // CHECK: Successfully compiled and linked to
 
 // Tests: GPU path for user-defined functions.
 // When compiled with --gpu, the pipeline should still complete without errors
 // and emit a SPIR-V kernel.
 
-// RUN: %linc build %s --gpu -o %t_gpu
-// GPU: Lowering pass successful. Generated LLVM IR:
+// RUN: %linc build %s --gpu -o %t_gpu 2>&1 | FileCheck %s --check-prefix=GPU
+// GPU: Lowering pass successful.
 // GPU: Emitted SPIR-V module
 
 import "std/types.lin"

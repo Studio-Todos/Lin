@@ -1,4 +1,3 @@
-set(MLIR_TABLEGEN_EXE "/nix/store/mh0is1h5921i38ah1lkv2hgik69imp7f-mlir-18.1.8/bin/mlir-tblgen")
 
 # PIC Graph
 set(LLVM_TARGET_DEFINITIONS PicGraphDialect.td)
@@ -48,7 +47,6 @@ add_mlir_dialect_library(PicDialects
   MLIRLLVMDialect
   MLIRSCFToControlFlow
   MLIRFuncToLLVM
-  MLIRArithToLLVM
   MLIRArithToLLVM
   MLIRGPUDialect
   MLIRSPIRVDialect

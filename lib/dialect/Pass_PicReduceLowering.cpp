@@ -27,6 +27,37 @@ constexpr uint8_t ALLOC_ERA  = (2 << 6) | mlir::pic::runtime::NODE_ERA;
 constexpr uint8_t ALLOC_RVEC = (2 << 6) | mlir::pic::runtime::NODE_RVEC;
 constexpr uint8_t ALLOC_LOG  = (2 << 6) | mlir::pic::runtime::NODE_LOG;
 
+static const std::vector<std::pair<std::string, std::string>> kRuntimeDecls = {
+    {"printf", "llvm.func @printf(!llvm.ptr, ...) -> i32"},
+    {"putchar", "llvm.func @putchar(i32) -> i32"},
+    {"getchar", "llvm.func @getchar() -> i32"},
+    {"scanf", "llvm.func @scanf(!llvm.ptr, ...) -> i32"},
+    {"malloc", "llvm.func @malloc(i64) -> !llvm.ptr"},
+    {"free", "llvm.func @free(!llvm.ptr)"},
+    {"strlen", "llvm.func @strlen(!llvm.ptr) -> i64"},
+    {"strcmp", "llvm.func @strcmp(!llvm.ptr, !llvm.ptr) -> i32"},
+    {"lin_print_str", "llvm.func @lin_print_str(i64) -> i64"},
+    {"sin", "llvm.func @sin(f64) -> f64"},
+    {"cos", "llvm.func @cos(f64) -> f64"},
+    {"tan", "llvm.func @tan(f64) -> f64"},
+    {"asin", "llvm.func @asin(f64) -> f64"},
+    {"acos", "llvm.func @acos(f64) -> f64"},
+    {"atan", "llvm.func @atan(f64) -> f64"},
+    {"exp", "llvm.func @exp(f64) -> f64"},
+    {"log", "llvm.func @log(f64) -> f64"},
+    {"sqrt", "llvm.func @sqrt(f64) -> f64"},
+    {"pow", "llvm.func @pow(f64, f64) -> f64"},
+    {"fopen", "llvm.func @fopen(!llvm.ptr, !llvm.ptr) -> !llvm.ptr"},
+    {"fclose", "llvm.func @fclose(!llvm.ptr) -> i32"},
+    {"fgetc", "llvm.func @fgetc(!llvm.ptr) -> i32"},
+    {"fputc", "llvm.func @fputc(i32, !llvm.ptr) -> i32"},
+    {"exit", "llvm.func @exit(i32)"},
+    {"abort", "llvm.func @abort()"},
+    {"time", "llvm.func @time(!llvm.ptr) -> i64"},
+    {"sleep", "llvm.func @sleep(i32) -> i32"},
+    {"lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64"},
+};
+
 using namespace mlir;
 
 namespace {
@@ -267,44 +298,19 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
                     
                     std::string pStr = p.getValue().str();
                     std::string snippetDecls = "";
-                    auto addDecl = [&](std::string name, std::string fullDecl) {
-                        bool found = false;
-                        for (auto &d : existingDecls) {
-                            if (d.find("@" + name + "(") != std::string::npos || d.find("@\"" + name + "\"(") != std::string::npos) {
-                                found = true;
-                                break;
+                    auto addDecl = [&](const std::vector<std::pair<std::string, std::string>> &decls) {
+                        for (auto &kv : decls) {
+                            bool found = false;
+                            for (auto &d : existingDecls) {
+                                if (d.find("@" + kv.first + "(") != std::string::npos || d.find("@\"" + kv.first + "\"(") != std::string::npos) {
+                                    found = true;
+                                    break;
+                                }
                             }
+                            if (!found) snippetDecls += kv.second + "\n";
                         }
-                        if (!found) snippetDecls += fullDecl + "\n";
                     };
-                    addDecl("printf", "llvm.func @printf(!llvm.ptr, ...) -> i32");
-                    addDecl("putchar", "llvm.func @putchar(i32) -> i32");
-                    addDecl("getchar", "llvm.func @getchar() -> i32");
-                    addDecl("scanf", "llvm.func @scanf(!llvm.ptr, ...) -> i32");
-                    addDecl("malloc", "llvm.func @malloc(i64) -> !llvm.ptr");
-                    addDecl("free", "llvm.func @free(!llvm.ptr)");
-                    addDecl("strlen", "llvm.func @strlen(!llvm.ptr) -> i64");
-                    addDecl("strcmp", "llvm.func @strcmp(!llvm.ptr, !llvm.ptr) -> i32");
-                    addDecl("lin_print_str", "llvm.func @lin_print_str(i64) -> i64");
-                    addDecl("sin", "llvm.func @sin(f64) -> f64");
-                    addDecl("cos", "llvm.func @cos(f64) -> f64");
-                    addDecl("tan", "llvm.func @tan(f64) -> f64");
-                    addDecl("asin", "llvm.func @asin(f64) -> f64");
-                    addDecl("acos", "llvm.func @acos(f64) -> f64");
-                    addDecl("atan", "llvm.func @atan(f64) -> f64");
-                    addDecl("exp", "llvm.func @exp(f64) -> f64");
-                    addDecl("log", "llvm.func @log(f64) -> f64");
-                    addDecl("sqrt", "llvm.func @sqrt(f64) -> f64");
-                    addDecl("pow", "llvm.func @pow(f64, f64) -> f64");
-                    addDecl("fopen", "llvm.func @fopen(!llvm.ptr, !llvm.ptr) -> !llvm.ptr");
-                    addDecl("fclose", "llvm.func @fclose(!llvm.ptr) -> i32");
-                    addDecl("fgetc", "llvm.func @fgetc(!llvm.ptr) -> i32");
-                    addDecl("fputc", "llvm.func @fputc(i32, !llvm.ptr) -> i32");
-                    addDecl("exit", "llvm.func @exit(i32)");
-                    addDecl("abort", "llvm.func @abort()");
-                    addDecl("time", "llvm.func @time(!llvm.ptr) -> i64");
-                    addDecl("sleep", "llvm.func @sleep(i32) -> i32");
-addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
+                    addDecl(kRuntimeDecls);
                     for (auto &d : existingDecls) {
                         auto atPos = d.find("@");
                         if (atPos != std::string::npos) {
@@ -578,35 +584,19 @@ addDecl("lin_write_ppm", "llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
                         }
                         
                         std::string invSnippetDecls = "";
-                        auto invAddDecl = [&](std::string name, std::string fullDecl) {
-                            bool found = false;
-                            for (auto &d : existingDecls) {
-                                if (d.find("@" + name + "(") != std::string::npos || d.find("@\"" + name + "\"(") != std::string::npos) {
-                                    found = true;
-                                    break;
+                        auto invAddDecl = [&](const std::vector<std::pair<std::string, std::string>> &decls) {
+                            for (auto &kv : decls) {
+                                bool found = false;
+                                for (auto &d : existingDecls) {
+                                    if (d.find("@" + kv.first + "(") != std::string::npos || d.find("@\"" + kv.first + "\"(") != std::string::npos) {
+                                        found = true;
+                                        break;
+                                    }
                                 }
+                                if (!found) invSnippetDecls += kv.second + "\n";
                             }
-                            if (!found) invSnippetDecls += fullDecl + "\n";
                         };
-                        invAddDecl("printf", "llvm.func @printf(!llvm.ptr, ...) -> i32");
-                        invAddDecl("putchar", "llvm.func @putchar(i32) -> i32");
-                        invAddDecl("getchar", "llvm.func @getchar() -> i32");
-                        invAddDecl("scanf", "llvm.func @scanf(!llvm.ptr, ...) -> i32");
-                        invAddDecl("malloc", "llvm.func @malloc(i64) -> !llvm.ptr");
-                        invAddDecl("free", "llvm.func @free(!llvm.ptr)");
-                        invAddDecl("strlen", "llvm.func @strlen(!llvm.ptr) -> i64");
-                        invAddDecl("strcmp", "llvm.func @strcmp(!llvm.ptr, !llvm.ptr) -> i32");
-                        invAddDecl("lin_print_str", "llvm.func @lin_print_str(i64) -> i64");
-                        invAddDecl("sin", "llvm.func @sin(f64) -> f64");
-                        invAddDecl("cos", "llvm.func @cos(f64) -> f64");
-                        invAddDecl("tan", "llvm.func @tan(f64) -> f64");
-                        invAddDecl("asin", "llvm.func @asin(f64) -> f64");
-                        invAddDecl("acos", "llvm.func @acos(f64) -> f64");
-                        invAddDecl("atan", "llvm.func @atan(f64) -> f64");
-                        invAddDecl("exp", "llvm.func @exp(f64) -> f64");
-                        invAddDecl("log", "llvm.func @log(f64) -> f64");
-                        invAddDecl("sqrt", "llvm.func @sqrt(f64) -> f64");
-                        invAddDecl("pow", "llvm.func @pow(f64, f64) -> f64");
+                        invAddDecl(kRuntimeDecls);
                         
                         // Coerce arguments to their declared types
                         for (unsigned i = 0; i < argNamesList.size(); ++i) {

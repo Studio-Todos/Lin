@@ -69,10 +69,6 @@ int semanticTypeCheckAst(AstNode *node, std::unordered_set<std::string>& declare
             for (int i = 0; i < node->as.call.arg_count; ++i)
                 errors += semanticTypeCheckAst(node->as.call.args[i], declaredTypes, source);
             break;
-        case AST_BINARY:
-            errors += semanticTypeCheckAst(node->as.binary.left, declaredTypes, source);
-            errors += semanticTypeCheckAst(node->as.binary.right, declaredTypes, source);
-            break;
         case AST_WHILE:
             errors += semanticTypeCheckAst(node->as.while_loop.condition, declaredTypes, source);
             errors += semanticTypeCheckAst(node->as.while_loop.body, declaredTypes, source);
@@ -346,11 +342,6 @@ int checkstyleAst(AstNode *node, const char *source) {
             }
             break;
         }
-        case AST_BINARY: {
-            errors += checkstyleAst(node->as.binary.left, source);
-            errors += checkstyleAst(node->as.binary.right, source);
-            break;
-        }
         case AST_BLOCK: {
             for (int i = 0; i < node->as.block.count; ++i) {
                 errors += checkstyleAst(node->as.block.statements[i], source);
@@ -402,8 +393,6 @@ bool hasGpuAnnotation(AstNode *node) {
             return hasGpuAnnotation(node->as.pair.left) || hasGpuAnnotation(node->as.pair.right);
         case AST_FIELD_ACCESS:
             return hasGpuAnnotation(node->as.field_access.base);
-        case AST_BINARY:
-            return hasGpuAnnotation(node->as.binary.left) || hasGpuAnnotation(node->as.binary.right);
         case AST_CALL:
             for (int i = 0; i < node->as.call.arg_count; i++) {
                 if (hasGpuAnnotation(node->as.call.args[i])) return true;

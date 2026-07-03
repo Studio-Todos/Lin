@@ -92,7 +92,7 @@ inline bool isValidMLIRType(const std::string& type) {
     return type == "i1" || type == "i8" || type == "i16" || type == "i32" || type == "i64" || type == "f32" || type == "f64" || type == "ptr";
 }
 
-static bool suffixToTypeName(const std::string& label, std::string& opName, std::string& typeName, std::string& originalBase) {
+inline bool suffixToTypeName(const std::string& label, std::string& opName, std::string& typeName, std::string& originalBase) {
     std::string suffix = "";
     if (label.size() > 2) {
         suffix = label.substr(label.size() - 2);
@@ -120,7 +120,7 @@ static bool suffixToTypeName(const std::string& label, std::string& opName, std:
     return false;
 }
 
-static Value safeZExt(OpBuilder &b, Location loc, Type targetType, Value val) {
+inline Value safeZExt(OpBuilder &b, Location loc, Type targetType, Value val) {
     if (!val || !val.getType().isa<IntegerType>()) return val;
     unsigned srcW = val.getType().cast<IntegerType>().getWidth();
     unsigned tgtW = targetType.cast<IntegerType>().getWidth();
@@ -131,7 +131,7 @@ static Value safeZExt(OpBuilder &b, Location loc, Type targetType, Value val) {
     return val;
 }
 
-static void replaceAll(std::string &str, const std::string &from, const std::string &to) {
+inline void replaceAll(std::string &str, const std::string &from, const std::string &to) {
     if (from.empty()) return;
     size_t start_pos = 0;
     while ((start_pos = str.find(from, start_pos)) != std::string::npos) {
@@ -140,7 +140,7 @@ static void replaceAll(std::string &str, const std::string &from, const std::str
     }
 }
 
-static std::string extractType(const std::string& payload, const std::string& varName) {
+inline std::string extractType(const std::string& payload, const std::string& varName) {
     // ... (same content as original)
     size_t pos = 0;
     std::string targetLine = "";

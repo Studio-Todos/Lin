@@ -1,5 +1,5 @@
 // RUN: %linc build %s -o test_fmath_extended_bin | FileCheck %s
-// RUN: %linc build %s --gpu -o test_fmath_extended_bin_gpu | FileCheck %s --check-prefix=GPU
+// RUN: %linc build %s --gpu -o test_fmath_extended_bin_gpu 2>&1 | FileCheck %s --check-prefix=GPU
 // RUN: test -s test_fmath_extended_bin_gpu.spv
 // RUN: spirv-val test_fmath_extended_bin_gpu.spv
 

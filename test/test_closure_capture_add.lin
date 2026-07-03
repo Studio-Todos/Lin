@@ -1,17 +1,16 @@
 // test_closure_capture_add.lin
 // Item 4c: findFreeVars fix — a closure must correctly capture a locally-bound
 // name regardless of whether it happens to match a formerly-hardcoded builtin.
-// RUN: %linc build %s -o %t
-// CHECK: Lowering pass successful. Generated LLVM IR:
+// RUN: %linc build %s -o %t 2>&1 | FileCheck %s
+// CHECK: Lowering pass successful.
 // CHECK: Successfully compiled and linked to
 
-let add_i32 = @[add_i32] [inputs: [x [i32] y [i32]]] {
-    %res = arith.addi %x, %y : i32
-    lin.coerce %res : i32 to i64
-}
+import "std/types.lin"
 
-// A function that takes an operation and applies it to two numbers
-let apply = fn(f, a, b) { f(a, b) }
+make_adder: func [n [i32!] return: [i32!]] [
+    adder: func [x [i32!] return: [i32!]] [x + n]
+    adder
+]
 
-// Pass add_i32 as a first-class value through a closure
-print(apply(add_i32, 2, 3))
+f: (make_adder 5)
+(f 10)

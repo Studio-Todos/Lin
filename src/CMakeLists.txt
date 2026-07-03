@@ -1,6 +1,6 @@
 add_executable(linc main.cpp Parser.c Lowering.c gpu_runtime.c Ast.c Diagnostic.c Semantic.cpp EGraphOptimizer.c)
 
-find_package(Vulkan REQUIRED)
+find_package(Vulkan QUIET)
 
 target_link_libraries(linc PRIVATE
   PicDialects
@@ -15,8 +15,12 @@ target_link_libraries(linc PRIVATE
   MLIRCAPIRegisterEverything
   MLIRGPUDialect
   MLIRGPUTransforms
-  Vulkan::Vulkan
 )
+
+if(Vulkan_FOUND)
+  target_link_libraries(linc PRIVATE Vulkan::Vulkan)
+  target_compile_definitions(linc PRIVATE HAVE_VULKAN)
+endif()
 
 target_include_directories(linc PUBLIC
   ${CMAKE_SOURCE_DIR}/include

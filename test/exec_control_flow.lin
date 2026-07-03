@@ -4,18 +4,32 @@
 import "std/math.lin"
 import "std/io.lin"
 
-test_flow: func [
-    argc [i32!]
+// Test control flow: either with true/false conditions
+main: func [
     return: [i32!]
 ][
     state: 0
+
     cond: (lt 10 5)
 
+    // The else branch should be taken (10 < 5 is false -> 0)
     either cond [
         state: (print_i32 state 1)
     ][
         state: (print_i32 state 0)
     ]
+
+    state: (print_str state "\n")
+
+    // Test that true branch works
+    cond2: (lt 3 10)
+    either cond2 [
+        state: (print_i32 state 1)
+    ][
+        state: (print_i32 state 0)
+    ]
+
+    state: (print_str state "\n")
 
     0
 ]

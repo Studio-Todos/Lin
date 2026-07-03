@@ -1,0 +1,5 @@
+// RUN: not %linc build %s -o %t 2>&1 | FileCheck %s
+
+// CHECK: error: Expect expression.
+
+42 +

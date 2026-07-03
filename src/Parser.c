@@ -123,8 +123,16 @@ static TokenType identifierType(const Lexer *lexer) {
 
 static Token string(Lexer *lexer) {
     while (peek(lexer) != '"' && !isAtEnd(lexer)) {
-        if (peek(lexer) == '\n') lexer->line++;
-        advance(lexer);
+        if (peek(lexer) == '\n') {
+            lexer->line++;
+            advance(lexer);
+        } else if (peek(lexer) == '\\' && peekNext(lexer) != '\0') {
+            advance(lexer); // consume backslash
+            if (peek(lexer) == '\n') lexer->line++;
+            advance(lexer); // consume escaped character
+        } else {
+            advance(lexer);
+        }
     }
     if (isAtEnd(lexer)) return makeToken(lexer, TOKEN_ERROR);
     advance(lexer);
@@ -174,16 +182,17 @@ Token scanToken(Lexer *lexer) {
         case '|': if (match(lexer, '|')) return makeToken(lexer, TOKEN_OR);
                   return makeToken(lexer, TOKEN_OR);
         case '^': return makeToken(lexer, TOKEN_POW);
-        case '=': if (match(lexer, '=')) return makeToken(lexer, TOKEN_EQUAL_EQUAL); break;
+        case '=': if (match(lexer, '=')) return makeToken(lexer, TOKEN_EQUAL_EQUAL);
+                  return makeToken(lexer, TOKEN_ASSIGN);
         case '<': if (match(lexer, '=')) return makeToken(lexer, TOKEN_LESS_EQUAL);
-                  else if (match(lexer, '<')) return makeToken(lexer, TOKEN_LESS); // << shift
+                  else if (match(lexer, '<')) return makeToken(lexer, TOKEN_LESS_LESS);
                   return makeToken(lexer, TOKEN_LESS);
         case '>': if (match(lexer, '=')) return makeToken(lexer, TOKEN_GREATER_EQUAL);
-                  else if (match(lexer, '>')) return makeToken(lexer, TOKEN_GREATER); // >> shift
+                  else if (match(lexer, '>')) return makeToken(lexer, TOKEN_GREATER_GREATER);
                   return makeToken(lexer, TOKEN_GREATER);
         case '+': return makeToken(lexer, TOKEN_PLUS);
         case '-': return makeToken(lexer, TOKEN_MINUS);
-        case '%': return makeToken(lexer, TOKEN_IDENTIFIER);
+        case '%': return makeToken(lexer, TOKEN_PERCENT);
         case '.': return makeToken(lexer, TOKEN_DOT);
         case '@': {
             if (isalpha(peek(lexer)) || peek(lexer) == '_') {
@@ -196,7 +205,7 @@ Token scanToken(Lexer *lexer) {
             }
             return makeToken(lexer, TOKEN_ERROR);
         }
-        case ',': return makeToken(lexer, TOKEN_IDENTIFIER);
+        case ',': return makeToken(lexer, TOKEN_COMMA);
         case '0': case '1': case '2': case '3': case '4':
         case '5': case '6': case '7': case '8': case '9': return number(lexer);
     }
@@ -212,7 +221,6 @@ typedef struct {
 } Parser;
 
 static void errorAt(Parser *parser, const Token *token, const char *message) {
-    if (parser->hadError) return;
     const char *source = parser->lexer.start;
     if (token->type == TOKEN_EOF) {
         diagError(source, NULL, token->line, token->col, message);
@@ -224,6 +232,31 @@ static void errorAt(Parser *parser, const Token *token, const char *message) {
 
 static void error(Parser *parser, const char *message) {
     errorAt(parser, &parser->previous, message);
+}
+
+static void parserAdvance(Parser *parser);
+
+static void synchronize(Parser *parser) {
+    while (!isAtEnd(&parser->lexer)) {
+        if (parser->current.type == TOKEN_RBRACKET ||
+            parser->current.type == TOKEN_RPAREN ||
+            parser->current.type == TOKEN_EOF) return;
+        switch (parser->current.type) {
+            case TOKEN_IDENTIFIER:
+            case TOKEN_NUMBER:
+            case TOKEN_FLOAT:
+            case TOKEN_STRING:
+            case TOKEN_LBRACKET:
+            case TOKEN_FUNC:
+            case TOKEN_IMPORT:
+            case TOKEN_WHILE:
+            case TOKEN_EITHER:
+            case TOKEN_ANNOTATION:
+                return;
+            default:
+                parserAdvance(parser);
+        }
+    }
 }
 
 static void parserAdvance(Parser *parser) {
@@ -241,6 +274,7 @@ static void consume(Parser *parser, TokenType type, const char *message) {
         return;
     }
     errorAt(parser, &parser->current, message);
+    synchronize(parser);
 }
 
 static AstNode* parseExpression(Parser *parser);
@@ -305,174 +339,136 @@ static AstNode* parseImportExpr(Parser *parser) {
     return node;
 }
 
-static AstNode* parseIdentifierExpr(Parser *parser) {
-    Token ident = parser->current;
+static AstNode* createBoolNode(Parser *parser, bool value) {
+    AstNode *node = createNode(parser, AST_BOOL);
+    if (!node) return NULL;
+    node->as.boolean.value = value;
+    return node;
+}
+
+static AstNode* parseAssignment(Parser *parser, Token ident) {
+    AstNode *node = createNode(parser, AST_ASSIGNMENT);
+    if (!node) return NULL;
+    node->as.assignment.name = ident.start;
+    node->as.assignment.name_len = ident.length;
+    node->as.assignment.value = parseExpression(parser);
+    return node;
+}
+
+static AstNode* parseModuleDecl(Parser *parser, Token ident) {
+    parserAdvance(parser); // consume colon
+    if (parser->current.type != TOKEN_IDENTIFIER ||
+        strncmp(parser->current.start, "module", 6) != 0) {
+        errorAt(parser, &parser->current, "Expect 'module' keyword.");
+        return NULL;
+    }
+    parserAdvance(parser); // consume "module"
+    AstNode *module_block = parseBlock(parser);
+    AstNode *node = createNode(parser, AST_MODULE);
+    if (!node) return NULL;
+    node->as.module.name = ident.start;
+    node->as.module.name_len = ident.length;
+    node->as.module.module_block = module_block;
+    return node;
+}
+
+static AstNode* parseMlirOpDecl(Parser *parser, Token ident) {
+    parserAdvance(parser); // consume colon
+    consume(parser, TOKEN_MLIR_OP, "Expect 'mlir-op'.");
+
+    Token inputs_outputs_start = parser->current;
+    consume(parser, TOKEN_LBRACKET, "Expect '[' for mlir-op interface.");
+    int bracket_count = 1;
+    while (bracket_count > 0 && parser->current.type != TOKEN_EOF) {
+        if (parser->current.type == TOKEN_LBRACKET) bracket_count++;
+        else if (parser->current.type == TOKEN_RBRACKET) bracket_count--;
+        parserAdvance(parser);
+    }
+    Token inputs_outputs_end = parser->previous;
+
+    Token payload_start = parser->current;
+    consume(parser, TOKEN_LBRACE, "Expect '{' for mlir-op payload.");
+
+    const char *payload_begin = payload_start.start + 1;
+    const char *p = payload_begin;
+    int braces = 1;
+    while (braces > 0 && *p != '\0') {
+        if (*p == '{') braces++;
+        else if (*p == '}') braces--;
+        p++;
+    }
+    if (braces > 0) {
+        errorAt(parser, &payload_start, "Unterminated mlir-op payload.");
+        return NULL;
+    }
+    const char *payload_end_ptr = p - 1;
+
+    parser->lexer.current = p;
     parserAdvance(parser);
 
-    // Check for variable assignment: `word: value`
-    if (parser->current.type == TOKEN_COLON) {
-        const char* next_word = parser->lexer.current;
-        while (*next_word == ' ' || *next_word == '\n' || *next_word == '\t' || *next_word == '\r') next_word++;
+    AstNode *node = createNode(parser, AST_MLIR_OP);
+    if (!node) return NULL;
+    node->as.mlir_op.name = ident.start;
+    node->as.mlir_op.name_len = ident.length;
+    node->as.mlir_op.inputs = inputs_outputs_start.start;
+    node->as.mlir_op.inputs_len = (int)(inputs_outputs_end.start + inputs_outputs_end.length - inputs_outputs_start.start);
+    node->as.mlir_op.mlir_payload = payload_begin;
+    node->as.mlir_op.payload_len = (int)(payload_end_ptr - payload_begin);
 
-        bool is_func = (strncmp(next_word, "func", 4) == 0);
-        bool is_mlir_op = (strncmp(next_word, "mlir-op", 7) == 0);
-        bool is_module = (strncmp(next_word, "module", 6) == 0);
+    while (node->as.mlir_op.payload_len > 0 && (*node->as.mlir_op.mlir_payload == '\n' || *node->as.mlir_op.mlir_payload == '\r')) {
+        node->as.mlir_op.mlir_payload++;
+        node->as.mlir_op.payload_len--;
+    }
+    while (node->as.mlir_op.payload_len > 0 && (node->as.mlir_op.mlir_payload[node->as.mlir_op.payload_len - 1] == ' ' || node->as.mlir_op.mlir_payload[node->as.mlir_op.payload_len - 1] == '\t' || node->as.mlir_op.mlir_payload[node->as.mlir_op.payload_len - 1] == '\n' || node->as.mlir_op.mlir_payload[node->as.mlir_op.payload_len - 1] == '\r')) {
+        node->as.mlir_op.payload_len--;
+    }
 
-        if (is_mlir_op) {
-            parserAdvance(parser); // consume colon
-            consume(parser, TOKEN_MLIR_OP, "Expect 'mlir-op'.");
+    node->as.mlir_op.inverse_payload = NULL;
+    node->as.mlir_op.inverse_len = 0;
+    if (parser->current.type == TOKEN_IDENTIFIER &&
+        parser->current.length == 7 &&
+        strncmp(parser->current.start, "inverse", 7) == 0) {
+        parserAdvance(parser);
+        consume(parser, TOKEN_COLON, "Expect ':' after 'inverse'.");
 
-            Token inputs_outputs_start = parser->current;
-            consume(parser, TOKEN_LBRACKET, "Expect '[' for mlir-op interface.");
-            int bracket_count = 1;
-            while (bracket_count > 0 && parser->current.type != TOKEN_EOF) {
-                if (parser->current.type == TOKEN_LBRACKET) bracket_count++;
-                else if (parser->current.type == TOKEN_RBRACKET) bracket_count--;
-                parserAdvance(parser);
-            }
-            Token inputs_outputs_end = parser->previous;
+        Token inv_start = parser->current;
+        consume(parser, TOKEN_LBRACE, "Expect '{' for inverse payload.");
+        const char *inv_begin = inv_start.start + 1;
+        const char *p_inv = inv_begin;
+        int braces_inv = 1;
+        while (braces_inv > 0 && *p_inv != '\0') {
+            if (*p_inv == '{') braces_inv++;
+            else if (*p_inv == '}') braces_inv--;
+            p_inv++;
+        }
+        if (braces_inv > 0) {
+            errorAt(parser, &inv_start, "Unterminated inverse payload.");
+            return NULL;
+        }
 
-            Token payload_start = parser->current;
-            consume(parser, TOKEN_LBRACE, "Expect '{' for mlir-op payload.");
+        parser->lexer.current = p_inv;
+        parserAdvance(parser);
 
-            const char *payload_begin = payload_start.start + 1;
-            const char *p = payload_begin;
-            int braces = 1;
-            while (braces > 0 && *p != '\0') {
-                if (*p == '{') braces++;
-                else if (*p == '}') braces--;
-                p++;
-            }
-            if (braces > 0) {
-                errorAt(parser, &payload_start, "Unterminated mlir-op payload.");
-                return NULL;
-            }
-            const char *payload_end_ptr = p - 1; // point to '}'
-
-            // Sync the parser's lexer state to after the '}'
-            parser->lexer.current = p;
-            parserAdvance(parser); // load the token after '}'
-
-            AstNode *node = createNode(parser, AST_MLIR_OP);
-            if (!node) return NULL;
-            node->as.mlir_op.name = ident.start;
-            node->as.mlir_op.name_len = ident.length;
-            node->as.mlir_op.inputs = inputs_outputs_start.start;
-            node->as.mlir_op.inputs_len = (int)(inputs_outputs_end.start + inputs_outputs_end.length - inputs_outputs_start.start);
-            node->as.mlir_op.mlir_payload = payload_begin;
-            node->as.mlir_op.payload_len = (int)(payload_end_ptr - payload_begin);
-
-            while (node->as.mlir_op.payload_len > 0 && (*node->as.mlir_op.mlir_payload == '\n' || *node->as.mlir_op.mlir_payload == '\r')) {
-                node->as.mlir_op.mlir_payload++;
-                node->as.mlir_op.payload_len--;
-            }
-            // Also strip trailing whitespace
-            while (node->as.mlir_op.payload_len > 0 && (node->as.mlir_op.mlir_payload[node->as.mlir_op.payload_len - 1] == ' ' || node->as.mlir_op.mlir_payload[node->as.mlir_op.payload_len - 1] == '\t' || node->as.mlir_op.mlir_payload[node->as.mlir_op.payload_len - 1] == '\n' || node->as.mlir_op.mlir_payload[node->as.mlir_op.payload_len - 1] == '\r')) {
-                node->as.mlir_op.payload_len--;
-            }
-
-            // Parse optional inverse: { ... } block
-            node->as.mlir_op.inverse_payload = NULL;
-            node->as.mlir_op.inverse_len = 0;
-            if (parser->current.type == TOKEN_IDENTIFIER &&
-                parser->current.length == 7 &&
-                strncmp(parser->current.start, "inverse", 7) == 0) {
-                parserAdvance(parser);
-                consume(parser, TOKEN_COLON, "Expect ':' after 'inverse'.");
-
-                Token inv_start = parser->current;
-                consume(parser, TOKEN_LBRACE, "Expect '{' for inverse payload.");
-                const char *inv_begin = inv_start.start + 1;
-                const char *p_inv = inv_begin;
-                int braces_inv = 1;
-                while (braces_inv > 0 && *p_inv != '\0') {
-                    if (*p_inv == '{') braces_inv++;
-                    else if (*p_inv == '}') braces_inv--;
-                    p_inv++;
-                }
-                if (braces_inv > 0) {
-                    errorAt(parser, &inv_start, "Unterminated inverse payload.");
-                    return NULL;
-                }
-
-                parser->lexer.current = p_inv;
-                parserAdvance(parser);
-
-                node->as.mlir_op.inverse_payload = inv_begin;
-                node->as.mlir_op.inverse_len = (int)((p_inv - 1) - inv_begin);
-                // Trim leading whitespace on inverse payload
-                while (node->as.mlir_op.inverse_len > 0 && (*node->as.mlir_op.inverse_payload == '\n' || *node->as.mlir_op.inverse_payload == '\r')) {
-                    node->as.mlir_op.inverse_payload++;
-                    node->as.mlir_op.inverse_len--;
-                }
-                while (node->as.mlir_op.inverse_len > 0 && (node->as.mlir_op.inverse_payload[node->as.mlir_op.inverse_len - 1] == ' ' || node->as.mlir_op.inverse_payload[node->as.mlir_op.inverse_len - 1] == '\t' || node->as.mlir_op.inverse_payload[node->as.mlir_op.inverse_len - 1] == '\n' || node->as.mlir_op.inverse_payload[node->as.mlir_op.inverse_len - 1] == '\r')) {
-                    node->as.mlir_op.inverse_len--;
-                }
-            }
-
-            return node;
-        } else if (is_module) {
-            parserAdvance(parser); // consume colon
-            // Expect "module" keyword
-            if (parser->current.type != TOKEN_IDENTIFIER || 
-                strncmp(parser->current.start, "module", 6) != 0) {
-                errorAt(parser, &parser->current, "Expect 'module' keyword.");
-                return NULL;
-            }
-            parserAdvance(parser); // consume "module"
-            
-            // Parse metadata block [ ... ]
-            AstNode *module_block = parseBlock(parser);
-            
-            AstNode *node = createNode(parser, AST_MODULE);
-            if (!node) return NULL;
-            node->as.module.name = ident.start;
-            node->as.module.name_len = ident.length;
-            node->as.module.module_block = module_block;
-            return node;
-        } else if (is_func) {
-            return parseFuncDecl(parser, false);
-        } else {
-            parserAdvance(parser); // consume colon
-            AstNode *node = createNode(parser, AST_ASSIGNMENT);
-            if (!node) return NULL;
-            node->as.assignment.name = ident.start;
-            node->as.assignment.name_len = ident.length;
-            node->as.assignment.value = parseExpression(parser);
-            return node;
+        node->as.mlir_op.inverse_payload = inv_begin;
+        node->as.mlir_op.inverse_len = (int)((p_inv - 1) - inv_begin);
+        while (node->as.mlir_op.inverse_len > 0 && (*node->as.mlir_op.inverse_payload == '\n' || *node->as.mlir_op.inverse_payload == '\r')) {
+            node->as.mlir_op.inverse_payload++;
+            node->as.mlir_op.inverse_len--;
+        }
+        while (node->as.mlir_op.inverse_len > 0 && (node->as.mlir_op.inverse_payload[node->as.mlir_op.inverse_len - 1] == ' ' || node->as.mlir_op.inverse_payload[node->as.mlir_op.inverse_len - 1] == '\t' || node->as.mlir_op.inverse_payload[node->as.mlir_op.inverse_len - 1] == '\n' || node->as.mlir_op.inverse_payload[node->as.mlir_op.inverse_len - 1] == '\r')) {
+            node->as.mlir_op.inverse_len--;
         }
     }
 
-    if (ident.length == 4 && strncmp(ident.start, "true", 4) == 0) {
-        AstNode *node = createNode(parser, AST_BOOL);
-        if (!node) return NULL;
-        node->as.boolean.value = true;
-        return node;
-    }
-    if (ident.length == 5 && strncmp(ident.start, "false", 5) == 0) {
-        AstNode *node = createNode(parser, AST_BOOL);
-        if (!node) return NULL;
-        node->as.boolean.value = false;
-        return node;
-    }
+    return node;
+}
 
-    AstNode *node = createNode(parser, AST_IDENTIFIER);
-    if (!node) return NULL;
-    node->as.identifier.name = ident.start;
-    node->as.identifier.length = ident.length;
-    
-    AstNode *result = node;
-    while (parser->current.type == TOKEN_DOT) {
-        result = parseFieldAccess(parser, result);
-    }
-    
-    // Check for path access: identifier/path or identifier/field or identifier/(expr)
+static AstNode* parsePathAccess(Parser *parser, AstNode *base) {
+    AstNode *result = base;
     while (parser->current.type == TOKEN_SLASH) {
-        parserAdvance(parser); // consume '/'
+        parserAdvance(parser);
         Token pathSegment = parser->current;
-        
         if (pathSegment.type == TOKEN_NUMBER) {
-            // Numeric index: /1, /2, etc.
             parserAdvance(parser);
             AstNode *access = createNode(parser, AST_FIELD_ACCESS);
             if (!access) return result;
@@ -480,32 +476,65 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
             access->as.field_access.field_index = atoi(pathSegment.start);
             result = access;
         } else if (pathSegment.type == TOKEN_IDENTIFIER) {
-            // Named path segment: /field
             parserAdvance(parser);
             AstNode *access = createNode(parser, AST_FIELD_ACCESS);
             if (!access) return result;
             access->as.field_access.base = result;
-            access->as.field_access.field_index = 0; // 0 reserved for named fields
+            access->as.field_access.field_index = 0;
             access->as.field_access.field_name = pathSegment.start;
             access->as.field_access.field_name_len = pathSegment.length;
             result = access;
         } else if (pathSegment.type == TOKEN_LPAREN) {
-            // Computed index: /(expression)
             AstNode *idxExpr = parseExpression(parser);
             consume(parser, TOKEN_RPAREN, "Expect ')' after computed index.");
             AstNode *access = createNode(parser, AST_FIELD_ACCESS);
             if (!access) return result;
             access->as.field_access.base = result;
             access->as.field_access.computed_index = idxExpr;
-            access->as.field_access.field_index = -1; // sentinel for computed
+            access->as.field_access.field_index = -1;
             result = access;
         } else {
-            // Not a valid path segment, just return what we have
             break;
         }
     }
-    
     return result;
+}
+
+static AstNode* parseIdentifierExpr(Parser *parser) {
+    Token ident = parser->current;
+    parserAdvance(parser);
+
+    if (parser->current.type == TOKEN_COLON) {
+        const char* next_word = parser->lexer.current;
+        while (*next_word == ' ' || *next_word == '\n' || *next_word == '\t' || *next_word == '\r') next_word++;
+
+        if (strncmp(next_word, "mlir-op", 7) == 0)
+            return parseMlirOpDecl(parser, ident);
+        if (strncmp(next_word, "module", 6) == 0)
+            return parseModuleDecl(parser, ident);
+        if (strncmp(next_word, "func", 4) == 0)
+            return parseFuncDecl(parser, false);
+
+        parserAdvance(parser); // consume colon
+        return parseAssignment(parser, ident);
+    }
+
+    if (ident.length == 4 && strncmp(ident.start, "true", 4) == 0)
+        return createBoolNode(parser, true);
+    if (ident.length == 5 && strncmp(ident.start, "false", 5) == 0)
+        return createBoolNode(parser, false);
+
+    AstNode *node = createNode(parser, AST_IDENTIFIER);
+    if (!node) return NULL;
+    node->as.identifier.name = ident.start;
+    node->as.identifier.length = ident.length;
+
+    AstNode *result = node;
+    while (parser->current.type == TOKEN_DOT) {
+        result = parseFieldAccess(parser, result);
+    }
+
+    return parsePathAccess(parser, result);
 }
 
 static AstNode* parseGroupingExpr(Parser *parser) {
@@ -691,43 +720,75 @@ static AstNode* parsePrimary(Parser *parser) {
     }
 }
 
-static AstNode* parseExpression(Parser *parser) {
-    AstNode *expr = parsePrimary(parser);
+static int getBinaryPrecedence(TokenType type) {
+    switch (type) {
+        case TOKEN_OR: return 1;
+        case TOKEN_AND: return 2;
+        case TOKEN_POW: return 3;
+        case TOKEN_EQUAL_EQUAL: case TOKEN_NOT_EQUAL: return 4;
+        case TOKEN_LESS: case TOKEN_GREATER:
+        case TOKEN_LESS_EQUAL: case TOKEN_GREATER_EQUAL: return 5;
+        case TOKEN_LESS_LESS: case TOKEN_GREATER_GREATER: return 6;
+        case TOKEN_PLUS: case TOKEN_MINUS: return 7;
+        case TOKEN_STAR: case TOKEN_SLASH: return 8;
+        default: return -1;
+    }
+}
 
-    while (parser->current.type == TOKEN_LESS || parser->current.type == TOKEN_PLUS || parser->current.type == TOKEN_MINUS ||
-           parser->current.type == TOKEN_STAR || parser->current.type == TOKEN_GREATER ||
-           parser->current.type == TOKEN_EQUAL_EQUAL || parser->current.type == TOKEN_NOT_EQUAL ||
-           parser->current.type == TOKEN_GREATER_EQUAL || parser->current.type == TOKEN_LESS_EQUAL ||
-           parser->current.type == TOKEN_AND || parser->current.type == TOKEN_OR ||
-           parser->current.type == TOKEN_POW) {
+static const char* tokenToOpName(TokenType op) {
+    switch (op) {
+        case TOKEN_PLUS: return "add";
+        case TOKEN_MINUS: return "sub";
+        case TOKEN_STAR: return "mul";
+        case TOKEN_SLASH: return "div";
+        case TOKEN_LESS: return "lt";
+        case TOKEN_GREATER: return "gt";
+        case TOKEN_LESS_EQUAL: return "le";
+        case TOKEN_GREATER_EQUAL: return "ge";
+        case TOKEN_LESS_LESS: return "shl";
+        case TOKEN_GREATER_GREATER: return "shr";
+        case TOKEN_EQUAL_EQUAL: return "eq";
+        case TOKEN_NOT_EQUAL: return "ne";
+        case TOKEN_AND: return "and";
+        case TOKEN_OR: return "std.or";
+        case TOKEN_POW: return "xor";
+        default: return "add";
+    }
+}
+
+static AstNode* parseBinary(Parser *parser, int minPrec, AstNode *left) {
+    while (true) {
+        int prec = getBinaryPrecedence(parser->current.type);
+        if (prec < minPrec) break;
+
         TokenType op = parser->current.type;
         parserAdvance(parser);
-        AstNode *right = parsePrimary(parser);
 
-        const char* funcName = "add";
-        if (op == TOKEN_MINUS) funcName = "sub";
-        else if (op == TOKEN_STAR) funcName = "mul";
-        else if (op == TOKEN_SLASH) funcName = "div";
-        else if (op == TOKEN_LESS) funcName = "lt";
-        else if (op == TOKEN_GREATER) funcName = "gt";
-        else if (op == TOKEN_LESS_EQUAL) funcName = "le";
-        else if (op == TOKEN_GREATER_EQUAL) funcName = "ge";
-        else if (op == TOKEN_EQUAL_EQUAL) funcName = "eq";
-        else if (op == TOKEN_NOT_EQUAL) funcName = "ne";
-        else if (op == TOKEN_AND) funcName = "and";
-        else if (op == TOKEN_OR) funcName = "std.or";
-        else if (op == TOKEN_POW) funcName = "xor";
+        AstNode *right = parsePrimary(parser);
+        if (!right) return left;
+
+        right = parseBinary(parser, prec + 1, right);
 
         AstNode *call = createNode(parser, AST_CALL);
-        call->as.call.callee = strdup(funcName);
-        call->as.call.callee_len = strlen(funcName);
+        call->as.call.callee = strdup(tokenToOpName(op));
+        call->as.call.callee_owned = true;
+        call->as.call.callee_len = strlen(call->as.call.callee);
         call->as.call.arg_count = 2;
         call->as.call.resolved_callee = NULL;
         call->as.call.args = malloc(sizeof(AstNode*) * 2);
-        call->as.call.args[0] = expr;
+        call->as.call.args[0] = left;
         call->as.call.args[1] = right;
-        expr = call;
+        left = call;
     }
+    return left;
+}
+
+static AstNode* parseExpression(Parser *parser) {
+    AstNode *expr = parsePrimary(parser);
+    if (!expr) return NULL;
+
+    // Binary operators with precedence
+    expr = parseBinary(parser, 0, expr);
 
     // Post-expression path access: expr/path
     while (parser->current.type == TOKEN_SLASH) {

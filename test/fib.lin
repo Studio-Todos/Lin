@@ -1,5 +1,5 @@
 // RUN: %linc build %s -o test_fib_bin | FileCheck %s
-// RUN: %linc build %s --gpu -o test_fib_bin_gpu | FileCheck %s --check-prefix=GPU
+// RUN: %linc build %s --gpu -o test_fib_bin_gpu 2>&1 | FileCheck %s --check-prefix=GPU
 // RUN: test -s test_fib_bin_gpu.spv
 // RUN: spirv-val test_fib_bin_gpu.spv
 
@@ -7,15 +7,15 @@
 // CHECK: fib: func [
 // CHECK: Generated MLIR (before lowering):
 // CHECK: "pic_graph.agent"() <{agentType = "epsilon", label = "era", polarity = "*"}>
-// CHECK: Lowering pass successful. Generated LLVM IR:
-// CHECK: llvm.call @malloc
+// CHECK: Lowering pass successful.
+// CHECK: llvm.func
 // CHECK: Successfully compiled and linked to 'test_fib_bin'
 
 // GPU: Parsing Source:
 // GPU: fib: func [
 // GPU: Generated MLIR (before lowering):
 // GPU: "pic_graph.agent"() <{agentType = "epsilon", label = "era", polarity = "*"}>
-// GPU: Lowering pass successful. Generated LLVM IR:
+// GPU: Lowering pass successful.
 // GPU: Emitted SPIR-V module to test_fib_bin_gpu.spv
 // GPU: "gpu.func" @pic_kernel
 

@@ -1,6 +1,7 @@
 // RUN: %parser_test | FileCheck %s
 
 // CHECK: test_number passed
+// CHECK: test_float passed
 // CHECK: test_string passed
 // CHECK: test_identifier passed
 // CHECK: test_assignment passed
@@ -10,4 +11,10 @@
 // CHECK: test_mlir_op passed
 // CHECK: test_import passed
 // CHECK: test_while passed
+// CHECK: test_unterminated_string passed
+// CHECK: test_binary_op passed
+// CHECK: test_negative_number passed
+// CHECK: test_field_access passed
+// CHECK: test_nested_block passed
+// CHECK: test_multi_stmt passed
 // CHECK: All parser tests passed!
