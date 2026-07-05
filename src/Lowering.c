@@ -1630,12 +1630,14 @@ static MlirValue lowerCallExpr(MlirContext ctx, MlirBlock block, MlirLocation lo
 
         // Link omega- p1 ↔ left (state arg) — binary dispatch follows this
         linkValues(block, loc, p1, left);
-        // Link omega- p2 = era
-        linkToEra(ctx, block, loc, p2);
         // Link omega- p0 ↔ right p0 (value arg forms active pair with literal)
         linkValues(block, loc, result, right);
+        // Return p2 as the result port — p0 is the active pair partner (linked to value arg).
+        // Returning p2 avoids double-linking p0 when nested calls link the result to a consumer.
+        // p2 is unlinked here; the runtime defaults it to era. If a consumer links to p2,
+        // the LinkOp overwrites the era default, and after the FireOp the result node links to p2's target.
 
-        return result;
+        return p2;
     } else if (expr->as.call.arg_count == 1) {
         MlirValue arg = lowerExpression(ctx, block, loc, expr->as.call.args[0], env, false);
 
@@ -1679,12 +1681,11 @@ static MlirValue lowerCallExpr(MlirContext ctx, MlirBlock block, MlirLocation lo
 
         // Link omega- p1 ↔ state literal (binary dispatch follows this for %arg0/state)
         linkValues(block, loc, p1, stateLiteral);
-        // Link omega- p2 = era
-        linkToEra(ctx, block, loc, p2);
         // Link omega- p0 ↔ arg p0 (value arg forms active pair)
         linkValues(block, loc, result, arg);
+        // Return p2 as the result port (avoids double-linking p0 for nested calls)
 
-        return result;
+        return p2;
     }
 
     return createEra(ctx, block, loc);

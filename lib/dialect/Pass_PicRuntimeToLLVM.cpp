@@ -676,14 +676,42 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             } else {
                 suffixToTypeName(op.label, opName, typeName, originalBase);
             }
-            // Register runtime rule for NODE_OP, label, NODE_OP, "call" → label
             auto regTypeA = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(NODE_OP));
             auto regLabelA = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel(op.label)));
-            auto regTypeB = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(NODE_OP));
-            auto regLabelB = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel("call")));
-            auto regImpl = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel(op.label)));
-            builder.create<func::CallOp>(entry.getLoc(), TypeRange{}, "register_rule",
-                ValueRange{regTypeA, regLabelA, regTypeB, regLabelB, regImpl});
+            auto regLabelFull = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel(op.label)));
+            // Register runtime rule for NODE_OP, label, NODE_OP, "call" → label
+            {
+                auto regTypeB = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(NODE_OP));
+                auto regLabelB = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel("call")));
+                builder.create<func::CallOp>(entry.getLoc(), TypeRange{}, "register_rule",
+                    ValueRange{regTypeA, regLabelA, regTypeB, regLabelB, regLabelFull});
+            }
+            // Register runtime rule for NODE_OP, label, NODE_OP, typeName → label (literal arg match)
+            if (!typeName.empty()) {
+                auto regTypeB = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(NODE_OP));
+                auto regLabelB = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel(typeName)));
+                builder.create<func::CallOp>(entry.getLoc(), TypeRange{}, "register_rule",
+                    ValueRange{regTypeA, regLabelA, regTypeB, regLabelB, regLabelFull});
+                // Also register against the short op name (e.g., "print" for "print_i32")
+                auto regLabelA2 = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel(opName)));
+                builder.create<func::CallOp>(entry.getLoc(), TypeRange{}, "register_rule",
+                    ValueRange{regTypeA, regLabelA2, regTypeB, regLabelB, regLabelFull});
+                // For i64 ops, also register against i32 (type widening fallback)
+                if (typeName == "i64") {
+                    auto regLabelB_i32 = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel("i32")));
+                    builder.create<func::CallOp>(entry.getLoc(), TypeRange{}, "register_rule",
+                        ValueRange{regTypeA, regLabelA, regTypeB, regLabelB_i32, regLabelFull});
+                }
+            }
+            // Register flipped orientation: NODE_OP, typeName, NODE_OP, label → label
+            if (!typeName.empty()) {
+                auto regTypeA_flip = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(NODE_OP));
+                auto regLabelA_flip = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel(typeName)));
+                auto regTypeB_flip = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(NODE_OP));
+                auto regLabelB_flip = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel(op.label)));
+                builder.create<func::CallOp>(entry.getLoc(), TypeRange{}, "register_rule",
+                    ValueRange{regTypeA_flip, regLabelA_flip, regTypeB_flip, regLabelB_flip, regLabelFull});
+            }
         }
         Value zero64 = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(0));
         builder.create<func::CallOp>(entry.getLoc(), TypeRange{}, entry.getSymName(), ValueRange{zero64});
