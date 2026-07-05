@@ -676,6 +676,14 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             } else {
                 suffixToTypeName(op.label, opName, typeName, originalBase);
             }
+            // Register runtime rule for NODE_OP, label, NODE_OP, "call" → label
+            auto regTypeA = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(NODE_OP));
+            auto regLabelA = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel(op.label)));
+            auto regTypeB = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(NODE_OP));
+            auto regLabelB = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel("call")));
+            auto regImpl = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel(op.label)));
+            builder.create<func::CallOp>(entry.getLoc(), TypeRange{}, "register_rule",
+                ValueRange{regTypeA, regLabelA, regTypeB, regLabelB, regImpl});
         }
         Value zero64 = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(0));
         builder.create<func::CallOp>(entry.getLoc(), TypeRange{}, entry.getSymName(), ValueRange{zero64});

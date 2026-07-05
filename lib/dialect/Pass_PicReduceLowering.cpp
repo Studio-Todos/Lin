@@ -189,6 +189,11 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
     // so they can be referenced in mlir-op payload temp modules.
     existingDecls.push_back("llvm.func @lin_print_str(i64) -> i64");
     existingDecls.push_back("llvm.func @lin_write_ppm(i64, i64, i64) -> i64");
+    existingDecls.push_back("llvm.func @lin_window_create(i64, i64) -> i64");
+    existingDecls.push_back("llvm.func @lin_window_present(i64, i64) -> i64");
+    existingDecls.push_back("llvm.func @lin_window_demo_frame(i64, i64) -> i64");
+    existingDecls.push_back("llvm.func @lin_window_should_close(i64) -> i64");
+    existingDecls.push_back("llvm.func @lin_window_destroy(i64) -> i64");
 
     std::vector<UserOp> userOps;
 

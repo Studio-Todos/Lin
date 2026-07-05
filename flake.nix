@@ -156,6 +156,8 @@
             pkgs.vulkan-headers
             vulkan-loader
             vulkan-validation-layers
+            pkgs.xorg.libX11
+            pkgs.xorg.libX11.dev
           ];
 
           shellHook = ''
