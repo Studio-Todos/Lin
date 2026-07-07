@@ -1696,7 +1696,13 @@ static MlirValue lowerCallExpr(MlirContext ctx, MlirBlock block, MlirLocation lo
 static MlirValue lowerLiteralExpr(MlirContext ctx, MlirBlock block, MlirLocation loc, AstNode *expr) {
     if (expr->type == AST_NUMBER || expr->type == AST_BOOL) {
         int64_t val = (expr->type == AST_NUMBER) ? expr->as.number.value : (expr->as.boolean.value ? 1 : 0);
-        return makeOmegaLiteral(ctx, block, loc, expr->type == AST_NUMBER ? "i32" : "bool", val, false, NULL, 0);
+        const char *label = "i32";
+        if (expr->type == AST_NUMBER) {
+            if (val < -2147483648LL || val > 2147483647LL) {
+                label = "i64";
+            }
+        }
+        return makeOmegaLiteral(ctx, block, loc, expr->type == AST_NUMBER ? label : "bool", val, false, NULL, 0);
     }
     if (expr->type == AST_FLOAT) {
         union { double f; int64_t i; } cast;
