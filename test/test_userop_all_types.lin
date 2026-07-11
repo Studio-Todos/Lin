@@ -13,20 +13,20 @@ main: func [
 ][
     state: 0
     // Print i32 literal
-    state: print_i32 state 42
-    state: print_str state "\n"
+    state: (print_i32 state 42)
+    state: (print_str state "\n")
 
     // Print f64 literal (via bitcast)
-    state: print_f64 state 4614253070214989087
-    state: print_str state "\n"
+    state: (print_f64 state 4614253070214989087)
+    state: (print_str state "\n")
 
     // Print f64 literal (via cast from f64-to-i64 then bitcast)
-    state: print_f64 state 4613303449545304703
-    state: print_str state "\n"
+    state: (print_f64 state 4613303449545304703)
+    state: (print_str state "\n")
 
     // Print string
-    state: print_str state "hello"
-    state: print_str state "\n"
+    state: (print_str state "hello")
+    state: (print_str state "\n")
 
     0
 ]
