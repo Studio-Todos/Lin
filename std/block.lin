@@ -1,0 +1,25 @@
+// std/block.lin
+// Block (tuple) operations for Lin.
+//
+// Blocks are built from nested `pair` calls:
+//   (pair x y)                -> 2-element block: [x, y]
+//   (pair x (pair y z))       -> 3-element block: [x, y, z]
+//   (pair x (pair y (pair z w))) -> 4-element block: [x, y, z, w]
+//
+// Field access:
+//   (blk)/1  -> first element
+//   (blk)/2  -> second element (or rest of block for nested pairs)
+//   (blk)/2/1 -> second element, first of rest  (third overall)
+//   (blk)/2/2 -> second element, second of rest (fourth overall)
+//
+// `pair` is built into the lowering as a delta agent — no compiler
+// changes needed. The type-directed dispatch rewrites binary `+` etc.
+// to f32/f64 variants based on argument types; `pair` always creates
+// a delta-(pair) node regardless of its argument types.
+//
+// Examples:
+//   pos: (pair x (pair y z))       ; 3D position block
+//   mat: (pair m0 (pair m1 ...))   ; arbitrary arity via nesting
+//   first: (pos)/1                  ; x component
+//   second: (pos)/2/1               ; y component
+//   third: (pos)/2/2                 ; z component

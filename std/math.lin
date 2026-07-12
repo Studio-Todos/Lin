@@ -97,6 +97,121 @@ neg32: mlir-op [ inputs: [a [i32!]] outputs: [res [i32!]] ] {
     %res = arith.subi %c0, %a : i32
 }
 
+// Bitwise operations (i32)
+and32: mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
+    %res = arith.andi %a, %b : i32
+}
+or32: mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
+    %res = arith.ori %a, %b : i32
+}
+shl32: mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
+    %res = arith.shli %a, %b : i32
+}
+ashr32: mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
+    %res = arith.shrsi %a, %b : i32
+}
+lshr32: mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
+    %res = arith.shrui %a, %b : i32
+}
+
+// Min / Max (i32)
+min32: mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
+    %c = arith.cmpi slt, %a, %b : i32
+    %res = arith.select %c, %a, %b : i32
+}
+max32: mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
+    %c = arith.cmpi sgt, %a, %b : i32
+    %res = arith.select %c, %a, %b : i32
+}
+
+// Comparisons (i32)
+eq32:  mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
+    %c = arith.cmpi eq, %a, %b : i32
+    %zero = arith.constant 0 : i32
+    %one = arith.constant 1 : i32
+    %res = arith.select %c, %one, %zero : i32
+}
+ne32:  mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
+    %c = arith.cmpi ne, %a, %b : i32
+    %zero = arith.constant 0 : i32
+    %one = arith.constant 1 : i32
+    %res = arith.select %c, %one, %zero : i32
+}
+slt32: mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
+    %c = arith.cmpi slt, %a, %b : i32
+    %zero = arith.constant 0 : i32
+    %one = arith.constant 1 : i32
+    %res = arith.select %c, %one, %zero : i32
+}
+sgt32: mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
+    %c = arith.cmpi sgt, %a, %b : i32
+    %zero = arith.constant 0 : i32
+    %one = arith.constant 1 : i32
+    %res = arith.select %c, %one, %zero : i32
+}
+sle32: mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
+    %c = arith.cmpi sle, %a, %b : i32
+    %zero = arith.constant 0 : i32
+    %one = arith.constant 1 : i32
+    %res = arith.select %c, %one, %zero : i32
+}
+sge32: mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
+    %c = arith.cmpi sge, %a, %b : i32
+    %zero = arith.constant 0 : i32
+    %one = arith.constant 1 : i32
+    %res = arith.select %c, %one, %zero : i32
+}
+
+// Float comparisons (f32 -> i32)
+feq32: mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
+    %af = arith.bitcast %a : i32 to f32
+    %bf = arith.bitcast %b : i32 to f32
+    %c = arith.cmpf oeq, %af, %bf : f32
+    %one = arith.constant 1 : i32
+    %zero = arith.constant 0 : i32
+    %res = arith.select %c, %one, %zero : i32
+}
+fneq32: mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
+    %af = arith.bitcast %a : i32 to f32
+    %bf = arith.bitcast %b : i32 to f32
+    %c = arith.cmpf une, %af, %bf : f32
+    %one = arith.constant 1 : i32
+    %zero = arith.constant 0 : i32
+    %res = arith.select %c, %one, %zero : i32
+}
+flt32: mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
+    %af = arith.bitcast %a : i32 to f32
+    %bf = arith.bitcast %b : i32 to f32
+    %c = arith.cmpf olt, %af, %bf : f32
+    %one = arith.constant 1 : i32
+    %zero = arith.constant 0 : i32
+    %res = arith.select %c, %one, %zero : i32
+}
+fgt32: mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
+    %af = arith.bitcast %a : i32 to f32
+    %bf = arith.bitcast %b : i32 to f32
+    %c = arith.cmpf ogt, %af, %bf : f32
+    %one = arith.constant 1 : i32
+    %zero = arith.constant 0 : i32
+    %res = arith.select %c, %one, %zero : i32
+}
+fle32: mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
+    %af = arith.bitcast %a : i32 to f32
+    %bf = arith.bitcast %b : i32 to f32
+    %c = arith.cmpf ole, %af, %bf : f32
+    %one = arith.constant 1 : i32
+    %zero = arith.constant 0 : i32
+    %res = arith.select %c, %one, %zero : i32
+}
+fge32: mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
+    %af = arith.bitcast %a : i32 to f32
+    %bf = arith.bitcast %b : i32 to f32
+    %c = arith.cmpf oge, %af, %bf : f32
+    %one = arith.constant 1 : i32
+    %zero = arith.constant 0 : i32
+    %res = arith.select %c, %one, %zero : i32
+}
+
 // Absolute value (i64)
 abs64: mlir-op [ inputs: [a [i64!]] outputs: [res [i64!]] ] {
     %c0 = arith.constant 0 : i64
