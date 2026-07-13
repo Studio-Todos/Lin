@@ -30,15 +30,15 @@ all_math: func [
     either (neq (sgt64 7 3) 1) [13][
 
     // Cast roundtrip
-    either (neq (i32-to-i64 42) 42) [14][
-    either (neq (i64-to-i32 42) 42) [15][
+    either (neq (i32_to_i64 42) 42) [14][
+    either (neq (i64_to_i32 42) 42) [15][
 
     // Complex expressions with mixed operations
     either (neq (add (mul 5 7) (sub (div 100 4) 3)) 57) [16][
     either (neq (sub (mul 6 7) (add 10 20)) 12) [17][
     either (neq (div (mul 8 9) (sub 25 19)) 12) [18][
     0
-    ]]]]]]]]]]]]]]]]]]]
+    ]]]]]]]]]]]]]]]]]]
 ]
 
 (print_i32 (all_math 0))

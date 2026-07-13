@@ -24,7 +24,7 @@ print_board: func [
         c: 0
         while [lt c 7] [
             idx: add (mul r 7) c
-            arr_res: array_get s_curr board (i32-to-i64 idx)
+            arr_res: array_get s_curr board (i32_to_i64 idx)
             s_curr: arr_res.0
             val: arr_res.1
 
@@ -58,10 +58,10 @@ check_win: func [
             idx2: add idx0 2
             idx3: add idx0 3
 
-            arr_res0: array_get s_curr board (i32-to-i64 idx0)
-            arr_res1: array_get arr_res0.0 board (i32-to-i64 idx1)
-            arr_res2: array_get arr_res1.0 board (i32-to-i64 idx2)
-            arr_res3: array_get arr_res2.0 board (i32-to-i64 idx3)
+            arr_res0: array_get s_curr board (i32_to_i64 idx0)
+            arr_res1: array_get arr_res0.0 board (i32_to_i64 idx1)
+            arr_res2: array_get arr_res1.0 board (i32_to_i64 idx2)
+            arr_res3: array_get arr_res2.0 board (i32_to_i64 idx3)
             s_curr: arr_res3.0
 
             v0: arr_res0.1
@@ -85,10 +85,10 @@ check_win: func [
             idx2: add (mul (add r 2) 7) c
             idx3: add (mul (add r 3) 7) c
 
-            arr_res0: array_get s_curr board (i32-to-i64 idx0)
-            arr_res1: array_get arr_res0.0 board (i32-to-i64 idx1)
-            arr_res2: array_get arr_res1.0 board (i32-to-i64 idx2)
-            arr_res3: array_get arr_res2.0 board (i32-to-i64 idx3)
+            arr_res0: array_get s_curr board (i32_to_i64 idx0)
+            arr_res1: array_get arr_res0.0 board (i32_to_i64 idx1)
+            arr_res2: array_get arr_res1.0 board (i32_to_i64 idx2)
+            arr_res3: array_get arr_res2.0 board (i32_to_i64 idx3)
             s_curr: arr_res3.0
 
             v0: arr_res0.1
@@ -112,10 +112,10 @@ check_win: func [
             idx2: add (mul (sub r 2) 7) (add c 2)
             idx3: add (mul (sub r 3) 7) (add c 3)
 
-            arr_res0: array_get s_curr board (i32-to-i64 idx0)
-            arr_res1: array_get arr_res0.0 board (i32-to-i64 idx1)
-            arr_res2: array_get arr_res1.0 board (i32-to-i64 idx2)
-            arr_res3: array_get arr_res2.0 board (i32-to-i64 idx3)
+            arr_res0: array_get s_curr board (i32_to_i64 idx0)
+            arr_res1: array_get arr_res0.0 board (i32_to_i64 idx1)
+            arr_res2: array_get arr_res1.0 board (i32_to_i64 idx2)
+            arr_res3: array_get arr_res2.0 board (i32_to_i64 idx3)
             s_curr: arr_res3.0
 
             v0: arr_res0.1
@@ -139,10 +139,10 @@ check_win: func [
             idx2: add (mul (add r 2) 7) (add c 2)
             idx3: add (mul (add r 3) 7) (add c 3)
 
-            arr_res0: array_get s_curr board (i32-to-i64 idx0)
-            arr_res1: array_get arr_res0.0 board (i32-to-i64 idx1)
-            arr_res2: array_get arr_res1.0 board (i32-to-i64 idx2)
-            arr_res3: array_get arr_res2.0 board (i32-to-i64 idx3)
+            arr_res0: array_get s_curr board (i32_to_i64 idx0)
+            arr_res1: array_get arr_res0.0 board (i32_to_i64 idx1)
+            arr_res2: array_get arr_res1.0 board (i32_to_i64 idx2)
+            arr_res3: array_get arr_res2.0 board (i32_to_i64 idx3)
             s_curr: arr_res3.0
 
             v0: arr_res0.1
@@ -172,7 +172,7 @@ main: func [
     // Fill with 0
     i: 0
     while [lt i 42] [
-        state: array_set state board (i32-to-i64 i) 0
+        state: array_set state board (i32_to_i64 i) 0
         i: add i 1
     ]
 
@@ -205,12 +205,12 @@ main: func [
             placed: 0
             while [and (ge r 0) (eq placed 0)] [
                 idx: add (mul r 7) col
-                get_res: array_get state board (i32-to-i64 idx)
+                get_res: array_get state board (i32_to_i64 idx)
                 state: get_res.0
                 val: get_res.1
 
                 either [eq val 0] [
-                    state: array_set state board (i32-to-i64 idx) turn
+                    state: array_set state board (i32_to_i64 idx) turn
                     placed: 1
                     moves: add moves 1
                 ][
