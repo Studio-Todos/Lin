@@ -340,7 +340,54 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
                             }
                         }
                     }
-                    
+
+                    // Auto-detect external C function calls in payload
+                    // (llvm.call @func_name(...)) and generate stub declarations.
+                    // This avoids hardcoding game-specific function names in the compiler.
+                    {
+                        size_t scanPos = 0;
+                        while ((scanPos = pStr.find("llvm.call @", scanPos)) != std::string::npos) {
+                            scanPos += 11;
+                            size_t parenPos = pStr.find("(", scanPos);
+                            if (parenPos == std::string::npos) break;
+                            std::string funcName = pStr.substr(scanPos, parenPos - scanPos);
+                            bool alreadyDeclared = false;
+                            for (auto &d : existingDecls) {
+                                if (d.find("@" + funcName + "(") != std::string::npos) {
+                                    alreadyDeclared = true;
+                                    break;
+                                }
+                            }
+                            if (!alreadyDeclared && snippetDecls.find("@" + funcName + "(") == std::string::npos) {
+                                // Parse call signature: " : (types) -> rettype"
+                                size_t colonPos = pStr.find(":", parenPos);
+                                if (colonPos != std::string::npos) {
+                                    size_t arrowPos = pStr.find("->", colonPos);
+                                    if (arrowPos != std::string::npos) {
+                                        std::string sig = pStr.substr(colonPos + 1, arrowPos - colonPos - 1);
+                                        // Strip whitespace and outer parens
+                                        while (!sig.empty() && sig[0] == ' ') sig.erase(0,1);
+                                        if (!sig.empty() && sig[0] == '(') sig.erase(0,1);
+                                        while (!sig.empty() && sig.back() == ' ') sig.pop_back();
+                                        if (!sig.empty() && sig.back() == ')') sig.pop_back();
+                                        // Collapse whitespace in type list
+                                        std::string args;
+                                        for (char c : sig) {
+                                            if (c != ' ' && c != '\t' && c != '\n') args += c;
+                                        }
+                                        std::string retTypeStr = pStr.substr(arrowPos + 2);
+                                        while (!retTypeStr.empty() && retTypeStr[0] == ' ') retTypeStr.erase(0,1);
+                                        size_t endPos = retTypeStr.find_first_of(" \n\t\r");
+                                        std::string retType = (endPos == std::string::npos) ? retTypeStr : retTypeStr.substr(0, endPos);
+                                        std::string decl = "llvm.func @" + funcName + "(" + args + ") -> " + retType + "\n";
+                                        snippetDecls += decl;
+                                    }
+                                }
+                            }
+                            scanPos = parenPos + 1;
+                        }
+                    }
+
                     std::string pStrRenamed = pStr;
 
                     std::string argS2 = "";
