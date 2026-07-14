@@ -1,0 +1,15 @@
+// RUN: %linc build %s -o %t && %t
+// Test: mlir-op dispatch inside func
+import "std/types.lin"
+import "std/math.lin"
+
+test_dispatch: func [return: [i32!]] [
+    sum: (add 3 4)
+    either (neq sum 7) [1][
+    diff: (sub 10 3)
+    either (neq diff 7) [2][
+    0
+    ]]
+]
+
+(test_dispatch)

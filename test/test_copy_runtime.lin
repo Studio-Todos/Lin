@@ -1,0 +1,15 @@
+// RUN: %linc build %s -o %t && %t
+// Test: copy block data (built-in compiler support)
+import "std/types.lin"
+import "std/math.lin"
+
+test_copy: func [return: [i32!]] [
+    v: copy [42 99]
+    first: (v/1)
+    second: ((v/2)/1)
+    either (neq first 42) [1][
+    either (neq second 99) [2][
+    0
+    ]]
+]
+(test_copy)
