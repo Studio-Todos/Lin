@@ -1095,31 +1095,95 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           Block *doComm = funcOp.addBlock();
           builder.create<cf::CondBranchOp>(loc, isBinary, doBinary, doComm);
 
-          builder.setInsertionPointToStart(doBinary);
-          Value rPort = builder.create<pic::runtime::GetPortOp>(loc, i32Type, opNode, builder.getI8IntegerAttr(1));
-          Value rTarget = builder.create<arith::ShRUIOp>(loc, rPort, c2_i32);
-          Value rMeta = builder.create<pic::runtime::GetPortOp>(loc, i32Type, rTarget, builder.getI8IntegerAttr(3));
-          Value rLabel = builder.create<arith::AndIOp>(loc, rMeta, c0xFFFFFF_i32);
-          Value cCallCode = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("call")));
-          Value isCall = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, valLabel, cCallCode);
-          Value rLabelMatch = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rLabel, valLabel);
-          Value isRCall = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rLabel, cCallCode);
-          Value rIsLit = isLiteralLabel(builder, loc, rLabel);
-          Value isRVal = builder.create<arith::OrIOp>(loc, rLabelMatch, isCall);
-          isRVal = builder.create<arith::OrIOp>(loc, isRVal, isRCall);
-          isRVal = builder.create<arith::OrIOp>(loc, isRVal, rIsLit);
+builder.setInsertionPointToStart(doBinary);
+      Value rPort = builder.create<pic::runtime::GetPortOp>(loc, i32Type, opNode, builder.getI8IntegerAttr(1));
+      Value rTarget = builder.create<arith::ShRUIOp>(loc, rPort, c2_i32);
+      Value rMeta = builder.create<pic::runtime::GetPortOp>(loc, i32Type, rTarget, builder.getI8IntegerAttr(3));
+
+      // Follow duplicator chain to find actual value source (state thread walking)
+      Value rTargetTypeVal = builder.create<arith::ShRUIOp>(loc, rMeta, c24_i32);
+      Value rTargetNodeType = builder.create<arith::AndIOp>(loc, rTargetTypeVal, c0x3F_i32);
+      Value cDupCode = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(3));
+      Value isDup = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rTargetNodeType, cDupCode);
+      Value rTargetP0 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, rTarget, builder.getI8IntegerAttr(0));
+      Value rActual = builder.create<arith::SelectOp>(loc, isDup, builder.create<arith::ShRUIOp>(loc, rTargetP0, c2_i32), rTarget);
+
+      Value rActualMeta = builder.create<pic::runtime::GetPortOp>(loc, i32Type, rActual, builder.getI8IntegerAttr(3));
+      Value rActualTypeVal = builder.create<arith::ShRUIOp>(loc, rActualMeta, c24_i32);
+      Value rActualNodeType = builder.create<arith::AndIOp>(loc, rActualTypeVal, c0x3F_i32);
+
+      // If actual target is an omega- mlir-op with unresolved p2 -> retry
+      Value cOpCode = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(5));
+      Value isOp = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rActualNodeType, cOpCode);
+      Value rActualLabel = builder.create<arith::AndIOp>(loc, rActualMeta, c0xFFFFFF_i32);
+      Value isLit = isLiteralLabel(builder, loc, rActualLabel);
+      Value notLit = builder.create<arith::XOrIOp>(loc, isLit, builder.create<arith::ConstantOp>(loc, i1Type, builder.getBoolAttr(true)));
+      Value hasDep = builder.create<arith::AndIOp>(loc, isOp, notLit);
+      Block *checkDep = funcOp.addBlock();
+      Block *proceedBin = funcOp.addBlock();
+      builder.create<cf::CondBranchOp>(loc, hasDep, checkDep, proceedBin);
+
+      builder.setInsertionPointToStart(checkDep);
+      Value opP2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, rActual, builder.getI8IntegerAttr(2));
+      Value p2Node = builder.create<arith::ShRUIOp>(loc, opP2, c2_i32);
+      Value p2Meta = builder.create<pic::runtime::GetPortOp>(loc, i32Type, p2Node, builder.getI8IntegerAttr(3));
+      Value p2TypeVal = builder.create<arith::ShRUIOp>(loc, p2Meta, c24_i32);
+      Value p2NodeType = builder.create<arith::AndIOp>(loc, p2TypeVal, c0x3F_i32);
+      Value cEraCode = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(4));
+      Value isEra = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, p2NodeType, cEraCode);
+      Value p2IsZero = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, opP2, c0_i32);
+      Value unresolved = builder.create<arith::OrIOp>(loc, isEra, p2IsZero);
+      Block *retryBin = funcOp.addBlock();
+      Block *directDispatch = funcOp.addBlock();
+      builder.create<cf::CondBranchOp>(loc, unresolved, retryBin, directDispatch);
+
+      builder.setInsertionPointToStart(retryBin);
+      builder.create<pic::runtime::PushRedexOp>(loc, nodeA, nodeB);
+      builder.create<cf::BranchOp>(loc, lHead);
+
+      builder.setInsertionPointToStart(directDispatch);
+      Value resolvedStateVal = builder.create<pic::runtime::GetPortOp>(loc, i32Type, p2Node, builder.getI8IntegerAttr(1));
+      Value resolvedStateVal64 = builder.create<arith::ExtUIOp>(loc, i64Type, resolvedStateVal);
+      Value v0_dd = loadLiteralVal(valNode, valLabel);
+      Value resValDD = genInlineDispatch(builder, loc, impl, resolvedStateVal64, v0_dd, stateArg, funcOp, userOps, c0_i64);
+      Value isSameDD = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, resValDD, opP2);
+      Block *skipLinkDD = funcOp.addBlock();
+      Block *doLinkDD = funcOp.addBlock();
+      builder.create<cf::CondBranchOp>(loc, isSameDD, skipLinkDD, doLinkDD);
+
+      builder.setInsertionPointToStart(doLinkDD);
+      Value valLabel64DD = builder.create<arith::ExtUIOp>(loc, i64Type, valLabel);
+      Value resNodeDD = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(ALLOC_OP), valLabel64DD, builder.getBoolAttr(false));
+      builder.create<pic::runtime::SetPortOp>(loc, resNodeDD, builder.getI8IntegerAttr(1), resValDD);
+      Value opP_aux2DD = builder.create<pic::runtime::GetPortOp>(loc, i32Type, opNode, builder.getI8IntegerAttr(2));
+      builder.create<pic::runtime::LinkOp>(loc, opP_aux2DD, makePortVal(resNodeDD, 0));
+      builder.create<cf::BranchOp>(loc, skipLinkDD);
+
+      builder.setInsertionPointToStart(skipLinkDD);
+      builder.create<cf::BranchOp>(loc, lHead);
+
+      builder.setInsertionPointToStart(proceedBin);
+      Value rLabel = builder.create<arith::AndIOp>(loc, rActualMeta, c0xFFFFFF_i32);
+      Value cCallCode = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("call")));
+      Value isCall = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, valLabel, cCallCode);
+      Value rLabelMatch = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rLabel, valLabel);
+      Value isRCall = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rLabel, cCallCode);
+      Value rIsLit = isLiteralLabel(builder, loc, rLabel);
+      Value isRVal = builder.create<arith::OrIOp>(loc, rLabelMatch, isCall);
+      isRVal = builder.create<arith::OrIOp>(loc, isRVal, isRCall);
+      isRVal = builder.create<arith::OrIOp>(loc, isRVal, rIsLit);
 
           Block *doFullBinary = funcOp.addBlock();
           builder.create<cf::CondBranchOp>(loc, isRVal, doFullBinary, doComm);
 
           builder.setInsertionPointToStart(doFullBinary);
           Value v0_64_bin = loadLiteralVal(valNode, valLabel);
-          Value v1_64 = loadLiteralVal(rTarget, rLabel);
-          Value rTarget_64 = builder.create<arith::ExtUIOp>(loc, i64Type, rTarget);
+          Value v1_64 = loadLiteralVal(rActual, rLabel);
+          Value rActual_64 = builder.create<arith::ExtUIOp>(loc, i64Type, rActual);
           Value valNode_aux2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, valNode, builder.getI8IntegerAttr(2));
           Value valNode_aux2_64 = builder.create<arith::ExtUIOp>(loc, i64Type, valNode_aux2);
           
-          Value firstArg_64 = builder.create<arith::SelectOp>(loc, isCall, rTarget_64, v1_64);
+          Value firstArg_64 = builder.create<arith::SelectOp>(loc, isCall, rActual_64, v1_64);
           Value callArg0_64 = builder.create<arith::SelectOp>(loc, isCall, v0_64_bin, firstArg_64);
           Value callArg1_64 = builder.create<arith::SelectOp>(loc, isCall, valNode_aux2_64, v0_64_bin);
 
