@@ -698,6 +698,42 @@ static MlirValue lowerBlockExpr(MlirContext ctx, MlirBlock block, MlirLocation l
     return lastVal;
 }
 
+static MlirValue lowerBlockDataExpr(MlirContext ctx, MlirBlock block, MlirLocation loc, AstNode *expr, Environment *env) {
+    // Create pair chain from block elements: pair(e0, pair(e1, ... pair(eN, era)))
+    // Each pair is a gamma+ agent with label "pair"
+    MlirType portType = getPicPortType(ctx);
+    MlirType agentTypes[] = {portType, portType, portType};
+
+    MlirAttribute pairTypeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("gamma"));
+    MlirNamedAttribute pType = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), pairTypeAttr);
+    MlirAttribute plusPol = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("+"));
+    MlirNamedAttribute pPol = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), plusPol);
+    MlirAttribute labelPair = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("pair"));
+    MlirNamedAttribute pLabel = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), labelPair);
+    MlirNamedAttribute pAttrs[] = {pType, pPol, pLabel};
+
+    MlirValue chain = createEra(ctx, block, loc);
+    for (int i = expr->as.block.count - 1; i >= 0; i--) {
+        AstNode *stmt = expr->as.block.statements[i];
+        if (!stmt || stmt->type == AST_IMPORT) continue;
+        MlirValue elem = lowerExpression(ctx, block, loc, stmt, env, false);
+
+        MlirOperationState pairState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+        mlirOperationStateAddAttributes(&pairState, 3, pAttrs);
+        mlirOperationStateAddResults(&pairState, 3, agentTypes);
+        MlirOperation pairOp = mlirOperationCreate(&pairState);
+        mlirBlockAppendOwnedOperation(block, pairOp);
+
+        MlirValue p0 = mlirOperationGetResult(pairOp, 0);
+        MlirValue p1 = mlirOperationGetResult(pairOp, 1);
+        MlirValue p2 = mlirOperationGetResult(pairOp, 2);
+        linkValues(block, loc, p1, elem);
+        linkValues(block, loc, p2, chain);
+        chain = p0;
+    }
+    return chain;
+}
+
 static MlirValue lowerWhileExpr(MlirContext ctx, MlirBlock block, MlirLocation loc, AstNode *expr, Environment *env, MlirBlock moduleBody) {
 
     // Find all active variables in env
@@ -1458,6 +1494,14 @@ static MlirValue lowerCallExpr(MlirContext ctx, MlirBlock block, MlirLocation lo
         return p0;
     }
 
+    // Handle (copy [...]) - create pair chain from block elements
+    if (effectiveCalleeLen == 4 && memcmp(effectiveCallee, "copy", 4) == 0 && expr->as.call.arg_count >= 1) {
+        AstNode *firstArg = expr->as.call.args[0];
+        if (firstArg->type == AST_BLOCK || firstArg->type == AST_BLOCK_DATA) {
+            return lowerBlockDataExpr(ctx, block, loc, firstArg, env);
+        }
+    }
+
     // Check if callee is a user-defined function in the environment
     // Skip the env lookup if the resolved callee comes from type-directed dispatch
     // OR if the callee is a known mlir-op name (registered in std/io.lin or similar).
@@ -1887,6 +1931,10 @@ if (expr->type == AST_NUMBER || expr->type == AST_BOOL || expr->type == AST_FLOA
 
     if (expr->type == AST_BLOCK) {
         return lowerBlockExpr(ctx, block, loc, expr, env);
+    }
+
+    if (expr->type == AST_BLOCK_DATA) {
+        return lowerBlockDataExpr(ctx, block, loc, expr, env);
     }
 
     if (expr->type == AST_WHILE) {
