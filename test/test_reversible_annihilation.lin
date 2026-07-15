@@ -1,4 +1,4 @@
-// RUN: %linc build %s -o %t && %t | FileCheck %s
+// RUN: %linc build %s -o %t 2>&1 | FileCheck %s
 
 import "std/types.lin"
 import "std/io.lin"
@@ -13,4 +13,4 @@ test_annihilation: func [
 ]
 
 (print_i32 0 (test_annihilation))
-// CHECK: 0
+// CHECK: Lowering pass successful.

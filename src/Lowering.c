@@ -1746,7 +1746,7 @@ static MlirValue lowerLiteralExpr(MlirContext ctx, MlirBlock block, MlirLocation
                 label = "i64";
             }
         }
-        return makeOmegaLiteral(ctx, block, loc, expr->type == AST_NUMBER ? label : "bool", val, false, NULL, 0);
+        return makeOmegaLiteral(ctx, block, loc, label, val, false, NULL, 0);
     }
     if (expr->type == AST_FLOAT) {
         union { double f; int64_t i; } cast;
