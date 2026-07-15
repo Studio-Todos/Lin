@@ -1,0 +1,17 @@
+// RUN: %linc build %s -o %t && %t
+// Test: pair field access with either-based assertions
+import "std/types.lin"
+import "std/math.lin"
+
+test_pair: func [return: [i32!]] [
+    v: (pair 10 20)
+    either (neq (v/1) 10) [1][
+    either (neq (v/2) 20) [2][
+    t: (pair 100 (pair 200 300))
+    either (neq (t/1) 100) [3][
+    either (neq ((t/2)/1) 200) [4][
+    either (neq ((t/2)/2) 300) [5][
+    0
+    ]]]]]
+]
+(test_pair)

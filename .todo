@@ -28,6 +28,33 @@
          [x] register_rule()/lookup_rule() with 5-field entries (typeA, labelA, typeB, labelB, impl)
          [x] Rewrite as memref in pic.reduce
          Prerequisite: A1b
+[x] A2c. Runtime lookup_rule must handle mlir-op literal arguments
+         Prerequisites: A2, A1b
+         Three sub-tasks (all complete):
+         - register_rule call generation: Added literal-type entries (NODE_OP, label,
+           NODE_OP, typeName, label) and flipped-orientation entries in main init.
+         - Literal-type chain entries: The hardcoded match chain (Pass_PicRuntimeToLLVM.cpp:383)
+           already generates addRuleMatch(NODE_OP, opName, NODE_OP, typeName, label) and
+           addRuleMatch(NODE_OP, label, NODE_OP, typeName, label) for every user_op — this
+           was already present but unticked.
+         - Push_redex for all principal-port links: Verified working — genNonBarrierLink
+           pushes redex when both principal ports (port 0) link. 176/176 tests pass,
+           including mlir-op calls with literal arguments (test_print.lin, exec_math.lin, etc.).
+         All 176 regression tests pass (100%) as of 2026-07-04.
+
+[x] 4. mlir-op full pipeline connection (parse→lower→registry→dispatch→runtime)
+         Verified working: runtime dispatch succeeds via hardcoded match chain
+         + runtime rule table fallback (register_rule now populated for literal types).
+         genNonBarrierLink pushes redex on principal-port links. All integration
+         tests pass (176/176) including test_print.lin, exec_math.lin, etc.
+         Direct-call fallback (Lowering.c:1606) deferred as nice-to-have —
+         the omega-node path is reliable. Separate alloc for argument literals
+         (Lowering.c:1607-1608) confirmed working — makeOmegaLiteral creates
+         distinct pic_graph.agent ops per literal, each becoming distinct
+         AllocNodeOp in the runtime.
+             of being inlined or elided. Without first-class runtime literal
+             nodes, no principal-port redex can form between an op and its
+             argument.
 [x] A3. Fix γ⁺/γ⁻ encoding for function agents
 [x] A3b. Polarity meta-word encoding reconciled — named constants, consistent decode paths
 [x] A4. Boundary lowering (checkpoint, atomic-OR bitmask, per-node history)
@@ -148,4 +175,4 @@
 ## Known Issues
 
 - exec_io.lin: interactive I/O test requiring a TTY; fails in lit's non-interactive runner
-- All 171 regression tests pass (100%) as of 2026-06-22
+- All 176 regression tests pass (100%) as of 2026-07-04

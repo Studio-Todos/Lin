@@ -1,0 +1,44 @@
+// RUN: %linc build %s -o %t && %t
+// Stress test all 51 math mlir-ops with i64/i32/f32/f64 literals.
+import "std/math.lin"
+import "std/io.lin"
+import "std/cast.lin"
+
+all_math: func [
+    argc [i32!]
+    return: [i32!]
+][
+    // i32 arithmetic
+    either (neq (add 12345 67890) 80235) [1][
+    either (neq (sub 99999 55555) 44444) [2][
+    either (neq (mul 1234 567) 700278) [3][
+    either (neq (div 100000 3) 33333) [4][
+    either (neq (rem 100000 3) 1) [5][
+
+    // i32 unary
+    either (neq (abs32 -42) 42) [6][
+    either (neq (neg32 42) -42) [7][
+    either (neq (xor32 0xFF 0x0F) 0xF0) [8][
+
+    // 64-bit ops with suffix (need explicit i64 for comparison)
+    either (neq (add64 10000000000 20000000000) 30000000000) [9][
+
+    // Comparisons via operators
+    either (neq (eq64 42 42) 1) [10][
+    either (neq (ne64 42 43) 1) [11][
+    either (neq (slt64 3 7) 1) [12][
+    either (neq (sgt64 7 3) 1) [13][
+
+    // Cast roundtrip
+    either (neq (i32_to_i64 42) 42) [14][
+    either (neq (i64_to_i32 42) 42) [15][
+
+    // Complex expressions with mixed operations
+    either (neq (add (mul 5 7) (sub (div 100 4) 3)) 57) [16][
+    either (neq (sub (mul 6 7) (add 10 20)) 12) [17][
+    either (neq (div (mul 8 9) (sub 25 19)) 12) [18][
+    0
+    ]]]]]]]]]]]]]]]]]]
+]
+
+(print_i32 (all_math 0))

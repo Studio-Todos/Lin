@@ -1,0 +1,8 @@
+// RUN: %linc build %s -o %t && %t | FileCheck %s
+// CHECK: 7
+// Test basic user-op arithmetic with literal arguments.
+import "std/types.lin"
+import "std/io.lin"
+import "std/math.lin"
+
+(print_i32 0 (add 3 4))

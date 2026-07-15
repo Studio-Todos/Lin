@@ -156,12 +156,16 @@
             pkgs.vulkan-headers
             vulkan-loader
             vulkan-validation-layers
+            pkgs.xorg.libX11
+            pkgs.xorg.libX11.dev
+            pkgs.libglvnd
+            pkgs.mesa
           ];
 
           shellHook = ''
             export LLVM_DIR=${llvm.llvm.dev}
             export MLIR_DIR=${llvm.mlir.dev}
-            export LD_LIBRARY_PATH="${vulkan-loader}/lib:${vulkan-validation-layers}/lib:$LD_LIBRARY_PATH"
+            export LD_LIBRARY_PATH="${vulkan-loader}/lib:${vulkan-validation-layers}/lib:${pkgs.mesa}/lib:${pkgs.libglvnd}/lib:$LD_LIBRARY_PATH"
             export VK_LAYER_PATH="${vulkan-validation-layers}/share/vulkan/explicit_layer.d"
             export PATH="${llvm.llvm}/bin:$PATH"
             echo "Lin Development Environment"

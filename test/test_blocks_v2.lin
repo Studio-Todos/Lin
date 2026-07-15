@@ -1,0 +1,21 @@
+// RUN: %linc build %s -o %t 2>&1 | FileCheck %s
+import "std/types.lin"
+import "std/io.lin"
+
+main: func [return: [i32!]] [
+    state: 0
+
+    ; Test 1: pair primitive
+    p: (pair 10 20)
+    state: (print_i32 state (p)/1)
+    state: (print_i32 state (p)/2)
+
+    ; Test 2: 3-element block via nested pairs
+    b3: (pair 1 (pair 2 3))
+    state: (print_i32 state (b3)/1)
+    state: (print_i32 state (b3)/2/1)
+    state: (print_i32 state (b3)/2/2)
+
+    0
+]
+// CHECK: Lowering pass successful.

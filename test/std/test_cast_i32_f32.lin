@@ -6,4 +6,4 @@
 import "std/types.lin"
 import "std/cast.lin"
 
-(i32-to-f32 42)
+(i32_to_f32 42)

@@ -1,0 +1,31 @@
+// RUN: %linc build %s -o %t && %t
+// Test user-ops with variables as arguments (from function parameters).
+import "std/math.lin"
+import "std/io.lin"
+
+apply_twice: func [
+    x [i32!]
+    return: [i32!]
+][
+    (add x x)
+]
+
+test_vars: func [
+    argc [i32!]
+    return: [i32!]
+][
+    a: 10
+    b: 5
+    // Variable args: (add a b) = 15
+    either (neq (add a b) 15) [1][
+    // Variable + literal: (sub a 3) = 7
+    either (neq (sub a 3) 7) [2][
+    // Literal + variable: (mul 2 b) = 10
+    either (neq (mul 2 b) 10) [3][
+    // Function param: (apply_twice 7) = 14
+    either (neq (apply_twice 7) 14) [4][
+    0
+    ]]]]
+]
+
+(print_i32 (test_vars 0))

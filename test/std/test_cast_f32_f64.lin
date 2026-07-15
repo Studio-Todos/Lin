@@ -6,4 +6,4 @@
 import "std/types.lin"
 import "std/cast.lin"
 
-(f32-to-f64 3.14)
+(f32_to_f64 3.14)

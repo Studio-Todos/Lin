@@ -698,6 +698,42 @@ static MlirValue lowerBlockExpr(MlirContext ctx, MlirBlock block, MlirLocation l
     return lastVal;
 }
 
+static MlirValue lowerBlockDataExpr(MlirContext ctx, MlirBlock block, MlirLocation loc, AstNode *expr, Environment *env) {
+    // Create pair chain from block elements: pair(e0, pair(e1, ... pair(eN, era)))
+    // Each pair is a gamma+ agent with label "pair"
+    MlirType portType = getPicPortType(ctx);
+    MlirType agentTypes[] = {portType, portType, portType};
+
+    MlirAttribute pairTypeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("gamma"));
+    MlirNamedAttribute pType = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), pairTypeAttr);
+    MlirAttribute plusPol = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("+"));
+    MlirNamedAttribute pPol = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), plusPol);
+    MlirAttribute labelPair = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("pair"));
+    MlirNamedAttribute pLabel = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), labelPair);
+    MlirNamedAttribute pAttrs[] = {pType, pPol, pLabel};
+
+    MlirValue chain = createEra(ctx, block, loc);
+    for (int i = expr->as.block.count - 1; i >= 0; i--) {
+        AstNode *stmt = expr->as.block.statements[i];
+        if (!stmt || stmt->type == AST_IMPORT) continue;
+        MlirValue elem = lowerExpression(ctx, block, loc, stmt, env, false);
+
+        MlirOperationState pairState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+        mlirOperationStateAddAttributes(&pairState, 3, pAttrs);
+        mlirOperationStateAddResults(&pairState, 3, agentTypes);
+        MlirOperation pairOp = mlirOperationCreate(&pairState);
+        mlirBlockAppendOwnedOperation(block, pairOp);
+
+        MlirValue p0 = mlirOperationGetResult(pairOp, 0);
+        MlirValue p1 = mlirOperationGetResult(pairOp, 1);
+        MlirValue p2 = mlirOperationGetResult(pairOp, 2);
+        linkValues(block, loc, p1, elem);
+        linkValues(block, loc, p2, chain);
+        chain = p0;
+    }
+    return chain;
+}
+
 static MlirValue lowerWhileExpr(MlirContext ctx, MlirBlock block, MlirLocation loc, AstNode *expr, Environment *env, MlirBlock moduleBody) {
 
     // Find all active variables in env
@@ -1458,6 +1494,14 @@ static MlirValue lowerCallExpr(MlirContext ctx, MlirBlock block, MlirLocation lo
         return p0;
     }
 
+    // Handle (copy [...]) - create pair chain from block elements
+    if (effectiveCalleeLen == 4 && memcmp(effectiveCallee, "copy", 4) == 0 && expr->as.call.arg_count >= 1) {
+        AstNode *firstArg = expr->as.call.args[0];
+        if (firstArg->type == AST_BLOCK || firstArg->type == AST_BLOCK_DATA) {
+            return lowerBlockDataExpr(ctx, block, loc, firstArg, env);
+        }
+    }
+
     // Check if callee is a user-defined function in the environment
     // Skip the env lookup if the resolved callee comes from type-directed dispatch
     // OR if the callee is a known mlir-op name (registered in std/io.lin or similar).
@@ -1630,12 +1674,14 @@ static MlirValue lowerCallExpr(MlirContext ctx, MlirBlock block, MlirLocation lo
 
         // Link omega- p1 ↔ left (state arg) — binary dispatch follows this
         linkValues(block, loc, p1, left);
-        // Link omega- p2 = era
-        linkToEra(ctx, block, loc, p2);
         // Link omega- p0 ↔ right p0 (value arg forms active pair with literal)
         linkValues(block, loc, result, right);
+        // Return p2 as the result port — p0 is the active pair partner (linked to value arg).
+        // Returning p2 avoids double-linking p0 when nested calls link the result to a consumer.
+        // p2 is unlinked here; the runtime defaults it to era. If a consumer links to p2,
+        // the LinkOp overwrites the era default, and after the FireOp the result node links to p2's target.
 
-        return result;
+        return p2;
     } else if (expr->as.call.arg_count == 1) {
         MlirValue arg = lowerExpression(ctx, block, loc, expr->as.call.args[0], env, false);
 
@@ -1679,12 +1725,11 @@ static MlirValue lowerCallExpr(MlirContext ctx, MlirBlock block, MlirLocation lo
 
         // Link omega- p1 ↔ state literal (binary dispatch follows this for %arg0/state)
         linkValues(block, loc, p1, stateLiteral);
-        // Link omega- p2 = era
-        linkToEra(ctx, block, loc, p2);
         // Link omega- p0 ↔ arg p0 (value arg forms active pair)
         linkValues(block, loc, result, arg);
+        // Return p2 as the result port (avoids double-linking p0 for nested calls)
 
-        return result;
+        return p2;
     }
 
     return createEra(ctx, block, loc);
@@ -1695,7 +1740,13 @@ static MlirValue lowerCallExpr(MlirContext ctx, MlirBlock block, MlirLocation lo
 static MlirValue lowerLiteralExpr(MlirContext ctx, MlirBlock block, MlirLocation loc, AstNode *expr) {
     if (expr->type == AST_NUMBER || expr->type == AST_BOOL) {
         int64_t val = (expr->type == AST_NUMBER) ? expr->as.number.value : (expr->as.boolean.value ? 1 : 0);
-        return makeOmegaLiteral(ctx, block, loc, expr->type == AST_NUMBER ? "i32" : "bool", val, false, NULL, 0);
+        const char *label = "i32";
+        if (expr->type == AST_NUMBER) {
+            if (val < -2147483648LL || val > 2147483647LL) {
+                label = "i64";
+            }
+        }
+        return makeOmegaLiteral(ctx, block, loc, label, val, false, NULL, 0);
     }
     if (expr->type == AST_FLOAT) {
         union { double f; int64_t i; } cast;
@@ -1880,6 +1931,10 @@ if (expr->type == AST_NUMBER || expr->type == AST_BOOL || expr->type == AST_FLOA
 
     if (expr->type == AST_BLOCK) {
         return lowerBlockExpr(ctx, block, loc, expr, env);
+    }
+
+    if (expr->type == AST_BLOCK_DATA) {
+        return lowerBlockDataExpr(ctx, block, loc, expr, env);
     }
 
     if (expr->type == AST_WHILE) {

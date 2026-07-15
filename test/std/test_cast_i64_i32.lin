@@ -6,4 +6,4 @@
 import "std/types.lin"
 import "std/cast.lin"
 
-(i64-to-i32 4200000)
+(i64_to_i32 4200000)

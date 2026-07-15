@@ -1,0 +1,25 @@
+// RUN: %linc build %s -o %t && %t
+// Test user-ops with ternary mlir-ops (3+ arguments) and control flow interaction.
+import "std/math.lin"
+import "std/io.lin"
+import "std/control.lin"
+
+test_ternary: func [
+    argc [i32!]
+    return: [i32!]
+][
+    // either cond t f
+    either (neq (either 1 [42] [99]) 42) [1][
+    either (neq (either 0 [42] [99]) 99) [2][
+
+    // Nested ternary
+    either (neq (either (lt 3 5) [10] [20]) 10) [3][
+    either (neq (either (gt 3 5) [10] [20]) 20) [4][
+
+    // either inside math
+    either (neq (add (either 1 [5] [0]) (either 0 [0] [3])) 8) [5][
+    0
+    ]]]]]
+]
+
+(print_i32 (test_ternary 0))
