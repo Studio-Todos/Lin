@@ -105,7 +105,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             stateArg = f.getBody().front().addArgument(i64Type, f.getLoc());
 
             f.walk([](func::ReturnOp op) {
-                if (op.getNumOperands() > 0) op->setOperands({});
+                op->setOperands({});
             });
         } else {
             stateArg = f.getArgument(f.getNumArguments() - 1);
@@ -670,8 +670,8 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         return;
     }
     builder.setInsertionPoint(entry);
-        auto m = builder.create<LLVM::LLVMFuncOp>(entry.getLoc(), "main", LLVM::LLVMFunctionType::get(i32Type, {}));
-        Block *mE = m.addEntryBlock(); builder.setInsertionPointToStart(mE);
+        auto mainFunc = builder.create<func::FuncOp>(entry.getLoc(), "main", builder.getFunctionType({}, {i32Type}));
+        Block *mE = mainFunc.addEntryBlock(); builder.setInsertionPointToStart(mE);
         for (auto &op : userOps) {
             std::string opName = "";
             std::string typeName = "";
@@ -795,7 +795,7 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
             }
             builder.create<LLVM::CallOp>(entry.getLoc(), TypeRange{}, "pic_gpu_cleanup", ValueRange{});
         }
-        builder.create<LLVM::ReturnOp>(entry.getLoc(), ValueRange{builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(0))});
+        builder.create<func::ReturnOp>(entry.getLoc(), ValueRange{builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(0))});
 
     SmallVector<Operation*> castsToErase;
     module.walk([&](UnrealizedConversionCastOp op) {
