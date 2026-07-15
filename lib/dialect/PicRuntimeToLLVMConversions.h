@@ -49,10 +49,10 @@ static void genNonBarrierLink(OpBuilder &ob, Location loc, Value p1, Value p2, V
     ob.create<LLVM::CondBrOp>(loc, isR, push, cont);
 
     ob.setInsertionPointToStart(push);
-    auto tailGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({1}, i64Type), "__pic_queue_tail");
+    auto tailGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({}, i64Type), "__pic_queue_tail");
     Value curT = ob.create<memref::AtomicRMWOp>(loc, i64Type, arith::AtomicRMWKind::addi,
         ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1)),
-        tailGlobal, ValueRange{ob.create<arith::ConstantIndexOp>(loc, 0)});
+        tailGlobal, ValueRange{});
     Value inBounds = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ult, curT, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(16000000)));
 
     Block *doStore = f.addBlock();
@@ -317,10 +317,10 @@ static void convertPushRedexOp(OpBuilder &ob, pic::runtime::PushRedexOp pushOp, 
 
     Value nA = pushOp.getNodeA();
     Value nB = pushOp.getNodeB();
-    auto tailGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({1}, i64Type), "__pic_queue_tail");
+    auto tailGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({}, i64Type), "__pic_queue_tail");
     Value curT = ob.create<memref::AtomicRMWOp>(loc, i64Type, arith::AtomicRMWKind::addi,
         ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1)),
-        tailGlobal, ValueRange{ob.create<arith::ConstantIndexOp>(loc, 0)});
+        tailGlobal, ValueRange{});
     Value inBounds = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ult, curT, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(16000000)));
 
     Block *curr = ob.getBlock();
@@ -347,14 +347,13 @@ static std::array<Value, 3> convertPopRedexOp(OpBuilder &ob, pic::runtime::PopRe
     auto i1Type = ob.getI1Type();
     Location loc = popOp.getLoc();
 
-    auto headTy = MemRefType::get({1}, i64Type);
+    auto headTy = MemRefType::get({}, i64Type);
     auto headGlobal = ob.create<memref::GetGlobalOp>(loc, headTy, "__pic_queue_head");
     auto tailGlobal = ob.create<memref::GetGlobalOp>(loc, headTy, "__pic_queue_tail");
     auto activeGlobal = ob.create<memref::GetGlobalOp>(loc, headTy, "__pic_active_count");
     auto lockGlobal = ob.create<memref::GetGlobalOp>(loc, headTy, "__pic_lock");
     auto qGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i64Type), "__pic_queue");
 
-    Value zeroIdx = ob.create<arith::ConstantIndexOp>(loc, 0);
     Value oneVal = ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1));
     Value zeroVal = ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(0));
 
@@ -381,31 +380,31 @@ static std::array<Value, 3> convertPopRedexOp(OpBuilder &ob, pic::runtime::PopRe
 
     ob.setInsertionPointToStart(spinStart);
     Value prevLock = ob.create<memref::AtomicRMWOp>(loc, i64Type, arith::AtomicRMWKind::assign,
-        oneVal, lockGlobal, ValueRange{zeroIdx});
+        oneVal, lockGlobal, ValueRange{});
     Value isLocked = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, prevLock, oneVal);
     ob.create<LLVM::CondBrOp>(loc, isLocked, spinStart, lockedCase);
 
     ob.setInsertionPointToStart(lockedCase);
-    Value curH = ob.create<memref::LoadOp>(loc, i64Type, headGlobal, ValueRange{zeroIdx});
-    Value curT = ob.create<memref::LoadOp>(loc, i64Type, tailGlobal, ValueRange{zeroIdx});
+    Value curH = ob.create<memref::LoadOp>(loc, i64Type, headGlobal, ValueRange{});
+    Value curT = ob.create<memref::LoadOp>(loc, i64Type, tailGlobal, ValueRange{});
     Value hasElement = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ult, curH, curT);
     ob.create<LLVM::CondBrOp>(loc, hasElement, doPop, doWait);
 
     ob.setInsertionPointToStart(doPop);
     Value nextH = ob.create<LLVM::AddOp>(loc, i64Type, curH, oneVal);
-    ob.create<memref::StoreOp>(loc, nextH, headGlobal, ValueRange{zeroIdx});
-    ob.create<memref::StoreOp>(loc, zeroVal, lockGlobal, ValueRange{zeroIdx});
+    ob.create<memref::StoreOp>(loc, nextH, headGlobal, ValueRange{});
+    ob.create<memref::StoreOp>(loc, zeroVal, lockGlobal, ValueRange{});
     ob.create<LLVM::BrOp>(loc, ValueRange{curH}, doLoad);
 
     ob.setInsertionPointToStart(doWait);
-    ob.create<memref::StoreOp>(loc, zeroVal, lockGlobal, ValueRange{zeroIdx});
+    ob.create<memref::StoreOp>(loc, zeroVal, lockGlobal, ValueRange{});
     Value negOneVal = ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(-1));
     ob.create<memref::AtomicRMWOp>(loc, i64Type, arith::AtomicRMWKind::addi,
-        negOneVal, activeGlobal, ValueRange{zeroIdx});
+        negOneVal, activeGlobal, ValueRange{});
     ob.create<LLVM::BrOp>(loc, waitStart);
 
     ob.setInsertionPointToStart(waitStart);
-    Value act = ob.create<memref::LoadOp>(loc, i64Type, activeGlobal, ValueRange{zeroIdx});
+    Value act = ob.create<memref::LoadOp>(loc, i64Type, activeGlobal, ValueRange{});
     Value isZero = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, act, zeroVal);
     ob.create<LLVM::CondBrOp>(loc, isZero, terminate, checkQueue);
 
@@ -415,14 +414,14 @@ static std::array<Value, 3> convertPopRedexOp(OpBuilder &ob, pic::runtime::PopRe
     ob.create<LLVM::BrOp>(loc, ValueRange{falseVal, zero32, zero32}, cont);
 
     ob.setInsertionPointToStart(checkQueue);
-    Value checkH = ob.create<memref::LoadOp>(loc, i64Type, headGlobal, ValueRange{zeroIdx});
-    Value checkT = ob.create<memref::LoadOp>(loc, i64Type, tailGlobal, ValueRange{zeroIdx});
+    Value checkH = ob.create<memref::LoadOp>(loc, i64Type, headGlobal, ValueRange{});
+    Value checkT = ob.create<memref::LoadOp>(loc, i64Type, tailGlobal, ValueRange{});
     Value checkHas = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ult, checkH, checkT);
     ob.create<LLVM::CondBrOp>(loc, checkHas, wakeUp, keepWaiting);
 
     ob.setInsertionPointToStart(wakeUp);
     ob.create<memref::AtomicRMWOp>(loc, i64Type, arith::AtomicRMWKind::addi,
-        oneVal, activeGlobal, ValueRange{zeroIdx});
+        oneVal, activeGlobal, ValueRange{});
     ob.create<LLVM::BrOp>(loc, spinStart);
 
     ob.setInsertionPointToStart(keepWaiting);
