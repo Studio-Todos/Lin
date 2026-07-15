@@ -194,6 +194,17 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
     existingDecls.push_back("llvm.func @lin_window_demo_frame(i64, i64) -> i64");
     existingDecls.push_back("llvm.func @lin_window_should_close(i64) -> i64");
     existingDecls.push_back("llvm.func @lin_window_destroy(i64) -> i64");
+    existingDecls.push_back("llvm.func @lin_imgui_init(i64, i64) -> i64");
+    existingDecls.push_back("llvm.func @lin_imgui_new_frame(i64, i64) -> i64");
+    existingDecls.push_back("llvm.func @lin_imgui_render(i64, i64) -> i64");
+    existingDecls.push_back("llvm.func @lin_imgui_should_close(i64, i64) -> i64");
+    existingDecls.push_back("llvm.func @lin_imgui_shutdown(i64, i64) -> i64");
+    existingDecls.push_back("llvm.func @lin_imgui_begin(i64, i64) -> i64");
+    existingDecls.push_back("llvm.func @lin_imgui_end(i64, i64) -> i64");
+    existingDecls.push_back("llvm.func @lin_imgui_text(i64, i64) -> i64");
+    existingDecls.push_back("llvm.func @lin_imgui_button(i64, i64) -> i64");
+    existingDecls.push_back("llvm.func @lin_imgui_same_line(i64, i64) -> i64");
+    existingDecls.push_back("llvm.func @lin_imgui_separator(i64, i64) -> i64");
 
     std::vector<UserOp> userOps;
 
