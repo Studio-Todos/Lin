@@ -29,17 +29,17 @@ static void createPicMemrefGlobals(ModuleOp module, OpBuilder &builder, TargetBa
     auto loc = module.getLoc();
     auto i64Type = builder.getI64Type();
     auto i32Type = builder.getI32Type();
-    auto headTy = MemRefType::get({1}, i64Type);
+    auto headTy = MemRefType::get({}, i64Type);
     if (!module.lookupSymbol("__pic_queue_head")) {
         OpBuilder gb(module.getBodyRegion());
-        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({1}, i64Type), gb.getI64IntegerAttr(0));
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({}, i64Type), gb.getI64IntegerAttr(0));
         gb.create<memref::GlobalOp>(loc, "__pic_queue_head",
             gb.getStringAttr("private"), headTy,
             initAttr, false, IntegerAttr{});
     }
     if (!module.lookupSymbol("__pic_queue_tail")) {
         OpBuilder gb(module.getBodyRegion());
-        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({1}, i64Type), gb.getI64IntegerAttr(0));
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({}, i64Type), gb.getI64IntegerAttr(0));
         gb.create<memref::GlobalOp>(loc, "__pic_queue_tail",
             gb.getStringAttr("private"), headTy,
             initAttr, false, IntegerAttr{});
@@ -47,14 +47,14 @@ static void createPicMemrefGlobals(ModuleOp module, OpBuilder &builder, TargetBa
     if (!module.lookupSymbol("__pic_active_count")) {
         OpBuilder gb(module.getBodyRegion());
         int64_t initVal = (target == TargetBackend::GPU) ? 1 : 4;
-        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({1}, i64Type), gb.getI64IntegerAttr(initVal));
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({}, i64Type), gb.getI64IntegerAttr(initVal));
         gb.create<memref::GlobalOp>(loc, "__pic_active_count",
             gb.getStringAttr("private"), headTy,
             initAttr, false, IntegerAttr{});
     }
     if (!module.lookupSymbol("__pic_lock")) {
         OpBuilder gb(module.getBodyRegion());
-        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({1}, i64Type), gb.getI64IntegerAttr(0));
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({}, i64Type), gb.getI64IntegerAttr(0));
         gb.create<memref::GlobalOp>(loc, "__pic_lock",
             gb.getStringAttr("private"), headTy,
             initAttr, false, IntegerAttr{});
