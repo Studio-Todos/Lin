@@ -1,4 +1,4 @@
-// RUN: %linc build %s -o %t 2>&1 | FileCheck %s
+// RUN: %linc build %s -o %t && %t | FileCheck %s
 
 import "std/types.lin"
 import "std/io.lin"
@@ -12,4 +12,4 @@ test_boundary: func [
 ]
 
 (print_i32 (test_boundary))
-// CHECK: Lowering pass successful.
+// CHECK: 0
