@@ -46,7 +46,7 @@ static void createPicMemrefGlobals(ModuleOp module, OpBuilder &builder, TargetBa
     }
     if (!module.lookupSymbol("__pic_active_count")) {
         OpBuilder gb(module.getBodyRegion());
-        int64_t initVal = (target == TargetBackend::GPU) ? 1 : 4;
+        int64_t initVal = (target == TargetBackend::GPU) ? 1 : 1;
         auto initAttr = DenseElementsAttr::get(RankedTensorType::get({}, i64Type), gb.getI64IntegerAttr(initVal));
         gb.create<memref::GlobalOp>(loc, "__pic_active_count",
             gb.getStringAttr("private"), headTy,
