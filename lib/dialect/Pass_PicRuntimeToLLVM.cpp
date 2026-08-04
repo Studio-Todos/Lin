@@ -755,14 +755,14 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
         {
             Value numThreadsAlloca = target == TargetBackend::GPU
                 ? builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(1))
-                : builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(4));
+                : builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(1));
             Value threads = builder.create<LLVM::AllocaOp>(entry.getLoc(), ptrType, i64Type, numThreadsAlloca);
             Value threadAttr = builder.create<LLVM::ZeroOp>(entry.getLoc(), ptrType);
             auto wFuncType = builder.getFunctionType({i64Type}, {i64Type});
             auto wFuncConst = builder.create<func::ConstantOp>(entry.getLoc(), wFuncType, FlatSymbolRefAttr::get(builder.getContext(), "worker_thread"));
             Value wAddr = builder.create<UnrealizedConversionCastOp>(entry.getLoc(), TypeRange{ptrType}, ValueRange(static_cast<Value>(wFuncConst.getResult()))).getResult(0);
             
-            int numThreads = target == TargetBackend::GPU ? 1 : 4;
+            int numThreads = target == TargetBackend::GPU ? 1 : 1;
             for (int i = 0; i < numThreads; ++i) {
                 Value idx = builder.create<LLVM::ConstantOp>(entry.getLoc(), i64Type, builder.getI64IntegerAttr(i));
                 Value tPtr = builder.create<LLVM::GEPOp>(entry.getLoc(), ptrType, i64Type, threads, ValueRange{idx});

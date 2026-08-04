@@ -8,6 +8,35 @@
 #include <string.h>
 #include <ctype.h>
 
+// Process C-style escape sequences in a string literal.
+// Returns a malloc'd buffer (caller frees) or NULL if no escapes present.
+static char *processEscapes(const char *src, int len, int *outLen) {
+    char *buf = (char *)malloc((size_t)len + 1);
+    if (!buf) return NULL;
+    int w = 0;
+    for (int i = 0; i < len; i++) {
+        char c = src[i];
+        if (c == '\\' && i + 1 < len) {
+            char e = src[++i];
+            switch (e) {
+                case 'n': buf[w++] = '\n'; break;
+                case 't': buf[w++] = '\t'; break;
+                case 'r': buf[w++] = '\r'; break;
+                case '0': buf[w++] = '\0'; break;
+                case '\\': buf[w++] = '\\'; break;
+                case '"': buf[w++] = '"'; break;
+                case '\'': buf[w++] = '\''; break;
+                default: buf[w++] = '\\'; buf[w++] = e; break;
+            }
+        } else {
+            buf[w++] = c;
+        }
+    }
+    buf[w] = '\0';
+    *outLen = w;
+    return buf;
+}
+
 static void sanitizeMlirName(char *name) {
     for (char *p = name; *p; p++) {
         if (*p == '-') *p = '_';
@@ -562,10 +591,15 @@ static MlirValue makeOmegaLiteral(MlirContext ctx, MlirBlock block, MlirLocation
     MlirNamedAttribute labelNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), labelAttr);
 
     if (isString) {
-        MlirAttribute valAttr = mlirStringAttrGet(ctx, mlirStringRefCreate(strVal, strLen));
+        int processedLen = 0;
+        char *processed = processEscapes(strVal, strLen, &processedLen);
+        const char *finalStr = processed ? processed : strVal;
+        int finalLen = processed ? processedLen : strLen;
+        MlirAttribute valAttr = mlirStringAttrGet(ctx, mlirStringRefCreate(finalStr, finalLen));
         MlirNamedAttribute valNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("str_val")), valAttr);
         MlirNamedAttribute attrs[] = {typeNamedAttr, polNamedAttr, labelNamedAttr, valNamedAttr};
         mlirOperationStateAddAttributes(&state, 4, attrs);
+        free(processed);
     } else {
         MlirAttribute valAttr = mlirIntegerAttrGet(mlirIntegerTypeGet(ctx, 64), val);
         MlirNamedAttribute valNamedAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("value")), valAttr);
