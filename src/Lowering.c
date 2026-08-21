@@ -2131,10 +2131,38 @@ MlirModule lowerAstToMlir(MlirContext ctx, AstNode *ast) {
         MlirOperation funcOp = mlirOperationCreate(&funcState);
         mlirBlockAppendOwnedOperation(moduleBody, funcOp);
 
-        // lowerExpression(AST_BLOCK) iterates all statements, handles nested func decls,
-        // and returns the last expression's port value.
-        MlirValue result = lowerExpression(ctx, block, loc, ast, &env, true);
-        
+        // Detect a top-level `main` function: its body is the program entry point
+        // and must be executed inline. Other func decls (helper functions) are
+        // lowered normally so their registrations and closures exist.
+        AstNode *mainDecl = NULL;
+        for (int i = 0; i < ast->as.block.count; i++) {
+            AstNode *stmt = ast->as.block.statements[i];
+            if (stmt && stmt->type == AST_FUNC_DECL &&
+                stmt->as.func_decl.name_len == 4 &&
+                strncmp(stmt->as.func_decl.name, "main", 4) == 0) {
+                mainDecl = stmt;
+                break;
+            }
+        }
+
+        MlirValue result = {NULL};
+        if (mainDecl) {
+            for (int i = 0; i < ast->as.block.count; i++) {
+                AstNode *stmt = ast->as.block.statements[i];
+                if (!stmt || stmt->type == AST_IMPORT) continue;
+                if (stmt == mainDecl) {
+                    result = lowerExpression(ctx, block, loc, mainDecl->as.func_decl.body, &env, true);
+                } else {
+                    result = lowerExpression(ctx, block, loc, stmt, &env, false);
+                }
+            }
+        } else {
+            result = lowerExpression(ctx, block, loc, ast, &env, true);
+        }
+        if (mlirValueIsNull(result)) {
+            result = createEra(ctx, block, loc);
+        }
+
         // Erase any remaining live variables before the return
         env_free(&env, ctx, block, loc);
 
