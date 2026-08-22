@@ -22,18 +22,72 @@ static Value toIdx(OpBuilder &ob, Location loc, Value v) {
     return ob.create<arith::IndexCastOp>(loc, ob.getIndexType(), v);
 }
 
+// If the net slot at `idx` currently holds a link to another node (slot_flag==1),
+// decrement that target's refcount (that link is dying), and clear the slot flag.
+// Owner is the node index whose slot we are about to overwrite. Safe no-op when the
+// slot holds a value (flag==0), points at self, is zero, or is out of bounds.
+static void emitSlotRefcountClear(OpBuilder &ob, Location loc, Value idx, Value owner,
+                                  Value netGlobal, Value slotFlagGlobal, Value refcountGlobal,
+                                  Type i32Type) {
+    Value oldVal = ob.create<memref::LoadOp>(loc, i32Type, netGlobal, ValueRange{idx});
+    Value oldFlag = ob.create<memref::LoadOp>(loc, i32Type, slotFlagGlobal, ValueRange{idx});
+    Value cOne = ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(1));
+    Value isLink = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, oldFlag, cOne);
+    Value oldNode = ob.create<LLVM::LShrOp>(loc, i32Type, oldVal, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(2)));
+    Value cZero = ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0));
+    Value notSelf = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ne, oldNode, owner);
+    Value nonZero = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ne, oldNode, cZero);
+    Value inBounds = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ult, oldNode, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(8000000)));
+    Value cond = ob.create<LLVM::AndOp>(loc, ob.getI1Type(), ob.create<LLVM::AndOp>(loc, ob.getI1Type(), isLink, notSelf), ob.create<LLVM::AndOp>(loc, ob.getI1Type(), nonZero, inBounds));
+    Value decIdx = ob.create<LLVM::SelectOp>(loc, cond, oldNode, cZero);
+    Value decAmt = ob.create<LLVM::SelectOp>(loc, cond, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(-1)), cZero);
+    ob.create<memref::AtomicRMWOp>(loc, i32Type, arith::AtomicRMWKind::addi, decAmt, refcountGlobal, ValueRange{toIdx(ob, loc, decIdx)});
+    // The slot now holds a value / self-port (not a link); clear the flag.
+    ob.create<memref::StoreOp>(loc, cZero, slotFlagGlobal, ValueRange{idx});
+}
+
 static void genNonBarrierLink(OpBuilder &ob, Location loc, Value p1, Value p2, Value stateArg, func::FuncOp &f) {
     auto i32Type = ob.getI32Type();
     auto i64Type = ob.getI64Type();
 
     auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_net");
     auto qGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i64Type), "__pic_queue");
+    auto refcountGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i32Type), "__pic_refcount");
+    auto slotFlagGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_slot_flag");
+    auto cZero = ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0));
+    auto cOne = ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(1));
+    auto cNegOne = ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(-1));
+    auto cNodePool = ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(8000000));
 
     auto setT = [&](Value v1, Value v2) {
         Value nIdx = ob.create<LLVM::LShrOp>(loc, i32Type, v1, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(2)));
         Value pNum = ob.create<LLVM::AndOp>(loc, i32Type, v1, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(3)));
         Value offset = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, safeZExt(ob, loc, i64Type, nIdx), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2))), safeZExt(ob, loc, i64Type, pNum));
-        ob.create<memref::StoreOp>(loc, v2, netGlobal, ValueRange{toIdx(ob, loc, offset)});
+        Value idx = toIdx(ob, loc, offset);
+        // Refcount: the overwritten slot loses its old reference, gains the new one.
+        Value oldVal = ob.create<memref::LoadOp>(loc, i32Type, netGlobal, ValueRange{idx});
+        Value oldFlag = ob.create<memref::LoadOp>(loc, i32Type, slotFlagGlobal, ValueRange{idx});
+        Value oldNode = ob.create<LLVM::LShrOp>(loc, i32Type, oldVal, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(2)));
+        Value wasLink = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, oldFlag, cOne);
+        Value oldNotSelf = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ne, oldNode, nIdx);
+        Value oldNonZero = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ne, oldNode, cZero);
+        Value oldInBounds = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ult, oldNode, cNodePool);
+        Value decCond = ob.create<LLVM::AndOp>(loc, ob.getI1Type(), ob.create<LLVM::AndOp>(loc, ob.getI1Type(), wasLink, oldNotSelf), ob.create<LLVM::AndOp>(loc, ob.getI1Type(), oldNonZero, oldInBounds));
+        Value decIdx = ob.create<LLVM::SelectOp>(loc, decCond, oldNode, cZero);
+        Value decAmt = ob.create<LLVM::SelectOp>(loc, decCond, cNegOne, cZero);
+        ob.create<memref::AtomicRMWOp>(loc, i32Type, arith::AtomicRMWKind::addi, decAmt, refcountGlobal, ValueRange{toIdx(ob, loc, decIdx)});
+        // Increment the new target's refcount.
+        Value newNode = ob.create<LLVM::LShrOp>(loc, i32Type, v2, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(2)));
+        Value newNotSelf = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ne, newNode, nIdx);
+        Value newNonZero = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ne, newNode, cZero);
+        Value newInBounds = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ult, newNode, cNodePool);
+        Value incCond = ob.create<LLVM::AndOp>(loc, ob.getI1Type(), ob.create<LLVM::AndOp>(loc, ob.getI1Type(), newNotSelf, newNonZero), newInBounds);
+        Value incIdx = ob.create<LLVM::SelectOp>(loc, incCond, newNode, cZero);
+        Value incAmt = ob.create<LLVM::SelectOp>(loc, incCond, cOne, cZero);
+        ob.create<memref::AtomicRMWOp>(loc, i32Type, arith::AtomicRMWKind::addi, incAmt, refcountGlobal, ValueRange{toIdx(ob, loc, incIdx)});
+        // Mark the slot as holding a link, then store.
+        ob.create<memref::StoreOp>(loc, cOne, slotFlagGlobal, ValueRange{idx});
+        ob.create<memref::StoreOp>(loc, v2, netGlobal, ValueRange{idx});
     };
     setT(p1, p2); setT(p2, p1);
 
@@ -78,7 +132,7 @@ static Value genAllocateRvecNode(OpBuilder &ob, Location loc, Value stateArg, fu
 
     auto freeCountGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({}, i32Type), "__pic_free_count");
     Value freeCount = ob.create<memref::LoadOp>(loc, i32Type, freeCountGlobal, ValueRange{});
-    Value hasFree = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, freeCount, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0x7FFFFFFF))); // EXPERIMENT: effectively disable free-list reuse
+    Value hasFree = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ne, freeCount, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0)));
 
     Value newFreeCount = ob.create<LLVM::SubOp>(loc, i32Type, freeCount, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(1)));
     Value storeFreeCount = ob.create<LLVM::SelectOp>(loc, hasFree, newFreeCount, freeCount);
@@ -94,12 +148,17 @@ static Value genAllocateRvecNode(OpBuilder &ob, Location loc, Value stateArg, fu
     Value nIdx = ob.create<LLVM::SelectOp>(loc, hasFree, freeIdx, bumpIdx);
 
     auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_net");
+    auto slotFlagGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_slot_flag");
+    auto refcountGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i32Type), "__pic_refcount");
     Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
     Value base = ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2)));
 
     Value metaVal = ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0x88000000));
     Value off3 = ob.create<LLVM::AddOp>(loc, i64Type, base, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(3)));
-    ob.create<memref::StoreOp>(loc, metaVal, netGlobal, ValueRange{toIdx(ob, loc, off3)});
+    Value idx3 = toIdx(ob, loc, off3);
+    // A recycled node's slots may still hold links to other nodes; release them.
+    emitSlotRefcountClear(ob, loc, idx3, nIdx, netGlobal, slotFlagGlobal, refcountGlobal, i32Type);
+    ob.create<memref::StoreOp>(loc, metaVal, netGlobal, ValueRange{idx3});
 
     Value port0Val = ob.create<LLVM::OrOp>(loc, i32Type, ob.create<LLVM::ShlOp>(loc, i32Type, nIdx, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(2))), ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0)));
     return port0Val;
@@ -206,7 +265,7 @@ static Value convertAllocNodeOp(OpBuilder &ob, pic::runtime::AllocNodeOp allocOp
 
     auto freeCountGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({}, i32Type), "__pic_free_count");
     Value freeCount = ob.create<memref::LoadOp>(loc, i32Type, freeCountGlobal, ValueRange{});
-    Value hasFree = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, freeCount, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0x7FFFFFFF))); // EXPERIMENT: effectively disable free-list reuse
+    Value hasFree = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ne, freeCount, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0)));
 
     Value newFreeCount = ob.create<LLVM::SubOp>(loc, i32Type, freeCount, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(1)));
     Value storeFreeCount = ob.create<LLVM::SelectOp>(loc, hasFree, newFreeCount, freeCount);
@@ -222,13 +281,18 @@ static Value convertAllocNodeOp(OpBuilder &ob, pic::runtime::AllocNodeOp allocOp
     Value nIdx = ob.create<LLVM::SelectOp>(loc, hasFree, freeIdx, bumpIdx);
 
     auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_net");
+    auto slotFlagGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_slot_flag");
+    auto refcountGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i32Type), "__pic_refcount");
     Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
     Value base = ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2)));
 
     auto store = [&](int i, Value v) {
         Value off = ob.create<LLVM::AddOp>(loc, i64Type, base, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(i)));
+        Value idx = toIdx(ob, loc, off);
+        // A recycled node's slots may still hold links to other nodes; release them.
+        emitSlotRefcountClear(ob, loc, idx, nIdx, netGlobal, slotFlagGlobal, refcountGlobal, i32Type);
         Value v32 = (v.getType() == i32Type) ? v : ob.create<LLVM::TruncOp>(loc, i32Type, v);
-        ob.create<memref::StoreOp>(loc, v32, netGlobal, ValueRange{toIdx(ob, loc, off)});
+        ob.create<memref::StoreOp>(loc, v32, netGlobal, ValueRange{idx});
     };
 
     auto makePort = [&](int p) {
@@ -271,9 +335,14 @@ static void convertSetPortOp(OpBuilder &ob, pic::runtime::SetPortOp setOp, Value
     int pIdx = setOp.getPortIndex();
     Value val = setOp.getPortValue();
     auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_net");
+    auto slotFlagGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_slot_flag");
+    auto refcountGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i32Type), "__pic_refcount");
     Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
     Value offset = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2))), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(pIdx)));
-    ob.create<memref::StoreOp>(loc, val, netGlobal, ValueRange{toIdx(ob, loc, offset)});
+    Value idx = toIdx(ob, loc, offset);
+    // A value write overwrites whatever was in this slot; release the old link if any.
+    emitSlotRefcountClear(ob, loc, idx, nIdx, netGlobal, slotFlagGlobal, refcountGlobal, i32Type);
+    ob.create<memref::StoreOp>(loc, val, netGlobal, ValueRange{idx});
 }
 
 static Value convertGetPortOp(OpBuilder &ob, pic::runtime::GetPortOp getOp, Value stateArg) {
@@ -331,10 +400,14 @@ static void convertPushRedexOp(OpBuilder &ob, pic::runtime::PushRedexOp pushOp, 
     ob.create<LLVM::CondBrOp>(loc, inBounds, doStore, cont);
 
     ob.setInsertionPointToStart(doStore);
-    // Store redex pair (nodeA, nodeB) into queue buffer at the old tail index
+    // Store redex pair (nodeA, nodeB) into queue buffer at the old tail index.
+    // The queue stores full PORT ADDRESSES (matching what genNonBarrierLink
+    // pushes and what convertPopRedexOp right-shifts by 2 to recover nodes).
     auto i32Type = ob.getI32Type();
     auto qGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i64Type), "__pic_queue");
-    Value r = ob.create<LLVM::OrOp>(loc, i64Type, safeZExt(ob, loc, i64Type, nA), ob.create<LLVM::ShlOp>(loc, i64Type, safeZExt(ob, loc, i64Type, nB), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(32))));
+    Value nA2 = ob.create<LLVM::ShlOp>(loc, i32Type, safeZExt(ob, loc, i32Type, pushOp.getNodeA()), ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(2)));
+    Value nB2 = ob.create<LLVM::ShlOp>(loc, i32Type, safeZExt(ob, loc, i32Type, pushOp.getNodeB()), ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(2)));
+    Value r = ob.create<LLVM::OrOp>(loc, i64Type, safeZExt(ob, loc, i64Type, nA2), ob.create<LLVM::ShlOp>(loc, i64Type, safeZExt(ob, loc, i64Type, nB2), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(32))));
     ob.create<memref::StoreOp>(loc, r, qGlobal, ValueRange{toIdx(ob, loc, curT)});
     ob.create<LLVM::BrOp>(loc, cont);
 

@@ -109,6 +109,27 @@ static void createPicMemrefGlobals(ModuleOp module, OpBuilder &builder, TargetBa
             gb.getStringAttr("private"), freeCountTy,
             initAttr, false, IntegerAttr{});
     }
+    // Per-node reference count (number of live net-slot pointers targeting each node).
+    // EraseOp may only recycle a node when its refcount is 0, preventing reuse of nodes
+    // that still have live inbound links.
+    if (!module.lookupSymbol("__pic_refcount")) {
+        OpBuilder gb(module.getBodyRegion());
+        auto refTy = MemRefType::get({8000000}, i32Type);
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({8000000}, i32Type), gb.getI32IntegerAttr(0));
+        gb.create<memref::GlobalOp>(loc, "__pic_refcount",
+            gb.getStringAttr("private"), refTy,
+            initAttr, false, IntegerAttr{});
+    }
+    // Per-net-slot flag (1 = slot currently holds a link pointer, 0 = holds a raw value).
+    // Lets the refcount maintenance distinguish link overwrites from value overwrites.
+    if (!module.lookupSymbol("__pic_slot_flag")) {
+        OpBuilder gb(module.getBodyRegion());
+        auto slotTy = MemRefType::get({32000000}, i32Type);
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({32000000}, i32Type), gb.getI32IntegerAttr(0));
+        gb.create<memref::GlobalOp>(loc, "__pic_slot_flag",
+            gb.getStringAttr("private"), slotTy,
+            initAttr, false, IntegerAttr{});
+    }
 }
 
 struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, OperationPass<ModuleOp>> {

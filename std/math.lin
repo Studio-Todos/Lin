@@ -559,14 +559,14 @@ mul: func [a [i32!] b [i32!] return: [i32!]] [(mul32 a b)]
 div: func [a [i32!] b [i32!] return: [i32!]] [(divs32 a b)]
 rem: func [a [i32!] b [i32!] return: [i32!]] [(rems32 a b)]
 
-// --- i32 comparison convenience aliases ---
-eq:  func [a [i32!] b [i32!] return: [i32!]] [(eq32 a b)]
-ne:  func [a [i32!] b [i32!] return: [i32!]] [(ne32 a b)]
-neq: func [a [i32!] b [i32!] return: [i32!]] [(ne32 a b)]
-lt:  func [a [i32!] b [i32!] return: [i32!]] [(slt32 a b)]
-gt:  func [a [i32!] b [i32!] return: [i32!]] [(sgt32 a b)]
-le:  func [a [i32!] b [i32!] return: [i32!]] [(sle32 a b)]
-ge:  func [a [i32!] b [i32!] return: [i32!]] [(sge32 a b)]
+// --- integer comparison convenience aliases (64-bit dispatch handles both i32 and i64 ranges) ---
+eq:  func [a [i64!] b [i64!] return: [i64!]] [(eq64 a b)]
+ne:  func [a [i64!] b [i64!] return: [i64!]] [(ne64 a b)]
+neq: func [a [i64!] b [i64!] return: [i64!]] [(ne64 a b)]
+lt:  func [a [i64!] b [i64!] return: [i64!]] [(slt64 a b)]
+gt:  func [a [i64!] b [i64!] return: [i64!]] [(sgt64 a b)]
+le:  func [a [i64!] b [i64!] return: [i64!]] [(sle64 a b)]
+ge:  func [a [i64!] b [i64!] return: [i64!]] [(sge64 a b)]
 
 // --- f64 arithmetic convenience aliases ---
 fadd: func [a [i64!] b [i64!] return: [i64!]] [(fadd64 a b)]

@@ -830,6 +830,8 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
       Value c0xFFFFFF_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0xFFFFFF));
       Value c0x3F_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0x3F));
       Value c0x979115_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0x979115));
+      Value cNegOne_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(-1));
+      Value cNodePool_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(8000000));
 
       Value c0_i64 = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0));
       Value c1_i64 = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(1));
@@ -942,6 +944,17 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           if (handleGpuDispatch(nodeA, nodeB, stateArg)) continue;
 
           auto freeNode = [&](Value nodeIdx) {
+              // Only recycle a node whose refcount is 0 (no live inbound links remain).
+              auto refGlobal = builder.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i32Type), "__pic_refcount");
+              Value rc = builder.create<memref::LoadOp>(loc, i32Type, refGlobal, ValueRange{builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), nodeIdx)});
+              Value isFree = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rc, c0_i32);
+
+              Block *freeB = funcOp.addBlock();
+              Block *skipB = funcOp.addBlock();
+              Block *mergeB = funcOp.addBlock();
+              builder.create<cf::CondBranchOp>(loc, isFree, freeB, skipB);
+
+              builder.setInsertionPointToStart(freeB);
               auto fcGlobal = builder.create<memref::GetGlobalOp>(loc, MemRefType::get({}, i32Type), "__pic_free_count");
               Value oldCount = builder.create<memref::AtomicRMWOp>(loc, i32Type, arith::AtomicRMWKind::addi,
                   builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(1)),
@@ -949,6 +962,39 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
               auto flGlobal = builder.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i32Type), "__pic_free_list");
               Value storeIdx = builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), oldCount);
               builder.create<memref::StoreOp>(loc, nodeIdx, flGlobal, ValueRange{storeIdx});
+              builder.create<cf::BranchOp>(loc, mergeB);
+
+              builder.setInsertionPointToStart(skipB);
+              builder.create<cf::BranchOp>(loc, mergeB);
+
+              // Continue emitting after the guard.
+              builder.setInsertionPointToStart(mergeB);
+          };
+
+          // A node being erased dies along with the era; release the reference
+          // contributions its link slots made to other nodes' refcounts.
+          auto releaseNodeLinks = [&](Value nodeIdx) {
+              auto refGlobal = builder.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i32Type), "__pic_refcount");
+              auto slotFlagGlobal = builder.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_slot_flag");
+              for (int slot = 0; slot <= 2; ++slot) {
+                  Value oldVal = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeIdx, builder.getI8IntegerAttr(slot));
+                  Value off = builder.create<arith::ShLIOp>(loc, i32Type, nodeIdx, c2_i32);
+                  off = builder.create<arith::AddIOp>(loc, i32Type, off, builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(slot)));
+                  Value idx = builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), off);
+                  Value oldFlag = builder.create<memref::LoadOp>(loc, i32Type, slotFlagGlobal, ValueRange{idx});
+                  Value isLink = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, oldFlag, c1_i32);
+                  Value oldNode = builder.create<arith::ShRUIOp>(loc, oldVal, c2_i32);
+                  Value notSelf = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, oldNode, nodeIdx);
+                  Value nonZero = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, oldNode, c0_i32);
+                  Value inBounds = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ult, oldNode, cNodePool_i32);
+                  Value cond = builder.create<arith::AndIOp>(loc, isLink, builder.create<arith::AndIOp>(loc, notSelf, builder.create<arith::AndIOp>(loc, nonZero, inBounds)));
+                  Value decIdx = builder.create<arith::SelectOp>(loc, cond, oldNode, c0_i32);
+                  Value decAmt = builder.create<arith::SelectOp>(loc, cond, cNegOne_i32, c0_i32);
+                  Value decIdxIdx = builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), decIdx);
+                  builder.create<memref::AtomicRMWOp>(loc, i32Type, arith::AtomicRMWKind::addi, decAmt, refGlobal, ValueRange{decIdxIdx});
+                  // Slot now holds a value/self-port, not a link.
+                  builder.create<memref::StoreOp>(loc, c0_i32, slotFlagGlobal, ValueRange{idx});
+              }
           };
 
           Value metaA = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(3));
@@ -971,6 +1017,7 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           builder.create<cf::CondBranchOp>(loc, isAnn, doEraAnn, doEraProp);
 
           builder.setInsertionPointToStart(doEraAnn);
+          releaseNodeLinks(nodeA); releaseNodeLinks(nodeB);
           freeNode(nodeA); freeNode(nodeB);
           builder.create<cf::BranchOp>(loc, lHead);
 
@@ -981,15 +1028,19 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           builder.create<cf::CondBranchOp>(loc, otherIsLit, eraLitCase, eraNormalProp);
 
           builder.setInsertionPointToStart(eraLitCase);
+          releaseNodeLinks(nodeA); releaseNodeLinks(nodeB);
           freeNode(nodeA); freeNode(nodeB);
           builder.create<cf::BranchOp>(loc, lHead);
 
           builder.setInsertionPointToStart(eraNormalProp);
+          // Capture the aux links BEFORE freeing/allocating: once recycling is active the
+          // freed node's index may be reused, which would clobber the ports we must re-link.
+          Value auxOther1 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, otherNode, builder.getI8IntegerAttr(1));
+          Value auxOther2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, otherNode, builder.getI8IntegerAttr(2));
+          releaseNodeLinks(nodeA); releaseNodeLinks(nodeB);
           freeNode(nodeA); freeNode(nodeB);
           Value era1 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(ALLOC_ERA), c0_i64, builder.getBoolAttr(false));
           Value era2 = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(ALLOC_ERA), c0_i64, builder.getBoolAttr(false));
-          Value auxOther1 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, otherNode, builder.getI8IntegerAttr(1));
-          Value auxOther2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, otherNode, builder.getI8IntegerAttr(2));
           builder.create<pic::runtime::LinkOp>(loc, auxOther1, makePortVal(era1, 0));
           builder.create<pic::runtime::LinkOp>(loc, auxOther2, makePortVal(era2, 0));
           builder.create<cf::BranchOp>(loc, lHead);
@@ -1115,25 +1166,53 @@ builder.setInsertionPointToStart(doBinary);
       Value cDupCode = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(3));
       Value isDup = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rTargetNodeType, cDupCode);
       Value rTargetP0 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, rTarget, builder.getI8IntegerAttr(0));
-      Value rActual = builder.create<arith::SelectOp>(loc, isDup, builder.create<arith::ShRUIOp>(loc, rTargetP0, c2_i32), rTarget);
+      // Closure args travel through gamma+ pair bundles; dereference up to two hops,
+      // each hop either a dup (delta, * polarity) that fronts a value, or a gamma
+      // pair carrier whose value rides on port 1.
+      Value cPairLabel = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("pair")));
+      Value cConCode = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(1));
+      Value cDesCode = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(2));
+      Value rAfterDup = builder.create<arith::SelectOp>(loc, isDup, builder.create<arith::ShRUIOp>(loc, rTargetP0, c2_i32), rTarget);
+      // Second dereference honor the carrier / dup shape found after first hop.
+      Value a1Meta = builder.create<pic::runtime::GetPortOp>(loc, i32Type, rAfterDup, builder.getI8IntegerAttr(3));
+      Value a1TypeVal = builder.create<arith::ShRUIOp>(loc, a1Meta, c24_i32);
+      Value a1NodeType = builder.create<arith::AndIOp>(loc, a1TypeVal, c0x3F_i32);
+      Value a1Label = builder.create<arith::AndIOp>(loc, a1Meta, c0xFFFFFF_i32);
+      Value isGam = builder.create<arith::OrIOp>(loc, builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, a1NodeType, cConCode), builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, a1NodeType, cDesCode));
+      Value isPairCarrier = builder.create<arith::AndIOp>(loc, isGam, builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, a1Label, cPairLabel));
+      Value rAcrdField = builder.create<arith::SelectOp>(loc, isPairCarrier, builder.create<arith::ShRUIOp>(loc, builder.create<pic::runtime::GetPortOp>(loc, i32Type, rAfterDup, builder.getI8IntegerAttr(1)), c2_i32), rAfterDup);
+      // A dup may still wrap the value after a carrier deref.
+      Value a2Meta = builder.create<pic::runtime::GetPortOp>(loc, i32Type, rAcrdField, builder.getI8IntegerAttr(3));
+      Value a2TypeVal = builder.create<arith::ShRUIOp>(loc, a2Meta, c24_i32);
+      Value a2NodeType = builder.create<arith::AndIOp>(loc, a2TypeVal, c0x3F_i32);
+      Value a2P0 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, rAcrdField, builder.getI8IntegerAttr(0));
+      Value isDup2 = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, a2NodeType, cDupCode);
+      Value rActual = builder.create<arith::SelectOp>(loc, isDup2, builder.create<arith::ShRUIOp>(loc, a2P0, c2_i32), rAcrdField);
 
       Value rActualMeta = builder.create<pic::runtime::GetPortOp>(loc, i32Type, rActual, builder.getI8IntegerAttr(3));
       Value rActualTypeVal = builder.create<arith::ShRUIOp>(loc, rActualMeta, c24_i32);
       Value rActualNodeType = builder.create<arith::AndIOp>(loc, rActualTypeVal, c0x3F_i32);
 
-      // If actual target is an omega- mlir-op with unresolved p2 -> retry
+      // If actual target is an omega- mlir-op with unresolved p2 -> retry.
+      // Also retry if the state is still carried by a gamma pair (closure arg not yet
+      // delivered): its value slot (port 1) has not been wired until the packer dies.
       Value cOpCode = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(5));
       Value isOp = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rActualNodeType, cOpCode);
       Value rActualLabel = builder.create<arith::AndIOp>(loc, rActualMeta, c0xFFFFFF_i32);
       Value isLit = isLiteralLabel(builder, loc, rActualLabel);
       Value notLit = builder.create<arith::XOrIOp>(loc, isLit, builder.create<arith::ConstantOp>(loc, i1Type, builder.getBoolAttr(true)));
-      Value hasDep = builder.create<arith::AndIOp>(loc, isOp, notLit);
+      Value hasOpDep = builder.create<arith::AndIOp>(loc, isOp, notLit);
+      Value hasCarrierDep = builder.create<arith::AndIOp>(loc, isPairCarrier, builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, a1Label, cPairLabel));
+      Value hasDep = builder.create<arith::OrIOp>(loc, hasOpDep, hasCarrierDep);
       Block *checkDep = funcOp.addBlock();
       Block *proceedBin = funcOp.addBlock();
       builder.create<cf::CondBranchOp>(loc, hasDep, checkDep, proceedBin);
 
       builder.setInsertionPointToStart(checkDep);
-      Value opP2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, rActual, builder.getI8IntegerAttr(2));
+      // If state is an unresolved gamma pair carrier (closure arg), the caller's
+      // packer still owns the value; retry so the redex re-fires once it is wired.
+      Value carrClosed = builder.create<arith::SelectOp>(loc, hasCarrierDep, rAfterDup, rActual);
+      Value opP2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, carrClosed, builder.getI8IntegerAttr(2));
       Value p2Node = builder.create<arith::ShRUIOp>(loc, opP2, c2_i32);
       Value p2Meta = builder.create<pic::runtime::GetPortOp>(loc, i32Type, p2Node, builder.getI8IntegerAttr(3));
       Value p2TypeVal = builder.create<arith::ShRUIOp>(loc, p2Meta, c24_i32);
@@ -1141,7 +1220,10 @@ builder.setInsertionPointToStart(doBinary);
       Value cEraCode = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(4));
       Value isEra = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, p2NodeType, cEraCode);
       Value p2IsZero = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, opP2, c0_i32);
-      Value unresolved = builder.create<arith::OrIOp>(loc, isEra, p2IsZero);
+      Value maybeUnresolved = builder.create<arith::OrIOp>(loc, isEra, p2IsZero);
+      // Closure-arg carriers are unresolved by construction until the packer is
+      // consumed, so always retry for those (mirrors the state of a not-yet-wired port).
+      Value unresolved = builder.create<arith::SelectOp>(loc, hasCarrierDep, builder.create<arith::ConstantOp>(loc, i1Type, builder.getBoolAttr(true)), maybeUnresolved);
       Block *retryBin = funcOp.addBlock();
       Block *directDispatch = funcOp.addBlock();
       builder.create<cf::CondBranchOp>(loc, unresolved, retryBin, directDispatch);
