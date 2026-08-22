@@ -78,7 +78,7 @@ static Value genAllocateRvecNode(OpBuilder &ob, Location loc, Value stateArg, fu
 
     auto freeCountGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({}, i32Type), "__pic_free_count");
     Value freeCount = ob.create<memref::LoadOp>(loc, i32Type, freeCountGlobal, ValueRange{});
-    Value hasFree = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ne, freeCount, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0)));
+    Value hasFree = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, freeCount, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0x7FFFFFFF))); // EXPERIMENT: effectively disable free-list reuse
 
     Value newFreeCount = ob.create<LLVM::SubOp>(loc, i32Type, freeCount, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(1)));
     Value storeFreeCount = ob.create<LLVM::SelectOp>(loc, hasFree, newFreeCount, freeCount);
@@ -206,7 +206,7 @@ static Value convertAllocNodeOp(OpBuilder &ob, pic::runtime::AllocNodeOp allocOp
 
     auto freeCountGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({}, i32Type), "__pic_free_count");
     Value freeCount = ob.create<memref::LoadOp>(loc, i32Type, freeCountGlobal, ValueRange{});
-    Value hasFree = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ne, freeCount, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0)));
+    Value hasFree = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, freeCount, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0x7FFFFFFF))); // EXPERIMENT: effectively disable free-list reuse
 
     Value newFreeCount = ob.create<LLVM::SubOp>(loc, i32Type, freeCount, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(1)));
     Value storeFreeCount = ob.create<LLVM::SelectOp>(loc, hasFree, newFreeCount, freeCount);

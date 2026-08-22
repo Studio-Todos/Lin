@@ -410,7 +410,15 @@ static void findFreeVars(AstNode *node, FreeVars *fv, const char **bound, int bo
             // Item 4c: do NOT special-case any callee as a builtin here.
             // If a name like "add" or "either" is not in scope it will fail at use time,
             // which is correct per the spec's explicit-import philosophy.
-            if (!is_bound) addFreeVar(fv, node->as.call.callee, node->as.call.callee_len);
+            // EXCEPTION: language keywntor/control-flow call forms (either/pair/copy)
+            // are NOT variables — they must never be captured as free vars, or the
+            // closure would bind garbage to their name and force the omega-call path.
+            bool isControlCallee =
+                (node->as.call.callee_len == 6 && memcmp(node->as.call.callee, "either", 6) == 0) ||
+                (node->as.call.callee_len == 4 && memcmp(node->as.call.callee, "pair", 4) == 0) ||
+                (node->as.call.callee_len == 4 && memcmp(node->as.call.callee, "copy", 4) == 0);
+            if (!is_bound && !isControlCallee)
+                addFreeVar(fv, node->as.call.callee, node->as.call.callee_len);
             
             for (int i = 0; i < node->as.call.arg_count; i++) {
                 findFreeVars(node->as.call.args[i], fv, bound, bound_count);
@@ -1376,7 +1384,28 @@ static MlirValue lowerFuncDeclExpr(MlirContext ctx, MlirBlock block, MlirLocatio
         linkValues(innerBlock, loc, mlirOperationGetResult(eraArgOp, 0), mainArg);
         }
 
-    MlirValue bodyResult = lowerExpression(ctx, innerBlock, loc, expr->as.func_decl.body, &innerEnv, true);
+    // If the body's last statement is a bare identifier, return the stored value's
+    // principal directly instead of an env_fetch dup aux. A single-consumption return
+    // must hand the caller a principal port so its op can fire a redex against it.
+    // Lower all statements except the trailing identifier, then use the bound value.
+    MlirValue bodyResult = {NULL};
+    bool tailIsIdentifier = false;
+    if (expr->as.func_decl.body && expr->as.func_decl.body->type == AST_BLOCK &&
+        expr->as.func_decl.body->as.block.count > 0) {
+        AstNode *tail = expr->as.func_decl.body->as.block.statements[expr->as.func_decl.body->as.block.count - 1];
+        if (tail && tail->type == AST_IDENTIFIER) {
+            for (int bi = 0; bi < expr->as.func_decl.body->as.block.count - 1; bi++) {
+                AstNode *bs = expr->as.func_decl.body->as.block.statements[bi];
+                if (!bs || bs->type == AST_IMPORT) continue;
+                lowerExpression(ctx, innerBlock, loc, bs, &innerEnv, false);
+            }
+            bodyResult = env_get(&innerEnv, tail->as.identifier.name, tail->as.identifier.length);
+            tailIsIdentifier = true;
+        }
+    }
+    if (!tailIsIdentifier) {
+        bodyResult = lowerExpression(ctx, innerBlock, loc, expr->as.func_decl.body, &innerEnv, true);
+    }
     env_free(&innerEnv, ctx, innerBlock, loc);
 
     linkValues(innerBlock, loc, bodyResult, resultPort);
@@ -1547,7 +1576,6 @@ static MlirValue lowerCallExpr(MlirContext ctx, MlirBlock block, MlirLocation lo
         if (mlirValueIsNull(currentVal))
             currentVal = env_fetch(ctx, block, loc, env, expr->as.call.callee, expr->as.call.callee_len);
     }
-
     if (!mlirValueIsNull(currentVal)) {
         MlirType portType = getPicPortType(ctx);
         MlirAttribute agTypeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("gamma"));

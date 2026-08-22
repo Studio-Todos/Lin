@@ -1270,7 +1270,7 @@ builder.setInsertionPointToStart(doBinary);
           builder.create<pic::runtime::SetPortOp>(loc, opLit1, builder.getI8IntegerAttr(3), metaValOp);
           builder.create<pic::runtime::SetPortOp>(loc, opLit2, builder.getI8IntegerAttr(3), metaValOp);
           builder.create<pic::runtime::SetPortOp>(loc, opLit1, builder.getI8IntegerAttr(1), litValOp);
-          builder.create<pic::runtime::SetPortOp>(loc, opLit2, builder.getI8IntegerAttr(1), litValOp);
+builder.create<pic::runtime::SetPortOp>(loc, opLit2, builder.getI8IntegerAttr(1), litValOp);
           Value auxA1 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, valNode, builder.getI8IntegerAttr(1));
           Value auxA2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, valNode, builder.getI8IntegerAttr(2));
           builder.create<pic::runtime::LinkOp>(loc, makePortVal(opLit1, 0), auxA1);
@@ -1395,36 +1395,30 @@ builder.setInsertionPointToStart(doBinary);
           Value labelA = builder.create<arith::AndIOp>(loc, metaA, c0xFFFFFF_i32);
           Value labelB = builder.create<arith::AndIOp>(loc, metaB, c0xFFFFFF_i32);
 
-          // --- SELECT interaction: omega-(either) meets delta-(pair) ---
-          // Block-form `either cond [t][f]` lowers to an omega-(either) op whose
-          // principal port is paired with a delta-(pair) agent holding the two
-          // branch values on its aux ports. This is a value-select interaction:
-          // resolve the condition, then link the result to the chosen branch.
+          // --- SELECT interaction: omega-(either) meets its condition ---
+          // Block-form `either cond [t][f]` lowers to an omega agent labeled
+          // "either". Because `either` is NOT a registered user-op (std/control.lin
+          // is not imported), the omega uses the NON-userOp port mapping:
+          //   p0 -> port2, p1 -> port0(principal), p2 -> port1
+          // so on the runtime node: port0(principal)=cond, port1=result, port2=pair.
+          // The reduction fires when `either` meets its condition value (on its
+          // principal port). We select the matching branch from the pair (port2)
+          // and link it to the result (port1), erasing the unchosen branch.
           Value c5_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(5));
           Value cEitherHash = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("either")));
-          Value cPairHash = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("pair")));
 
           Value typeValA = builder.create<arith::ShRUIOp>(loc, metaA, c24_i32);
           Value typeValB = builder.create<arith::ShRUIOp>(loc, metaB, c24_i32);
           Value nodeTypeA = builder.create<arith::AndIOp>(loc, typeValA, c0x3F_i32);
           Value nodeTypeB = builder.create<arith::AndIOp>(loc, typeValB, c0x3F_i32);
 
-          Value isOpA = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, nodeTypeA, c5_i32);
-          Value isOpB = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, nodeTypeB, c5_i32);
-          Value isDupA = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, nodeTypeA, c3_i32);
-          Value isDupB = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, nodeTypeB, c3_i32);
-          Value isEitherA = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelA, cEitherHash);
-          Value isEitherB = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelB, cEitherHash);
-          Value isPairA = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelA, cPairHash);
-          Value isPairB = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelB, cPairHash);
-
-          Value selectAB0 = builder.create<arith::AndIOp>(loc, isOpA, isEitherA);
-          Value selectAB1 = builder.create<arith::AndIOp>(loc, selectAB0, isDupB);
-          Value selectAB = builder.create<arith::AndIOp>(loc, selectAB1, isPairB);
-          Value selectBA0 = builder.create<arith::AndIOp>(loc, isOpB, isEitherB);
-          Value selectBA1 = builder.create<arith::AndIOp>(loc, selectBA0, isDupA);
-          Value selectBA = builder.create<arith::AndIOp>(loc, selectBA1, isPairA);
-          Value isSelect = builder.create<arith::OrIOp>(loc, selectAB, selectBA);
+          Value isEitherA = builder.create<arith::AndIOp>(loc,
+              builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, nodeTypeA, c5_i32),
+              builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelA, cEitherHash));
+          Value isEitherB = builder.create<arith::AndIOp>(loc,
+              builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, nodeTypeB, c5_i32),
+              builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, labelB, cEitherHash));
+          Value isSelect = builder.create<arith::OrIOp>(loc, isEitherA, isEitherB);
 
           Block *selectCase = funcOp.addBlock();
           Block *noSelectCase = funcOp.addBlock();
@@ -1533,24 +1527,18 @@ builder.setInsertionPointToStart(doBinary);
           builder.create<pic::runtime::LinkOp>(loc, makePortVal(b2, 0), auxA2_std);
           builder.create<cf::BranchOp>(loc, lHead);
 
-          // selectCase: omega-(either) meets delta-(pair) — value select
+          // selectCase: omega-(either) meets its condition — value select.
+          // eitherNode.port0(principal)=cond, port1=result, port2=pair.
           builder.setInsertionPointToStart(selectCase);
-          Value eitherNode = builder.create<arith::SelectOp>(loc, selectAB, nodeA, nodeB);
-          Value pairNode = builder.create<arith::SelectOp>(loc, selectAB, nodeB, nodeA);
+          Value eitherNode = builder.create<arith::SelectOp>(loc, isEitherA, nodeA, nodeB);
+          Value condNode = builder.create<arith::SelectOp>(loc, isEitherA, nodeB, nodeA);
+          Value condLabel = builder.create<arith::SelectOp>(loc, isEitherA, labelB, labelA);
 
-          // Resolve condition: read either.port1, follow dup chain to the value.
-          Value condPort = builder.create<pic::runtime::GetPortOp>(loc, i32Type, eitherNode, builder.getI8IntegerAttr(1));
-          Value condTarget = builder.create<arith::ShRUIOp>(loc, condPort, c2_i32);
-          Value condMeta = builder.create<pic::runtime::GetPortOp>(loc, i32Type, condTarget, builder.getI8IntegerAttr(3));
+          // Resolve condition: the cond value is the OTHER node of the redex.
+          Value condMeta = builder.create<pic::runtime::GetPortOp>(loc, i32Type, condNode, builder.getI8IntegerAttr(3));
           Value condNodeType = builder.create<arith::AndIOp>(loc, builder.create<arith::ShRUIOp>(loc, condMeta, c24_i32), c0x3F_i32);
-          Value condIsDup = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, condNodeType, c3_i32);
-          Value condTargetP0 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, condTarget, builder.getI8IntegerAttr(0));
-          Value condActual = builder.create<arith::SelectOp>(loc, condIsDup, builder.create<arith::ShRUIOp>(loc, condTargetP0, c2_i32), condTarget);
-          Value condActualMeta = builder.create<pic::runtime::GetPortOp>(loc, i32Type, condActual, builder.getI8IntegerAttr(3));
-          Value condActualNodeType = builder.create<arith::AndIOp>(loc, builder.create<arith::ShRUIOp>(loc, condActualMeta, c24_i32), c0x3F_i32);
-          Value condActualLabel = builder.create<arith::AndIOp>(loc, condActualMeta, c0xFFFFFF_i32);
-          Value condIsOp = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, condActualNodeType, c5_i32);
-          Value condIsLit = isLiteralLabel(builder, loc, condActualLabel);
+          Value condIsOp = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, condNodeType, c5_i32);
+          Value condIsLit = isLiteralLabel(builder, loc, condLabel);
           Value condNotLit = builder.create<arith::XOrIOp>(loc, condIsLit, builder.create<arith::ConstantOp>(loc, i1Type, builder.getBoolAttr(true)));
           Value condHasDep = builder.create<arith::AndIOp>(loc, condIsOp, condNotLit);
 
@@ -1560,7 +1548,7 @@ builder.setInsertionPointToStart(doBinary);
 
           builder.setInsertionPointToStart(selCheckDep);
           Value cEraCode = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(4));
-          Value condP2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, condActual, builder.getI8IntegerAttr(2));
+          Value condP2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, condNode, builder.getI8IntegerAttr(2));
           Value condP2Node = builder.create<arith::ShRUIOp>(loc, condP2, c2_i32);
           Value condP2Meta = builder.create<pic::runtime::GetPortOp>(loc, i32Type, condP2Node, builder.getI8IntegerAttr(3));
           Value condP2NodeType = builder.create<arith::AndIOp>(loc, builder.create<arith::ShRUIOp>(loc, condP2Meta, c24_i32), c0x3F_i32);
@@ -1582,18 +1570,20 @@ builder.setInsertionPointToStart(doBinary);
           builder.create<cf::BranchOp>(loc, selFinish, ValueRange{condValResolved});
 
           builder.setInsertionPointToStart(selProceed);
-          Value condValLiteral = loadLiteralVal(condActual, condActualLabel);
+          Value condValLiteral = loadLiteralVal(condNode, condLabel);
           builder.create<cf::BranchOp>(loc, selFinish, ValueRange{condValLiteral});
 
           builder.setInsertionPointToStart(selFinish);
           selFinish->addArgument(i64Type, loc);
           Value condVal = selFinish->getArgument(0);
           Value isTrue = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, condVal, c0_i64);
+          Value pairPort = builder.create<pic::runtime::GetPortOp>(loc, i32Type, eitherNode, builder.getI8IntegerAttr(2));
+          Value pairNode = builder.create<arith::ShRUIOp>(loc, pairPort, c2_i32);
           Value thenPort = builder.create<pic::runtime::GetPortOp>(loc, i32Type, pairNode, builder.getI8IntegerAttr(1));
           Value elsePort = builder.create<pic::runtime::GetPortOp>(loc, i32Type, pairNode, builder.getI8IntegerAttr(2));
           Value chosen = builder.create<arith::SelectOp>(loc, isTrue, thenPort, elsePort);
           Value unchosen = builder.create<arith::SelectOp>(loc, isTrue, elsePort, thenPort);
-          Value resultPort = builder.create<pic::runtime::GetPortOp>(loc, i32Type, eitherNode, builder.getI8IntegerAttr(2));
+          Value resultPort = builder.create<pic::runtime::GetPortOp>(loc, i32Type, eitherNode, builder.getI8IntegerAttr(1));
           builder.create<pic::runtime::LinkOp>(loc, resultPort, chosen);
           Value eraUnchosen = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(ALLOC_ERA), c0_i64, builder.getBoolAttr(false));
           builder.create<pic::runtime::LinkOp>(loc, unchosen, makePortVal(eraUnchosen, 0));

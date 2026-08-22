@@ -552,12 +552,24 @@ sge32: mlir-op [ inputs: [a [i32!] b [i32!]] outputs: [res [i32!]] ] {
     %res = arith.select %c, %one, %zero : i32
 }
 
-// i32 comparison convenience aliases
-// disabled: func wrappers cause runtime regressions in output generation
-// eq:  func [a b return: [i32!]] [(eq32 a b)]
-// ne:  func [a b return: [i32!]] [(ne32 a b)]
-// neq: func [a b return: [i32!]] [(ne32 a b)]
-// lt:  func [a b return: [i32!]] [(slt32 a b)]
-// gt:  func [a b return: [i32!]] [(sgt32 a b)]
-// le:  func [a b return: [i32!]] [(sle32 a b)]
-// ge:  func [a b return: [i32!]] [(sge32 a b)]
+// --- i32 arithmetic convenience aliases ---
+add: func [a [i32!] b [i32!] return: [i32!]] [(add32 a b)]
+sub: func [a [i32!] b [i32!] return: [i32!]] [(sub32 a b)]
+mul: func [a [i32!] b [i32!] return: [i32!]] [(mul32 a b)]
+div: func [a [i32!] b [i32!] return: [i32!]] [(divs32 a b)]
+rem: func [a [i32!] b [i32!] return: [i32!]] [(rems32 a b)]
+
+// --- i32 comparison convenience aliases ---
+eq:  func [a [i32!] b [i32!] return: [i32!]] [(eq32 a b)]
+ne:  func [a [i32!] b [i32!] return: [i32!]] [(ne32 a b)]
+neq: func [a [i32!] b [i32!] return: [i32!]] [(ne32 a b)]
+lt:  func [a [i32!] b [i32!] return: [i32!]] [(slt32 a b)]
+gt:  func [a [i32!] b [i32!] return: [i32!]] [(sgt32 a b)]
+le:  func [a [i32!] b [i32!] return: [i32!]] [(sle32 a b)]
+ge:  func [a [i32!] b [i32!] return: [i32!]] [(sge32 a b)]
+
+// --- f64 arithmetic convenience aliases ---
+fadd: func [a [i64!] b [i64!] return: [i64!]] [(fadd64 a b)]
+fsub: func [a [i64!] b [i64!] return: [i64!]] [(fsub64 a b)]
+fmul: func [a [i64!] b [i64!] return: [i64!]] [(fmul64 a b)]
+fdiv: func [a [i64!] b [i64!] return: [i64!]] [(fdiv64 a b)]

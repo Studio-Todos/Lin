@@ -218,6 +218,7 @@ typedef struct {
     Token current;
     Token previous;
     bool hadError;
+    int callArgDepth;   // >0 while parsing a word-style call argument (suppresses nested word-style calls)
 } Parser;
 
 static void errorAt(Parser *parser, const Token *token, const char *message) {
@@ -500,6 +501,69 @@ static AstNode* parsePathAccess(Parser *parser, AstNode *base) {
     return result;
 }
 
+// Returns true if `type` can begin a value expression that may follow a
+// word-style callee (`foo a b c`). Restricted to unambiguous value starts so
+// binary operators (notably '-') and block/declaration constructs are not
+// misread as call arguments.
+static bool isValueStartToken(TokenType type) {
+    switch (type) {
+        case TOKEN_NUMBER:
+        case TOKEN_FLOAT:
+        case TOKEN_STRING:
+        case TOKEN_IDENTIFIER:
+        case TOKEN_LPAREN:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// Parse a Red/Rebol-style word call: `callee arg1 arg2 ...` where arguments run
+// to the end of the line. Each argument is a single value (nested word-style
+// calls are suppressed via callArgDepth so `foo a b` yields two bare args).
+static AstNode* parseWordStyleCall(Parser *parser, Token callee) {
+    AstNode *call = createNode(parser, AST_CALL);
+    if (!call) return NULL;
+    call->as.call.callee = callee.start;
+    call->as.call.callee_len = callee.length;
+    call->as.call.callee_owned = false;
+    call->as.call.resolved_callee = NULL;
+    call->as.call.args = NULL;
+    call->as.call.arg_count = 0;
+    call->as.call.capacity = 0;
+
+    int calleeLine = callee.line;
+    while (parser->current.type != TOKEN_EOF &&
+           parser->current.type != TOKEN_RBRACKET &&
+           parser->current.type != TOKEN_RPAREN &&
+           parser->current.line == calleeLine &&
+           isValueStartToken(parser->current.type)) {
+        parser->callArgDepth++;
+        AstNode *arg = parseExpression(parser);
+        parser->callArgDepth--;
+        if (!arg) break;
+
+        if (call->as.call.arg_count >= call->as.call.capacity) {
+            call->as.call.capacity = call->as.call.capacity < 8 ? 8 : call->as.call.capacity * 2;
+            void *tmp = realloc(call->as.call.args, sizeof(AstNode*) * call->as.call.capacity);
+            if (!tmp) {
+                error(parser, "Out of memory");
+                freeAst(call);
+                return NULL;
+            }
+            call->as.call.args = (AstNode**)tmp;
+        }
+        call->as.call.args[call->as.call.arg_count++] = arg;
+    }
+
+    // Trailing field/path access on the call result.
+    AstNode *result = call;
+    while (parser->current.type == TOKEN_DOT) {
+        result = parseFieldAccess(parser, result);
+    }
+    return parsePathAccess(parser, result);
+}
+
 static AstNode* parseIdentifierExpr(Parser *parser) {
     Token ident = parser->current;
     parserAdvance(parser);
@@ -523,6 +587,17 @@ static AstNode* parseIdentifierExpr(Parser *parser) {
         return createBoolNode(parser, true);
     if (ident.length == 5 && strncmp(ident.start, "false", 5) == 0)
         return createBoolNode(parser, false);
+
+    // Word-style call: `foo arg1 arg2 ...` (Red/Rebol). Only when a value
+    // follows on the same line and the identifier is not being used as a bare
+    // value, field base (`.0`) or path base (`/1`).
+    if (parser->callArgDepth == 0 &&
+        parser->current.type != TOKEN_DOT &&
+        parser->current.type != TOKEN_SLASH &&
+        parser->current.line == ident.line &&
+        isValueStartToken(parser->current.type)) {
+        return parseWordStyleCall(parser, ident);
+    }
 
     AstNode *node = createNode(parser, AST_IDENTIFIER);
     if (!node) return NULL;
@@ -592,7 +667,9 @@ static AstNode* parseGroupingExpr(Parser *parser) {
             call->as.call.capacity = 0;
             call->as.call.resolved_callee = NULL;
             while (parser->current.type != TOKEN_RPAREN && parser->current.type != TOKEN_EOF) {
+                parser->callArgDepth++;
                 AstNode *arg = parseExpression(parser);
+                parser->callArgDepth--;
                 if (call->as.call.arg_count >= call->as.call.capacity) {
                     call->as.call.capacity = call->as.call.capacity < 8 ? 8 : call->as.call.capacity * 2;
                     void *tmp = realloc(call->as.call.args, sizeof(AstNode*) * call->as.call.capacity);
@@ -764,7 +841,9 @@ static AstNode* parseBinary(Parser *parser, int minPrec, AstNode *left) {
         TokenType op = parser->current.type;
         parserAdvance(parser);
 
+        parser->callArgDepth++;
         AstNode *right = parsePrimary(parser);
+        parser->callArgDepth--;
         if (!right) return left;
 
         right = parseBinary(parser, prec + 1, right);
@@ -1048,6 +1127,7 @@ AstNode* parse(const char *source) {
     Parser parser;
     initLexer(&parser.lexer, source);
     parser.hadError = false;
+    parser.callArgDepth = 0;
     parser.current = makeToken(&parser.lexer, TOKEN_EOF);
 
 
