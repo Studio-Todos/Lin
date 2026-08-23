@@ -1161,33 +1161,36 @@ builder.setInsertionPointToStart(doBinary);
       Value rMeta = builder.create<pic::runtime::GetPortOp>(loc, i32Type, rTarget, builder.getI8IntegerAttr(3));
 
       // Follow duplicator chain to find actual value source (state thread walking)
+      // A delta 'dup' fronts a value on port 0; a GAMMA pair carrier (closure/bundle
+      // arg delivery) carries its value on port 1. A delta 'pair' is USER DATA and must
+      // NOT be dereferenced here. Follow up to 3 hops so loop-carried counters that get
+      // re-delivered through repeated dup/gamma layers each iteration resolve correctly.
       Value rTargetTypeVal = builder.create<arith::ShRUIOp>(loc, rMeta, c24_i32);
       Value rTargetNodeType = builder.create<arith::AndIOp>(loc, rTargetTypeVal, c0x3F_i32);
       Value cDupCode = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(3));
-      Value isDup = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rTargetNodeType, cDupCode);
-      Value rTargetP0 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, rTarget, builder.getI8IntegerAttr(0));
-      // Closure args travel through gamma+ pair bundles; dereference up to two hops,
-      // each hop either a dup (delta, * polarity) that fronts a value, or a gamma
-      // pair carrier whose value rides on port 1.
       Value cPairLabel = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("pair")));
+      Value cDupLabel = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(opcodeForLabel("dup")));
       Value cConCode = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(1));
       Value cDesCode = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(2));
-      Value rAfterDup = builder.create<arith::SelectOp>(loc, isDup, builder.create<arith::ShRUIOp>(loc, rTargetP0, c2_i32), rTarget);
-      // Second dereference honor the carrier / dup shape found after first hop.
-      Value a1Meta = builder.create<pic::runtime::GetPortOp>(loc, i32Type, rAfterDup, builder.getI8IntegerAttr(3));
-      Value a1TypeVal = builder.create<arith::ShRUIOp>(loc, a1Meta, c24_i32);
-      Value a1NodeType = builder.create<arith::AndIOp>(loc, a1TypeVal, c0x3F_i32);
-      Value a1Label = builder.create<arith::AndIOp>(loc, a1Meta, c0xFFFFFF_i32);
-      Value isGam = builder.create<arith::OrIOp>(loc, builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, a1NodeType, cConCode), builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, a1NodeType, cDesCode));
-      Value isPairCarrier = builder.create<arith::AndIOp>(loc, isGam, builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, a1Label, cPairLabel));
-      Value rAcrdField = builder.create<arith::SelectOp>(loc, isPairCarrier, builder.create<arith::ShRUIOp>(loc, builder.create<pic::runtime::GetPortOp>(loc, i32Type, rAfterDup, builder.getI8IntegerAttr(1)), c2_i32), rAfterDup);
-      // A dup may still wrap the value after a carrier deref.
-      Value a2Meta = builder.create<pic::runtime::GetPortOp>(loc, i32Type, rAcrdField, builder.getI8IntegerAttr(3));
-      Value a2TypeVal = builder.create<arith::ShRUIOp>(loc, a2Meta, c24_i32);
-      Value a2NodeType = builder.create<arith::AndIOp>(loc, a2TypeVal, c0x3F_i32);
-      Value a2P0 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, rAcrdField, builder.getI8IntegerAttr(0));
-      Value isDup2 = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, a2NodeType, cDupCode);
-      Value rActual = builder.create<arith::SelectOp>(loc, isDup2, builder.create<arith::ShRUIOp>(loc, a2P0, c2_i32), rAcrdField);
+      Value rActual = rTarget;
+      // Follow carrier chains (dup fronts value on p0, gamma +/- pair carries on p1).
+      // Non-carrier nodes leave rActual unchanged, so the loop naturally terminates;
+      // the bound only caps pathological chains. Delta 'pair' user data is never deref'd.
+      for (int hop = 0; hop < 6; ++hop) {
+          Value hMeta = builder.create<pic::runtime::GetPortOp>(loc, i32Type, rActual, builder.getI8IntegerAttr(3));
+          Value hNodeType = builder.create<arith::AndIOp>(loc, builder.create<arith::ShRUIOp>(loc, hMeta, c24_i32), c0x3F_i32);
+          Value hLabel = builder.create<arith::AndIOp>(loc, hMeta, c0xFFFFFF_i32);
+          Value isDupC = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, hNodeType, cDupCode);
+          Value isDupLab = builder.create<arith::AndIOp>(loc, isDupC, builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, hLabel, cDupLabel));
+          Value isGamC = builder.create<arith::OrIOp>(loc, builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, hNodeType, cConCode), builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, hNodeType, cDesCode));
+          Value isGamPair = builder.create<arith::AndIOp>(loc, isGamC, builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, hLabel, cPairLabel));
+          Value isCarrier = builder.create<arith::OrIOp>(loc, isDupLab, isGamPair);
+          Value drefP0 = builder.create<arith::ShRUIOp>(loc, builder.create<pic::runtime::GetPortOp>(loc, i32Type, rActual, builder.getI8IntegerAttr(0)), c2_i32);
+          Value drefP1 = builder.create<arith::ShRUIOp>(loc, builder.create<pic::runtime::GetPortOp>(loc, i32Type, rActual, builder.getI8IntegerAttr(1)), c2_i32);
+          Value viaDup = builder.create<arith::SelectOp>(loc, isDupLab, drefP0, rActual);
+          Value hopRes = builder.create<arith::SelectOp>(loc, isGamPair, drefP1, viaDup);
+          rActual = builder.create<arith::SelectOp>(loc, isCarrier, hopRes, rActual);
+      }
 
       Value rActualMeta = builder.create<pic::runtime::GetPortOp>(loc, i32Type, rActual, builder.getI8IntegerAttr(3));
       Value rActualTypeVal = builder.create<arith::ShRUIOp>(loc, rActualMeta, c24_i32);
@@ -1202,16 +1205,21 @@ builder.setInsertionPointToStart(doBinary);
       Value isLit = isLiteralLabel(builder, loc, rActualLabel);
       Value notLit = builder.create<arith::XOrIOp>(loc, isLit, builder.create<arith::ConstantOp>(loc, i1Type, builder.getBoolAttr(true)));
       Value hasOpDep = builder.create<arith::AndIOp>(loc, isOp, notLit);
-      Value hasCarrierDep = builder.create<arith::AndIOp>(loc, isPairCarrier, builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, a1Label, cPairLabel));
+      // Only a GAMMA pair carrier (closure/bundle arg delivery) needs a dependency retry:
+      // it owns the value until the packer dies. A residual delta dup at the end of the
+      // walk has its value on port 0 and must NOT be retried (it resolves when read below).
+      Value isGamLeaf = builder.create<arith::OrIOp>(loc, builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rActualNodeType, cConCode), builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rActualNodeType, cDesCode));
+      Value leafIsPair = builder.create<arith::AndIOp>(loc, isGamLeaf, builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rActualLabel, cPairLabel));
+      Value hasCarrierDep = leafIsPair;
       Value hasDep = builder.create<arith::OrIOp>(loc, hasOpDep, hasCarrierDep);
       Block *checkDep = funcOp.addBlock();
       Block *proceedBin = funcOp.addBlock();
       builder.create<cf::CondBranchOp>(loc, hasDep, checkDep, proceedBin);
 
       builder.setInsertionPointToStart(checkDep);
-      // If state is an unresolved gamma pair carrier (closure arg), the caller's
-      // packer still owns the value; retry so the redex re-fires once it is wired.
-      Value carrClosed = builder.create<arith::SelectOp>(loc, hasCarrierDep, rAfterDup, rActual);
+      // If state is an unresolved gamma pair carrier, the packer still owns the value;
+      // retry so the redex re-fires once it is wired.
+      Value carrClosed = builder.create<arith::SelectOp>(loc, hasCarrierDep, rActual, rActual);
       Value opP2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, carrClosed, builder.getI8IntegerAttr(2));
       Value p2Node = builder.create<arith::ShRUIOp>(loc, opP2, c2_i32);
       Value p2Meta = builder.create<pic::runtime::GetPortOp>(loc, i32Type, p2Node, builder.getI8IntegerAttr(3));
@@ -1298,7 +1306,14 @@ builder.setInsertionPointToStart(doBinary);
               builder.setInsertionPointToStart(cpuBranchBin);
           }
           Value resValBin = genInlineDispatch(builder, loc, impl, callArg0_64, callArg1_64, stateArg, funcOp, userOps, c0_i64);
-          Value isSameBin = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, resValBin, callArg1_64);
+          // The skip-echo optimization is ONLY valid for the closure-call case:
+          // a 'call'-labeled user op returns its result-port address, which equals callArg1
+          // (the target we already wired), so the value is flowing and no materialization is
+          // needed. For a normal arithmetic op this comparison misfires whenever the computed
+          // result numerically equals a co-operand (e.g. add32 0 0 or add32 0 1), silently
+          // dropping the result. So only allow the skip when isCall is true.
+          Value resEchoBin = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, resValBin, callArg1_64);
+          Value isSameBin = builder.create<arith::AndIOp>(loc, resEchoBin, isCall);
           Block *skipLinkBin = funcOp.addBlock();
           Block *doLinkBin = funcOp.addBlock();
           builder.create<cf::CondBranchOp>(loc, isSameBin, skipLinkBin, doLinkBin);
