@@ -16,6 +16,7 @@
 #include "mlir/Parser/Parser.h"
 #include "mlir/IR/IRMapping.h"
 #include "PicRuntimeToLLVMConversions.h"
+#include <unordered_set>
 
 using namespace mlir;
 using namespace mlir::pic::runtime;
@@ -395,6 +396,14 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                     if (typeName == "f32") {
                         addRuleMatch(NODE_OP, opcodeForLabel(op.label), NODE_OP, opcodeForLabel("i32"), opcodeForLabel(op.label));
                     }
+                    // Non-literal operand types (e.g. 'char', 'byte', 'bool') have no
+                    // dedicated runtime literal labels — the values arrive as i32 literals.
+                    // Register a fallback match against the 'i32' literal label so such
+                    // ops (print_char, read_char, ...) can actually dispatch.
+                    static const std::unordered_set<std::string> kTypedNames = {"i32","i64","f32","f64","i1","i8","i16","bool","str","num"};
+                    if (kTypedNames.find(typeName) == kTypedNames.end()) {
+                        addRuleMatch(NODE_OP, opcodeForLabel(op.label), NODE_OP, opcodeForLabel("i32"), opcodeForLabel(op.label));
+                    }
                 }
                 addRuleMatch(NODE_OP, opcodeForLabel(op.label), NODE_OP, opcodeForLabel("call"), opcodeForLabel(op.label));
             }
@@ -720,6 +729,14 @@ struct PicRuntimeToLLVMPass : public PassWrapper<PicRuntimeToLLVMPass, Operation
                 }
                 // For f32 ops, also register against i32 (bitcast/coercion fallback)
                 if (typeName == "f32") {
+                    auto regLabelB_i32 = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel("i32")));
+                    builder.create<func::CallOp>(entry.getLoc(), TypeRange{}, "register_rule",
+                        ValueRange{regTypeA, regLabelA, regTypeB, regLabelB_i32, regLabelFull});
+                }
+                // Non-literal operand types (e.g. 'char', 'byte', 'bool') have no dedicated
+                // runtime literal labels — values arrive as i32 literals. Register i32 fallback.
+                static const std::unordered_set<std::string> kTypedNamesRuntime = {"i32","i64","f32","f64","i1","i8","i16","bool","str","num"};
+                if (kTypedNamesRuntime.find(typeName) == kTypedNamesRuntime.end()) {
                     auto regLabelB_i32 = builder.create<LLVM::ConstantOp>(entry.getLoc(), i32Type, builder.getI32IntegerAttr(opcodeForLabel("i32")));
                     builder.create<func::CallOp>(entry.getLoc(), TypeRange{}, "register_rule",
                         ValueRange{regTypeA, regLabelA, regTypeB, regLabelB_i32, regLabelFull});

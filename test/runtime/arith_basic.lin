@@ -1,0 +1,23 @@
+// RUN: %linc build %s -o %t && %t | FileCheck %s
+// Runtime correctness: arithmetic + prints
+
+import "std/types.lin"
+import "std/math.lin"
+import "std/io.lin"
+
+main: func [return: [i32!]] [
+    state: 0
+    state: (print_i32 state 42)
+    state: (print_char state 10)
+    state: (print_i32 state (add32 1 2))
+    state: (print_char state 10)
+    state: (print_i32 state (mul32 6 7))
+    state: (print_char state 10)
+    state: (print_i64 state (add64 1000000 2000000))
+    state: (print_char state 10)
+    0
+]
+// CHECK: 42
+// CHECK: 3
+// CHECK: 42
+// CHECK: 3000000

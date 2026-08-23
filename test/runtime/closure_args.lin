@@ -1,0 +1,24 @@
+// RUN: %linc build %s -o %t && %t | FileCheck %s
+import "std/types.lin"
+import "std/math.lin"
+import "std/io.lin"
+
+// Closure with a parameter read in STATE position (the bug that was fixed).
+inc: func [x [i32!] return: [i32!]] [(add32 x 1)]
+
+// Closure with param in VALUE position.
+sq: func [x [i32!] return: [i32!]] [(mul32 x x)]
+
+main: func [return: [i32!]] [
+    state: 0
+    state: (print_i32 state (inc 41))
+    state: (print_char state 10)
+    state: (print_i32 state (sq 7))
+    state: (print_char state 10)
+    state: (print_i32 state (inc (sq 3)))
+    state: (print_char state 10)
+    // CHECK: 42
+    // CHECK: 49
+    // CHECK: 10
+    0
+]

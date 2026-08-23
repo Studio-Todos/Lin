@@ -1174,8 +1174,13 @@ builder.setInsertionPointToStart(doBinary);
       Value cDesCode = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(2));
       Value rActual = rTarget;
       // Follow carrier chains (dup fronts value on p0, gamma +/- pair carries on p1).
-      // Non-carrier nodes leave rActual unchanged, so the loop naturally terminates;
-      // the bound only caps pathological chains. Delta 'pair' user data is never deref'd.
+      // Non-carrier nodes leave rActual unchanged, so the loop naturally terminates.
+      // The bound only caps pathological chains. Delta 'pair' user data is never deref'd.
+      // Cycle guard: if a deref would revisit a node already seen in this walk, the
+      // gamma slot must still hold the pre-delivery aliasing dup link (the packer has
+      // not annihilated yet). Stay on the carrier so the leaf->retry path re-fires once
+      // the closure packet truly delivers, instead of oscillating dup<->gamma forever.
+      std::vector<Value> visited;
       for (int hop = 0; hop < 6; ++hop) {
           Value hMeta = builder.create<pic::runtime::GetPortOp>(loc, i32Type, rActual, builder.getI8IntegerAttr(3));
           Value hNodeType = builder.create<arith::AndIOp>(loc, builder.create<arith::ShRUIOp>(loc, hMeta, c24_i32), c0x3F_i32);
@@ -1188,8 +1193,17 @@ builder.setInsertionPointToStart(doBinary);
           Value drefP0 = builder.create<arith::ShRUIOp>(loc, builder.create<pic::runtime::GetPortOp>(loc, i32Type, rActual, builder.getI8IntegerAttr(0)), c2_i32);
           Value drefP1 = builder.create<arith::ShRUIOp>(loc, builder.create<pic::runtime::GetPortOp>(loc, i32Type, rActual, builder.getI8IntegerAttr(1)), c2_i32);
           Value viaDup = builder.create<arith::SelectOp>(loc, isDupLab, drefP0, rActual);
-          Value hopRes = builder.create<arith::SelectOp>(loc, isGamPair, drefP1, viaDup);
-          rActual = builder.create<arith::SelectOp>(loc, isCarrier, hopRes, rActual);
+          Value nextVal = builder.create<arith::SelectOp>(loc, isGamPair, drefP1, viaDup);
+          // If the next node repeats one already visited this walk, we are chasing the
+          // undelivered gamma alias loop: stop (stay) so a carrier leaf triggers retry.
+          Value repeated = builder.create<arith::ConstantOp>(loc, i1Type, builder.getBoolAttr(false));
+          for (const Value &prior : visited) {
+              Value same = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, nextVal, prior);
+              repeated = builder.create<arith::OrIOp>(loc, repeated, same);
+          }
+          Value effNext = builder.create<arith::SelectOp>(loc, repeated, rActual, nextVal);
+          visited.push_back(rActual);
+          rActual = builder.create<arith::SelectOp>(loc, isCarrier, effNext, rActual);
       }
 
       Value rActualMeta = builder.create<pic::runtime::GetPortOp>(loc, i32Type, rActual, builder.getI8IntegerAttr(3));

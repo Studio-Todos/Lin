@@ -1,0 +1,21 @@
+// RUN: %linc build %s -o %t && %t | FileCheck %s
+import "std/types.lin"
+import "std/math.lin"
+import "std/io.lin"
+
+main: func [return: [i32!]] [
+    state: 0
+    state: (print_i32 state (add32 1 2))
+    state: (print_char state 10)
+    state: (print_i32 state (sub32 10 4))
+    state: (print_char state 10)
+    state: (print_i32 state (mul32 6 7))
+    state: (print_char state 10)
+    state: (print_i32 state (divs32 100 3))
+    state: (print_char state 10)
+    // CHECK: 3
+    // CHECK: 6
+    // CHECK: 42
+    // CHECK: 33
+    0
+]
