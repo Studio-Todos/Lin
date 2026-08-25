@@ -1,0 +1,21 @@
+// RUN: %linc build %s -o %t && %t | FileCheck %s
+
+// REFERENCE ONLY (for future work): documents the i64 wide-value truncation bug.
+// i64 results > 32-bit range print as low-32-bit truncation.
+// Expected correct behavior once fixed: 30000000000 then 8589934592
+// (see .todo Known Issues).
+
+import "std/types.lin"
+import "std/math.lin"
+import "std/io.lin"
+
+main: func [return: [i32!]] [
+    state: 0
+    state: (print_i64 state (add64 10000000000 20000000000))
+    state: (print_char state 10)
+    state: (print_i64 state (mul64 4294967296 2))
+    state: (print_char state 10)
+    0
+]
+// CHECK: 30000000000
+// CHECK: 8589934592

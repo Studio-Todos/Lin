@@ -175,4 +175,15 @@
 ## Known Issues
 
 - exec_io.lin: interactive I/O test requiring a TTY; fails in lit's non-interactive runner
-- All 176 regression tests pass (100%) as of 2026-07-04
+
+### Runtime bugs blocking 1.0 (Aug 2026 audit, deterministic, reproduced)
+- **i64 values truncated to 32 bits at runtime** (test/runtime/i64_arith.lin). Any i64 literal or result whose magnitude exceeds 32-bit range is wrong: `add64 10000000000 20000000000` and `mul64 4294967296 2` print garbage (low-32-bit truncation). Small i64 (`mul64 70000 3`=210000, `add64 10 5`=15) is correct. Bug 2 in session notes: deep interaction-net representation of wide constants.
+- **print_f32 segfaults** (Segmentation fault, exit 139). Verified: `main` with `(print_f32 state (fmul32 2.5 4.0))` crashes at runtime. print_f64 and print_i32/i64 are fine.
+- **Closure-call result used as binary-op operand is corrupted** (test/runtime/closure_args.lin). `inc (sq 3)` where `sq` and `inc` are closures → prints 3174 instead of 10. A closure result in the 1st/left operand slot is broken; builtin-nested operands and closures in the 2nd slot work. Bug 1 in session notes: Lowering.c closure-call branch (~1579) vs 2-arg builtin branch (~1712).
+- **Multi-print output ordering is non-deterministic/scrambled.** A program printing several values emits them reordered (observed `1554239381467` for 10 expected ordered ints). Existing FileCheck tests tolerate this only because their checked values are distinct; not reliable. New runtime tests must print a single distinct value.
+
+### Test suite status
+- As of Aug 2026: 299 tests total, 296 pass, 3 fail. The 3 failures are ALL intentional bug-reference tests (runtime/i64_arith.lin, runtime/ref_i64_wide.lin, runtime/closure_args.lin) documenting the bugs above — kept for future work per user request, NOT XFAIL.
+- Added 77 new compile-only tests (test/math/x_*.lin, test/core/x_cast_*.lin, test/control/x_logic_*.lin): i32/i64/f32/f64 arithmetic, bitwise, comparisons, min/max/abs/neg, casts. All pass.
+- Added 28 new runtime tests (test/runtime/rt_*.lin) using verified-safe features (i32 arith, f64 arith, small i64, print_i32/i64/f64/char/str), each printing a single distinct value (avoids the multi-print ordering nondeterminism). All pass.
+- Added 1 new reference test (test/runtime/ref_i64_wide.lin) documenting the i64 truncation bug; currently fails by design.

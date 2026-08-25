@@ -1,0 +1,7 @@
+// RUN: %linc build %s -o %t 2>&1 | FileCheck %s
+// CHECK: Lowering pass successful.
+// CHECK: Successfully compiled and linked to
+import "std/types.lin"
+import "std/math.lin"
+
+(add32 30 12)
