@@ -1,0 +1,13 @@
+// RUN: rm -rf cli_new_proj
+// RUN: %linc new cli_new_proj | FileCheck %s
+// RUN: test -f cli_new_proj/Lin.toml
+// RUN: test -f cli_new_proj/src/main.lin
+// RUN: test -f cli_new_proj/.gitignore
+// RUN: FileCheck %s --check-prefix=TOML < cli_new_proj/Lin.toml
+
+// CHECK: Created new Lin project
+
+// TOML: [project]
+// TOML: version = "0.1.0"
+// TOML: [compiler]
+// TOML: includes = ["std"]

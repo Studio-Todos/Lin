@@ -286,7 +286,7 @@ static bool parseCommandLine(int argc, char **argv, CommandLineArgs &args) {
             return true;
         }
         if (arg == "--version" || arg == "-V") {
-            printHelp();
+            printVersion();
             exit(0);
         }
         if (arg == "--quiet" || arg == "-q") {
@@ -1164,7 +1164,10 @@ int main(int argc, char **argv) {
                                          args.includePaths, args.importSources, args.linkCFiles, args.linkLibs);
         if (ret != 0) return ret;
         std::cout << "Running " << args.outputBinary << "...\n";
-        return WEXITSTATUS(system(args.outputBinary.c_str()));
+        std::string runCmd = (args.outputBinary[0] == '/' || args.outputBinary[0] == '.')
+                                 ? args.outputBinary
+                                 : ("./" + args.outputBinary);
+        return WEXITSTATUS(system(runCmd.c_str()));
     }
 
     if (args.command == "test") {

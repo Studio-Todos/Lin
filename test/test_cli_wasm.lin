@@ -1,0 +1,16 @@
+// NOTE: reference test for future work. The wasm target is a documented CLI
+// flag but linking currently fails: wasm-ld reports undefined libc symbols
+// (printf, scanf, putchar, fmodf, ...) because no wasm32 libc is provided.
+// This test asserts the *intended* behavior and will pass once wasm linking
+// is implemented. Kept per "note for future work" policy (no XFAIL).
+
+// RUN: %linc build %s --wasm -o %t.wasm 2>&1 | FileCheck %s
+// RUN: test -s %t.wasm
+
+// CHECK: Successfully compiled and linked to
+
+import "std/types.lin"
+
+main: func [return: [i32!]] [
+    0
+]

@@ -1,0 +1,9 @@
+// RUN: %linc check %s 2>&1 | FileCheck %s
+
+// CHECK: Type-check passed (no errors).
+
+main: func [
+    return: [i32!]
+][
+    0
+]

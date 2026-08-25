@@ -1,0 +1,11 @@
+// RUN: not %linc check %s 2>&1 | FileCheck %s
+
+// CHECK: error: Undeclared type 'nope_type' in argument 'x'
+// CHECK: Type-check failed with
+
+bad: func [
+    x [nope_type!]
+    return: [i32!]
+][
+    x
+]

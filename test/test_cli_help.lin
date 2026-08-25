@@ -1,0 +1,14 @@
+// RUN: %linc --help | FileCheck %s
+
+// CHECK: USAGE:
+// CHECK: SUBCOMMANDS:
+// CHECK: build
+// CHECK: check
+// CHECK: test
+// CHECK: run
+// CHECK: new
+// CHECK: init
+// CHECK: help
+// CHECK: BUILD OPTIONS:
+// CHECK: --gpu
+// CHECK: --wasm

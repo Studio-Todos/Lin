@@ -1,0 +1,8 @@
+// RUN: rm -rf cli_init_dir
+// RUN: mkdir -p cli_init_dir
+// RUN: %linc init cli_init_dir | FileCheck %s
+// RUN: test -f cli_init_dir/Lin.toml
+// RUN: test -f cli_init_dir/src/main.lin
+// RUN: test -f cli_init_dir/.gitignore
+
+// CHECK: Initialized Lin project
