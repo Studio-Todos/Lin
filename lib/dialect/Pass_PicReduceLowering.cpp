@@ -820,11 +820,6 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           Value p1_64 = builder.create<arith::ExtUIOp>(loc, i64Type, p1);
           Value p2_64 = builder.create<arith::ExtUIOp>(loc, i64Type, p2);
           Value c0_i64_zero = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0));
-          // Recombine the low+high words when the label is a wide type OR the high
-          // word carries real data. The high-word test is what lets a 64-bit op whose
-          // value operand happened to be a narrow literal (e.g. 'add64 BIG 1') still
-          // produce a correctly wide result node: its high word is populated even though
-          // the label inherited the narrow operand's width.
           Value p2NonZero = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, p2_64, c0_i64_zero);
           Value isWide = builder.create<arith::OrIOp>(loc, is64, p2NonZero);
           Value sh2 = builder.create<arith::ShLIOp>(loc, i64Type, p2_64, c32_i64);
@@ -1254,6 +1249,19 @@ builder.setInsertionPointToStart(doBinary);
       Value isEra = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, p2NodeType, cEraCode);
       Value p2IsZero = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, opP2, c0_i32);
       Value maybeUnresolved = builder.create<arith::OrIOp>(loc, isEra, p2IsZero);
+      // A closure body's result slot is not materialized until its op fires: the
+      // resolved node's port2 aliases the body op (an OP node labeled with the body
+      // op, e.g. mul32) whose value slot is an un-allocated carrier cycle. Retrying
+      // lets the closure body execute and materialize the value before dispatch.
+      Value carrUp = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::uge, p2NodeType, cConCode);
+      Value carrDn = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ule, p2NodeType, cDupCode);
+      Value isP2Carrier = builder.create<arith::AndIOp>(loc, carrUp, carrDn);
+      Value p2Label = builder.create<arith::AndIOp>(loc, p2Meta, c0xFFFFFF_i32);
+      Value p2IsOpN = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, p2NodeType, cOpCode);
+      Value p2NotLit = builder.create<arith::XOrIOp>(loc, isLiteralLabel(builder, loc, p2Label), builder.create<arith::ConstantOp>(loc, i1Type, builder.getBoolAttr(true)));
+      Value p2UnresOp = builder.create<arith::AndIOp>(loc, p2IsOpN, p2NotLit);
+      Value p2NotMaterialized = builder.create<arith::OrIOp>(loc, isP2Carrier, p2UnresOp);
+      maybeUnresolved = builder.create<arith::OrIOp>(loc, maybeUnresolved, p2NotMaterialized);
       // Closure-arg carriers are unresolved by construction until the packer is
       // consumed, so always retry for those (mirrors the state of a not-yet-wired port).
       Value unresolved = builder.create<arith::SelectOp>(loc, hasCarrierDep, builder.create<arith::ConstantOp>(loc, i1Type, builder.getBoolAttr(true)), maybeUnresolved);
@@ -1276,9 +1284,9 @@ builder.setInsertionPointToStart(doBinary);
       Block *doLinkDD = funcOp.addBlock();
       builder.create<cf::CondBranchOp>(loc, isSameDD, skipLinkDD, doLinkDD);
 
-      builder.setInsertionPointToStart(doLinkDD);
-      Value valLabel64DD = builder.create<arith::ExtUIOp>(loc, i64Type, valLabel);
-      Value resNodeDD = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(ALLOC_OP), valLabel64DD, builder.getBoolAttr(false));
+builder.setInsertionPointToStart(doLinkDD);
+          Value valLabel64DD = builder.create<arith::ExtUIOp>(loc, i64Type, valLabel);
+          Value resNodeDD = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(ALLOC_OP), valLabel64DD, builder.getBoolAttr(false));
       builder.create<pic::runtime::SetPortOp>(loc, resNodeDD, builder.getI8IntegerAttr(1), builder.create<arith::TruncIOp>(loc, i32Type, resValDD));
       builder.create<pic::runtime::SetPortOp>(loc, resNodeDD, builder.getI8IntegerAttr(2), builder.create<arith::TruncIOp>(loc, i32Type, builder.create<arith::ShRUIOp>(loc, i64Type, resValDD, c32_i64)));
       Value opP_aux2DD = builder.create<pic::runtime::GetPortOp>(loc, i32Type, opNode, builder.getI8IntegerAttr(2));
@@ -1343,7 +1351,7 @@ builder.setInsertionPointToStart(doBinary);
           Block *doLinkBin = funcOp.addBlock();
           builder.create<cf::CondBranchOp>(loc, isSameBin, skipLinkBin, doLinkBin);
 
-          builder.setInsertionPointToStart(doLinkBin);
+builder.setInsertionPointToStart(doLinkBin);
           Value valLabelBin64 = builder.create<arith::ExtUIOp>(loc, i64Type, valLabel);
           Value resNodeBin = builder.create<pic::runtime::AllocNodeOp>(loc, i32Type, builder.getI8IntegerAttr(ALLOC_OP), valLabelBin64, builder.getBoolAttr(false));
           builder.create<pic::runtime::SetPortOp>(loc, resNodeBin, builder.getI8IntegerAttr(1), builder.create<arith::TruncIOp>(loc, i32Type, resValBin));
@@ -1663,6 +1671,15 @@ builder.setInsertionPointToStart(doBinary);
           Value condIsLit = isLiteralLabel(builder, loc, condLabel);
           Value condNotLit = builder.create<arith::XOrIOp>(loc, condIsLit, builder.create<arith::ConstantOp>(loc, i1Type, builder.getBoolAttr(true)));
           Value condHasDep = builder.create<arith::AndIOp>(loc, condIsOp, condNotLit);
+          // A condition whose wire is still an unresolved dup/con/des carrier must not be
+          // read as a literal: the carrier fronts the value on port 0 and only releases it
+          // after annihilating. Treat it as a dependency so selCheckDep retries.
+          Value cConCarSel = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(1));
+          Value cDupCarSel = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(3));
+          Value condCarUpSel = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::uge, condNodeType, cConCarSel);
+          Value condCarDnSel = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ule, condNodeType, cDupCarSel);
+          Value condIsCarrier = builder.create<arith::AndIOp>(loc, condCarUpSel, condCarDnSel);
+          condHasDep = builder.create<arith::OrIOp>(loc, condHasDep, condIsCarrier);
 
           Block *selCheckDep = funcOp.addBlock();
           Block *selProceed = funcOp.addBlock();
@@ -1677,6 +1694,16 @@ builder.setInsertionPointToStart(doBinary);
           Value condP2IsEra = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, condP2NodeType, cEraCode);
           Value condP2IsZero = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, condP2, c0_i32);
           Value condUnresolved = builder.create<arith::OrIOp>(loc, condP2IsEra, condP2IsZero);
+          condUnresolved = builder.create<arith::OrIOp>(loc, condUnresolved, condIsCarrier);
+          // The condition's value is that of condNode.p2's target once materialized. If it
+          // is still an un-materialized OP node (a body op waiting to fire, Bug3-class) or a
+          // carrier, retry so the resulting literal is available before branch selection.
+          Value cOpCodeSel = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(5));
+          Value condP2IsOpN = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, condP2NodeType, cOpCodeSel);
+          Value condP2Label = builder.create<arith::AndIOp>(loc, condP2Meta, c0xFFFFFF_i32);
+          Value condP2NotLit = builder.create<arith::XOrIOp>(loc, isLiteralLabel(builder, loc, condP2Label), builder.create<arith::ConstantOp>(loc, i1Type, builder.getBoolAttr(true)));
+          Value condP2UnresOp = builder.create<arith::AndIOp>(loc, condP2IsOpN, condP2NotLit);
+          condUnresolved = builder.create<arith::OrIOp>(loc, condUnresolved, condP2UnresOp);
           Block *selRetry = funcOp.addBlock();
           Block *selResolved = funcOp.addBlock();
           builder.create<cf::CondBranchOp>(loc, condUnresolved, selRetry, selResolved);
@@ -1686,7 +1713,6 @@ builder.setInsertionPointToStart(doBinary);
           builder.create<cf::BranchOp>(loc, lHead);
 
           builder.setInsertionPointToStart(selResolved);
-          Value condP2Label = builder.create<arith::AndIOp>(loc, condP2Meta, c0xFFFFFF_i32);
           Value condValResolved = loadLiteralVal(condP2Node, condP2Label);
           Block *selFinish = funcOp.addBlock();
           builder.create<cf::BranchOp>(loc, selFinish, ValueRange{condValResolved});
