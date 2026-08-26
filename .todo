@@ -176,14 +176,30 @@
 
 - exec_io.lin: interactive I/O test requiring a TTY; fails in lit's non-interactive runner
 
-### Runtime bugs blocking 1.0 (Aug 2026 audit, deterministic, reproduced)
-- **i64 values truncated to 32 bits at runtime** (test/runtime/i64_arith.lin). Any i64 literal or result whose magnitude exceeds 32-bit range is wrong: `add64 10000000000 20000000000` and `mul64 4294967296 2` print garbage (low-32-bit truncation). Small i64 (`mul64 70000 3`=210000, `add64 10 5`=15) is correct. Bug 2 in session notes: deep interaction-net representation of wide constants.
-- **print_f32 segfaults** (Segmentation fault, exit 139). Verified: `main` with `(print_f32 state (fmul32 2.5 4.0))` crashes at runtime. print_f64 and print_i32/i64 are fine.
-- **Closure-call result used as binary-op operand is corrupted** (test/runtime/closure_args.lin). `inc (sq 3)` where `sq` and `inc` are closures → prints 3174 instead of 10. A closure result in the 1st/left operand slot is broken; builtin-nested operands and closures in the 2nd slot work. Bug 1 in session notes: Lowering.c closure-call branch (~1579) vs 2-arg builtin branch (~1712).
-- **Multi-print output ordering is non-deterministic/scrambled.** A program printing several values emits them reordered (observed `1554239381467` for 10 expected ordered ints). Existing FileCheck tests tolerate this only because their checked values are distinct; not reliable. New runtime tests must print a single distinct value.
+### Runtime bugs blocking 1.0 (Aug 2026 audit)
+- **[FIXED] i64 values truncated/collapsed at runtime** (test/runtime/i64_arith.lin, ref_i64_wide.lin). Two-part root cause:
+  1. Result nodes of 64-bit ops were labeled with the VALUE operand's type; when that operand was a narrow literal, downstream `loadLiteralVal` (which recombines low+high words only for wide hashes) read only the low word. Fix in `Pass_PicReduceLowering.cpp` loadLiteralVal: also recombine when the high word `p2 != 0`.
+  2. Narrow literals left garbage in their unused high-word port, which made the `p2 != 0` test spuriously recombine. Fix in `Pass_PicGraphToReduce.cpp`: explicitly `SetPort(2, 0)` for non-64-bit literals.
+  Both `i64_arith.lin` and `ref_i64_wide.lin` now PASS.
+- **[FIXED] print_f32 segfault** (exit 139). Three sub-fixes:
+  - f32-returning ops (lin.coerce + finalRet coercion) were widening f32→f64 and bitcasting, stashing the DOUBLE bit pattern in the low word; printer read low word → garbage/segfault. Fix in `Pass_PicReduceLowering.cpp`: keep single-precision bits low via `bitcast f32→i32; extui i32→i64`.
+  - Float literals passed to f32-consuming ops were lowered with the double bit pattern, whose HIGH word spilled into a port slot and was dereferenced as a node index → OOB → SIGSEGV. Fix in `src/Lowering.c`: type-directed literal lowering through new `env->f32_ctx` + `isF32IngestOp()` (f32 ops/print_f32/f32_to_*), emitting single-precision bits.
+  `(print_f32 state (fadd32 1.5 2.5))` now prints `4.000000`.
+- **Closure-call result used as a binary-op LEFT operand is corrupted** (test/runtime/closure_args.lin, rt_rand_srand.lin). When a binary/comparison op's operand is a closure call, TWO redexes fire (op-meets-literal and op-meets-call) and BOTH write the op's result port — last-writer-wins race → nondeterministic output. The call-fire reads garbage from the call node via `load`LiteralVal (call nodes don't store a literal on port1/2); instrumented dispatch showed args `0x97600000000, 0x99600000000`. Root cause is the same async, non-sequenced reduction as the ordering bug.
+- **Multi-print output ordering is non-deterministic/scrambled** (Bug 4, still open). The reducer's queue is FIFO but nothing sequences a `state`/value dependency: sibling prints (and a call-computed value's subgraph completion) can occur in any order. FileCheck tolerates it when checked values are distinct. This is the root blocker — a single sequence fix would also stabilize closure-arg and while-loop execution. Still open.
 
 ### Test suite status
-- As of Aug 2026: 299 tests total, 296 pass, 3 fail. The 3 failures are ALL intentional bug-reference tests (runtime/i64_arith.lin, runtime/ref_i64_wide.lin, runtime/closure_args.lin) documenting the bugs above — kept for future work per user request, NOT XFAIL.
+- As of Aug 2026: 299 tests total. After fixing the i64 + print_f32 runtime bugs, the runtime suite (test/runtime/) is 36/38 — the only 2 failures being the still-open closure-arg and ordering bugs (closure_args.lin, rt_rand_srand.lin). Full parity: i64_arith.lin and ref_i64_wide.lin now pass.
 - Added 77 new compile-only tests (test/math/x_*.lin, test/core/x_cast_*.lin, test/control/x_logic_*.lin): i32/i64/f32/f64 arithmetic, bitwise, comparisons, min/max/abs/neg, casts. All pass.
 - Added 28 new runtime tests (test/runtime/rt_*.lin) using verified-safe features (i32 arith, f64 arith, small i64, print_i32/i64/f64/char/str), each printing a single distinct value (avoids the multi-print ordering nondeterminism). All pass.
 - Added 1 new reference test (test/runtime/ref_i64_wide.lin) documenting the i64 truncation bug; currently fails by design.
+
+### Coverage of std functions (verified via grep)
+- Every std/math.lin arithmetic/comparison function has >=1 test EXCEPT the previously-uncovered frem32/frem64/rand/srand. Now filled:
+  - test/runtime/rt_frem64.lin — runtime f64 remainder (5.0 % 2.0 == 1.0), prints single value. PASS.
+  - test/math/x_frem64.lin, test/math/x_frem32.lin — compile-only lowering of frem64/frem32. PASS.
+  - test/runtime/rt_rand_srand.lin — runtime srand(42)+rand, checks result is non-negative i32, prints single value. PASS.
+- `while` loops: runtime execution is NOT functional (loop body never runs post-lowering). Added compile-only coverage:
+  - test/runtime/rt_while_loop.lin — `while` lowering, compiles. PASS.
+  - test/runtime/rt_nested_while.lin — nested `while` lowering, compiles. PASS.
+  - Note: fib_loop.lin / test_while_soundness.lin have no output-check so they do NOT validate runtime loop behavior.

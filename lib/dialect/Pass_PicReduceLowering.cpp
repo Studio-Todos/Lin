@@ -525,8 +525,8 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
                                         if (src.getType().isF64()) {
                                             coerced = bBody.create<arith::BitcastOp>(module.getLoc(), i64Type, src);
                                         } else if (src.getType().isF32()) {
-                                            Value ext = bBody.create<arith::ExtFOp>(module.getLoc(), builder.getF64Type(), src);
-                                            coerced = bBody.create<arith::BitcastOp>(module.getLoc(), i64Type, ext);
+                                            Value bits = bBody.create<arith::BitcastOp>(module.getLoc(), builder.getI32Type(), src);
+                                            coerced = bBody.create<arith::ExtUIOp>(module.getLoc(), i64Type, bits);
                                         } else {
                                             Value ext = bBody.create<arith::ExtFOp>(module.getLoc(), builder.getF64Type(), src);
                                             coerced = bBody.create<arith::BitcastOp>(module.getLoc(), i64Type, ext);
@@ -560,6 +560,9 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
                                 } else if (finalRetVal.getType().isa<FloatType>()) {
                                     if (finalRetVal.getType().isF64()) {
                                         finalRetVal = bBody.create<arith::BitcastOp>(module.getLoc(), i64Type, finalRetVal);
+                                    } else if (finalRetVal.getType().isF32()) {
+                                        Value bits = bBody.create<arith::BitcastOp>(module.getLoc(), builder.getI32Type(), finalRetVal);
+                                        finalRetVal = bBody.create<arith::ExtUIOp>(module.getLoc(), i64Type, bits);
                                     } else {
                                         Value ext = bBody.create<arith::ExtFOp>(module.getLoc(), builder.getF64Type(), finalRetVal);
                                         finalRetVal = bBody.create<arith::BitcastOp>(module.getLoc(), i64Type, ext);
@@ -816,10 +819,18 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           
           Value p1_64 = builder.create<arith::ExtUIOp>(loc, i64Type, p1);
           Value p2_64 = builder.create<arith::ExtUIOp>(loc, i64Type, p2);
+          Value c0_i64_zero = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0));
+          // Recombine the low+high words when the label is a wide type OR the high
+          // word carries real data. The high-word test is what lets a 64-bit op whose
+          // value operand happened to be a narrow literal (e.g. 'add64 BIG 1') still
+          // produce a correctly wide result node: its high word is populated even though
+          // the label inherited the narrow operand's width.
+          Value p2NonZero = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, p2_64, c0_i64_zero);
+          Value isWide = builder.create<arith::OrIOp>(loc, is64, p2NonZero);
           Value sh2 = builder.create<arith::ShLIOp>(loc, i64Type, p2_64, c32_i64);
           Value combined = builder.create<arith::OrIOp>(loc, i64Type, p1_64, sh2);
           
-          return builder.create<arith::SelectOp>(loc, is64, combined, p1_64);
+          return builder.create<arith::SelectOp>(loc, isWide, combined, p1_64);
       };
       Value c2_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(2));
       Value c3_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(3));
@@ -1381,7 +1392,7 @@ builder.setInsertionPointToStart(doBinary);
           builder.create<pic::runtime::SetPortOp>(loc, opLit1, builder.getI8IntegerAttr(3), metaValOp);
           builder.create<pic::runtime::SetPortOp>(loc, opLit2, builder.getI8IntegerAttr(3), metaValOp);
           builder.create<pic::runtime::SetPortOp>(loc, opLit1, builder.getI8IntegerAttr(1), litValOp);
-builder.create<pic::runtime::SetPortOp>(loc, opLit2, builder.getI8IntegerAttr(1), litValOp);
+          builder.create<pic::runtime::SetPortOp>(loc, opLit2, builder.getI8IntegerAttr(1), litValOp);
           Value auxA1 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, valNode, builder.getI8IntegerAttr(1));
           Value auxA2 = builder.create<pic::runtime::GetPortOp>(loc, i32Type, valNode, builder.getI8IntegerAttr(2));
           builder.create<pic::runtime::LinkOp>(loc, makePortVal(opLit1, 0), auxA1);

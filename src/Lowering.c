@@ -74,6 +74,17 @@ static int isMlirOpName(const char *name, int len) {
     return 0;
 }
 
+// True if this op INGESTS f32 operands (so float literals should be lowered to
+// single-precision bits). f{op}32 math/comparison ops, print_f32, f32_to_* casts.
+// f64_to_f32 has an f64 input so is excluded.
+static int isF32IngestOp(const char *name, int len) {
+    if (len == 9 && strncmp(name, "print_f32", 9) == 0) return 1;
+    if (len == 10 && (strncmp(name, "f32_to_i32", 10) == 0 || strncmp(name, "f32_to_f64", 10) == 0)) return 1;
+    if (len >= 6 && name[0] == 'f' && name[len-2] == '3' && name[len-1] == '2')
+        return strncmp(name, "f64_to", 6) != 0;
+    return 0;
+}
+
 static MlirValue createEra(MlirContext ctx, MlirBlock block, MlirLocation loc);
 static void linkToEra(MlirContext ctx, MlirBlock block, MlirLocation loc, MlirValue v);
 
@@ -265,12 +276,14 @@ typedef struct {
     int count;
     int capacity;
     bool had_error;
+    int f32_ctx;
 } Environment;
 
 static void env_init(Environment *env) {
     env->capacity = 16;
     env->count = 0;
     env->had_error = false;
+    env->f32_ctx = 0;
     env->vars = (EnvVar*)malloc(sizeof(EnvVar) * env->capacity);
     if (!env->vars) {
         fprintf(stderr, "Out of memory\n");
@@ -1710,8 +1723,11 @@ static MlirValue lowerCallExpr(MlirContext ctx, MlirBlock block, MlirLocation lo
     //   val0 = opNode p1 followed value → state (mapped to %arg0)
     //   val1 = valNode (paired) value → value (mapped to %arg1)
     if (expr->as.call.arg_count == 2) {
+        int saved_f32 = env->f32_ctx;
+        env->f32_ctx = isF32IngestOp(effectiveCallee, effectiveCalleeLen);
         MlirValue left = lowerExpression(ctx, block, loc, expr->as.call.args[0], env, false);
         MlirValue right = lowerExpression(ctx, block, loc, expr->as.call.args[1], env, false);
+        env->f32_ctx = saved_f32;
 
         MlirType portType = getPicPortType(ctx);
         MlirType agentTypes[] = {portType, portType, portType};
@@ -1745,7 +1761,10 @@ static MlirValue lowerCallExpr(MlirContext ctx, MlirBlock block, MlirLocation lo
 
         return p2;
     } else if (expr->as.call.arg_count == 1) {
+        int saved_f32 = env->f32_ctx;
+        env->f32_ctx = isF32IngestOp(effectiveCallee, effectiveCalleeLen);
         MlirValue arg = lowerExpression(ctx, block, loc, expr->as.call.args[0], env, false);
+        env->f32_ctx = saved_f32;
 
         // Synthesize a 0 literal for the state to form a proper literal+op active pair
         MlirType portType = getPicPortType(ctx);
@@ -1967,7 +1986,16 @@ if (!expr) {
 
     MlirBlock moduleBody = findModuleBody(block);
 
-if (expr->type == AST_NUMBER || expr->type == AST_BOOL || expr->type == AST_FLOAT || expr->type == AST_STRING) {
+if (expr->type == AST_NUMBER || expr->type == AST_BOOL || expr->type == AST_STRING) {
+        return lowerLiteralExpr(ctx, block, loc, expr);
+    }
+
+    if (expr->type == AST_FLOAT) {
+        if (env->f32_ctx) {
+            union { float f; uint32_t u; } cast;
+            cast.f = (float)expr->as.f_number.value;
+            return makeOmegaLiteral(ctx, block, loc, "f32", (int64_t)cast.u, false, NULL, 0);
+        }
         return lowerLiteralExpr(ctx, block, loc, expr);
     }
 

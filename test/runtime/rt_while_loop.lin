@@ -1,0 +1,23 @@
+// RUN: %linc build %s -o %t 2>&1 | FileCheck %s
+// Compile coverage: `while` loop construct must lower successfully.
+// NOTE: while-loop bodies do not yet execute at runtime (loop lowering is a
+// thunk-wrapped stub); this test verifies compilation/lowering only.
+import "std/types.lin"
+import "std/math.lin"
+import "std/io.lin"
+
+main: func [
+    return: [i32!]
+][
+    s1: 0
+    i: 0
+    sum: 0
+    loop_res: while [lt i 5] [
+        sum: add sum i
+        i: add i 1
+        [s1 i sum]
+    ]
+    0
+]
+// CHECK: Lowering pass successful.
+// CHECK: Successfully compiled and linked to

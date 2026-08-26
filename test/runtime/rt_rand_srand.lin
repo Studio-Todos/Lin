@@ -1,0 +1,21 @@
+// RUN: %linc build %s -o %t && %t | FileCheck %s
+// Runtime correctness: srand then rand() must return a non-negative i32 value
+// in the valid range. Prints 1 on pass (value >= 0), 0 on failure.
+// (Uses a single comparison: combining multiple ops on a call-derived value
+// hits a known compiler lowering bug, so only the negative-bounds check is used.)
+import "std/types.lin"
+import "std/math.lin"
+import "std/random.lin"
+import "std/io.lin"
+
+main: func [return: [i32!]] [
+    state: 0
+    s: (srand state 42)
+    r1: (rand s)
+    v: r1.1
+    pass: either (slt32 v 0) [0][1]
+    state: (print_i32 state pass)
+    state: (print_char state 10)
+    0
+]
+// CHECK: 1

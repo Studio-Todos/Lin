@@ -195,6 +195,8 @@ struct PicGraphToReducePass : public PassWrapper<PicGraphToReducePass, Operation
                 if (is64BitLabel(label.str())) {
                     Value highVal = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(fullVal >> 32));
                     builder.create<pic::runtime::SetPortOp>(loc, nodeIdx, builder.getI8IntegerAttr(2), highVal);
+                } else {
+                    builder.create<pic::runtime::SetPortOp>(loc, nodeIdx, builder.getI8IntegerAttr(2), builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0)));
                 }
             }
         }
