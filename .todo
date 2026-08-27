@@ -203,3 +203,36 @@
   - test/runtime/rt_while_loop.lin — `while` lowering, compiles. PASS.
   - test/runtime/rt_nested_while.lin — nested `while` lowering, compiles. PASS.
   - Note: fib_loop.lin / test_while_soundness.lin have no output-check so they do NOT validate runtime loop behavior.
+## Self-recursion: root-cause analysis (deep investigation, Aug 2026)
+
+user goal: make recursion (comprehensive.lin fib, exec_control_flow.lin) actually work, not crash.
+full suite on be4dad0 = 311/314 (only those 2 segfault + test_cli_wasm intended-fail).
+
+### Two independent layers are both required, and together they are the blocker:
+
+- **Layer 1 (lowering) — self is never captured.** `lowerFuncDeclExpr` (src/Lowering.c ~1232)
+  computes free vars of the body (findFreeVars ~394) which ALWAYS includes the function's own name
+  (self-call callee is not bound/control). But the closure's capture bundle is built (~1486-1510) by
+  env_fetch from the OUTER env, where the self name is absent at definition time -> replaced with ERA
+  (1488-1495); the closure pair is created AFTER packing (1512-1525); the self name is only bound to
+  the outer env afterwards (env_add 1527-1528). Net: a recursive body's self-reference resolves to ERA.
+  Consequence: `(fib n-1)` fires a `call` whose callee is era -> no dispatch rule -> the recursive call
+  NEVER materializes a value -> the Bug3 p2NotMaterialized retry (checkDep) re-pushes forever.
+  Measured: d(0) base case works (exit 0, prints 0); d(1) TIMES OUT (infinite spin, exit 124);
+  fib(2+)/fib(5) accumulate garbage nodes -> OOB segfault (`mov (%rcx,%rax,8)` rax=0x1e847fd00000004).
+
+- **Layer 2 (reducer) — cyclic closure duplication.** I implemented layer 1 by creating the closure
+  pair BEFORE packing the bundle and, when a captured free var is the function's own name, binding it
+  to the closure's own principal P0 (self-reference -> genuine graph cycle closure.P0 -> bundle ->
+  self slot -> closure.P0). Result: EVEN BASE CASES (fib(0)/fib(1), d(0)) segfault. Merely capturing
+  the cyclic env makes the eager interaction-net reducer try to DUPLICATE the cyclic structure when the
+  closure is copied (e.g. either/dup of the closure ref), which does not terminate -> unbounded net
+  growth -> OOB. The reducer has no lazy-sharing/cycle-aware duplication.
+
+### Conclusion
+Correct self-recursion needs BOTH the lowering self-capture fix AND a reducer able to duplicate cyclic
+(recursive) closure environments without unbounded growth — i.e. sharing-based / cycle-aware duplication
+semantics in the interaction-net reducer. That is a research-scale change to Pass_PicReduceToRuntime/
+Pass_PicReduceLowering with high regression risk to the now-perfect 38/38 runtime suite. Not delivered;
+tree reverted to stable be4dad0 (311/314). Empirically confirmed: enabling self-capture alone (layer 1)
+crashes even non-recursive base cases because of layer 2.
