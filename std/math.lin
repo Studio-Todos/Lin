@@ -559,6 +559,10 @@ mul: func [a [i32!] b [i32!] return: [i32!]] [(mul32 a b)]
 div: func [a [i32!] b [i32!] return: [i32!]] [(divs32 a b)]
 rem: func [a [i32!] b [i32!] return: [i32!]] [(rems32 a b)]
 
+// --- i64 arithmetic convenience aliases (signed division/remainder) ---
+div64: func [a [i64!] b [i64!] return: [i64!]] [(divs64 a b)]
+rem64: func [a [i64!] b [i64!] return: [i64!]] [(rems64 a b)]
+
 // --- integer comparison convenience aliases (64-bit dispatch handles both i32 and i64 ranges) ---
 eq:  func [a [i64!] b [i64!] return: [i64!]] [(eq64 a b)]
 ne:  func [a [i64!] b [i64!] return: [i64!]] [(ne64 a b)]
