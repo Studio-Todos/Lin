@@ -1592,8 +1592,193 @@ static MlirValue lowerFuncDeclExpr(MlirContext ctx, MlirBlock block, MlirLocatio
     return currentVal;
 }
 
-static MlirValue lowerCallExpr(MlirContext ctx, MlirBlock block, MlirLocation loc, AstNode *expr, Environment *env) {
+// Build ONE deferred branch closure for a statement-either. Registers a func
+// that unpacks the captured active-env bundle, runs the branch block (side
+// effects like prints), and returns the new "state" value; returns a closure
+// (gamma+ pair) over the branch func's omega and the shared capture bundle.
+static MlirValue buildEitherBranchClosure(MlirContext ctx, MlirBlock block, MlirLocation loc,
+                                          MlirBlock moduleBody, const char *funcName,
+                                          const char *prefixedName, AstNode *brBlock,
+                                          const char **active_names, int *active_lens,
+                                          int active_count, MlirValue cap_bundle) {
+    MlirType portType = getPicPortType(ctx);
+    MlirType agentTypes[] = {portType, portType, portType};
 
+    MlirAttribute pairType = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("gamma"));
+    MlirNamedAttribute pairTypeAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), pairType);
+    MlirAttribute minusPol = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("-"));
+    MlirNamedAttribute minusPolAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), minusPol);
+    MlirAttribute labelPair = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("pair"));
+    MlirNamedAttribute labelPairAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), labelPair);
+    MlirNamedAttribute unpackAttrs[] = {pairTypeAttr, minusPolAttr, labelPairAttr};
+
+    MlirBlock bBlock = createFunctionBlock(ctx, loc, moduleBody, prefixedName);
+    registerFunction(ctx, loc, moduleBody, funcName, prefixedName);
+
+    MlirValue bRawBundle = mlirBlockGetArgument(bBlock, 0);
+    MlirValue bResultPort = mlirBlockGetArgument(bBlock, 1);
+
+    MlirOperationState bu = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+    mlirOperationStateAddAttributes(&bu, 3, unpackAttrs);
+    mlirOperationStateAddResults(&bu, 3, agentTypes);
+    MlirOperation buOp = mlirOperationCreate(&bu);
+    mlirBlockAppendOwnedOperation(bBlock, buOp);
+    linkValues(bBlock, loc, mlirOperationGetResult(buOp, 0), bRawBundle);
+
+    Environment bEnv;
+    env_init(&bEnv);
+    MlirValue bCur = (active_count == 0) ? mlirOperationGetResult(buOp, 2) : mlirOperationGetResult(buOp, 2);
+    (void)bCur;
+    // unbundle2: env bundle
+    MlirOperationState ebu = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+    mlirOperationStateAddAttributes(&ebu, 3, unpackAttrs);
+    mlirOperationStateAddResults(&ebu, 3, agentTypes);
+    MlirOperation ebuOp = mlirOperationCreate(&ebu);
+    mlirBlockAppendOwnedOperation(bBlock, ebuOp);
+    linkValues(bBlock, loc, mlirOperationGetResult(ebuOp, 0), mlirOperationGetResult(buOp, 1));
+    linkToEra(ctx, bBlock, loc, mlirOperationGetResult(ebuOp, 2));
+
+    MlirValue bCur2 = mlirOperationGetResult(ebuOp, 1);
+    for (int i = 0; i < active_count; i++) {
+        MlirOperationState uu = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+        mlirOperationStateAddAttributes(&uu, 3, unpackAttrs);
+        mlirOperationStateAddResults(&uu, 3, agentTypes);
+        MlirOperation uuOp = mlirOperationCreate(&uu);
+        mlirBlockAppendOwnedOperation(bBlock, uuOp);
+        linkValues(bBlock, loc, mlirOperationGetResult(uuOp, 0), bCur2);
+        env_add(&bEnv, active_names[i], active_lens[i], mlirOperationGetResult(uuOp, 1));
+        bCur2 = mlirOperationGetResult(uuOp, 2);
+    }
+    linkToEra(ctx, bBlock, loc, bCur2);
+
+    MlirValue brRes = lowerExpression(ctx, bBlock, loc, brBlock, &bEnv, true);
+    (void)brRes;
+    MlirValue stVal = {NULL};
+    for (int j = bEnv.count - 1; j >= 0; j--) {
+        if (bEnv.vars[j].name_len == 5 && strncmp(bEnv.vars[j].name, "state", 5) == 0) {
+            stVal = bEnv.vars[j].value;
+            bEnv.vars[j].value = (MlirValue){NULL};
+            break;
+        }
+    }
+    if (mlirValueIsNull(stVal)) stVal = createEra(ctx, bBlock, loc);
+    linkValues(bBlock, loc, stVal, bResultPort);
+    env_free(&bEnv, ctx, bBlock, loc);
+
+    MlirOperationState ret = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
+    mlirOperationStateAddOperands(&ret, 1, &bResultPort);
+    mlirBlockAppendOwnedOperation(bBlock, mlirOperationCreate(&ret));
+
+    MlirValue brOmega = createOmegaP0(ctx, block, loc, funcName, "+");
+    return bundleClosure(ctx, block, loc, brOmega, cap_bundle);
+}
+
+// Statement-either: lower the two branch blocks as DEFERRED closures so that,
+// after selectCase links the either's result to the chosen closure, a
+// closure-call invokes that branch (running its side effects) and yields the
+// new state value. This is the same primitive `while` needs.
+static MlirValue lowerStatementEither(MlirContext ctx, MlirBlock block, MlirLocation loc,
+                                      AstNode *expr, Environment *env, MlirBlock moduleBody) {
+    MlirType portType = getPicPortType(ctx);
+    MlirType agentTypes[] = {portType, portType, portType};
+
+    MlirAttribute pairType = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("gamma"));
+    MlirNamedAttribute pairTypeAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), pairType);
+    MlirAttribute plusPol = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("+"));
+    MlirNamedAttribute plusPolAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), plusPol);
+    MlirAttribute labelPair = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("pair"));
+    MlirNamedAttribute labelPairAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), labelPair);
+    MlirNamedAttribute packAttrs[] = {pairTypeAttr, plusPolAttr, labelPairAttr};
+
+    // Capture active env vars (consume from env) into cap_bundle.
+    int active_count = 0;
+    for (int i = 0; i < env->count; i++) {
+        if (!mlirValueIsNull(env->vars[i].value)) active_count++;
+    }
+    const char **active_names = (const char **)malloc(sizeof(char *) * (active_count ? active_count : 1));
+    int *active_lens = (int *)malloc(sizeof(int) * (active_count ? active_count : 1));
+    MlirValue *active_vals = (MlirValue *)malloc(sizeof(MlirValue) * (active_count ? active_count : 1));
+    int vidx = 0;
+    for (int i = 0; i < env->count; i++) {
+        if (!mlirValueIsNull(env->vars[i].value)) {
+            active_names[vidx] = env->vars[i].name;
+            active_lens[vidx] = env->vars[i].name_len;
+            active_vals[vidx] = env->vars[i].value;
+            vidx++;
+        }
+    }
+
+    MlirValue cap_bundle = createEra(ctx, block, loc);
+    for (int i = active_count - 1; i >= 0; i--) {
+        MlirOperationState p = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+        mlirOperationStateAddAttributes(&p, 3, packAttrs);
+        mlirOperationStateAddResults(&p, 3, agentTypes);
+        MlirOperation pOp = mlirOperationCreate(&p);
+        mlirBlockAppendOwnedOperation(block, pOp);
+        linkValues(block, loc, mlirOperationGetResult(pOp, 1), active_vals[i]);
+        linkValues(block, loc, mlirOperationGetResult(pOp, 2), cap_bundle);
+        cap_bundle = mlirOperationGetResult(pOp, 0);
+    }
+
+    static int either_counter = 0;
+    char t_name[128], f_name[128], p_t[160], p_f[160];
+    snprintf(t_name, sizeof(t_name), "_either_t_%d", either_counter);
+    snprintf(f_name, sizeof(f_name), "_either_f_%d", either_counter);
+    either_counter++;
+    snprintf(p_t, sizeof(p_t), "lin_%s", t_name);
+    snprintf(p_f, sizeof(p_f), "lin_%s", f_name);
+
+    AstNode *thenB = expr->as.call.args[1]->as.pair.left;
+    AstNode *elseB = expr->as.call.args[1]->as.pair.right;
+
+    MlirValue thenClosure = buildEitherBranchClosure(ctx, block, loc, moduleBody, t_name, p_t, thenB, active_names, active_lens, active_count, cap_bundle);
+    MlirValue elseClosure = buildEitherBranchClosure(ctx, block, loc, moduleBody, f_name, p_f, elseB, active_names, active_lens, active_count, cap_bundle);
+    MlirValue branches_pair = createPair(ctx, block, loc, thenClosure, elseClosure);
+
+    MlirValue cond = lowerExpression(ctx, block, loc, expr->as.call.args[0], env, false);
+
+    // Correct either port mapping: p1=cond(principal), p0=branches(reduced port2=pair), p2=result(reduced port1).
+    MlirValue eP0, eP1, eP2;
+    createOmega(ctx, block, loc, "either", "-", &eP0, &eP1, &eP2);
+    linkValues(block, loc, eP1, cond);
+    linkValues(block, loc, eP0, branches_pair);
+    MlirValue eitherResult = eP2; // selectCase links this to the chosen closure
+
+    // Call-after-select: unpack the chosen closure and invoke it via omega-(call).
+    MlirAttribute minusPol = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("-"));
+    MlirNamedAttribute minusPolAttr = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), minusPol);
+    MlirNamedAttribute unpackAttrs[] = {pairTypeAttr, minusPolAttr, labelPairAttr};
+
+    MlirOperationState cu = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+    mlirOperationStateAddAttributes(&cu, 3, unpackAttrs);
+    mlirOperationStateAddResults(&cu, 3, agentTypes);
+    MlirOperation cuOp = mlirOperationCreate(&cu);
+    mlirBlockAppendOwnedOperation(block, cuOp);
+    linkValues(block, loc, mlirOperationGetResult(cuOp, 0), eitherResult);
+    MlirValue fVal = mlirOperationGetResult(cuOp, 1);
+    MlirValue envOfClosure = mlirOperationGetResult(cuOp, 2);
+
+    MlirValue aP0, aP1, aP2;
+    createOmega(ctx, block, loc, "call", "-", &aP0, &aP1, &aP2);
+    linkValues(block, loc, aP0, fVal);
+
+    MlirOperationState ap = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+    mlirOperationStateAddAttributes(&ap, 3, packAttrs);
+    mlirOperationStateAddResults(&ap, 3, agentTypes);
+    MlirOperation apOp = mlirOperationCreate(&ap);
+    mlirBlockAppendOwnedOperation(block, apOp);
+    linkValues(block, loc, mlirOperationGetResult(apOp, 1), envOfClosure);
+    linkValues(block, loc, mlirOperationGetResult(apOp, 2), createEra(ctx, block, loc));
+    linkValues(block, loc, aP1, mlirOperationGetResult(apOp, 0));
+
+    free(active_names);
+    free(active_lens);
+    free(active_vals);
+    return aP2;
+}
+
+
+static MlirValue lowerCallExpr(MlirContext ctx, MlirBlock block, MlirLocation loc, AstNode *expr, Environment *env) {
 
     // Use resolved_callee (type-directed rewrite) if set, else fall back to callee.
     // resolved_callee is set by the type checker for binary ops (e.g. add→fadd for f32).
@@ -1635,6 +1820,29 @@ static MlirValue lowerCallExpr(MlirContext ctx, MlirBlock block, MlirLocation lo
         AstNode *firstArg = expr->as.call.args[0];
         if (firstArg->type == AST_BLOCK || firstArg->type == AST_BLOCK_DATA) {
             return lowerBlockDataExpr(ctx, block, loc, firstArg, env);
+        }
+    }
+
+    // Statement-either: (either cond [thenStmts][elseStmts]) where the branch
+    // blocks contain side-effecting statements (assignments/calls). These must
+    // be lowered as DEFERRED closures so only the chosen branch runs (the eager
+    // lowerPairExpr path would execute both branches and crash selectCase).
+    // Pure-value branches ([1][0]) stay on the fast value-either path.
+    if (effectiveCalleeLen == 6 && memcmp(effectiveCallee, "either", 6) == 0 && expr->as.call.arg_count == 2) {
+        AstNode *branchPair = expr->as.call.args[1];
+        bool branchIsStmt = false;
+        if (branchPair && branchPair->type == AST_PAIR) {
+            AstNode *b = branchPair->as.pair.left;
+            if (b && b->type == AST_BLOCK && b->as.block.count > 0) {
+                AstNode *s0 = b->as.block.statements[0];
+                if (b->as.block.count != 1 || (s0 && s0->type == AST_ASSIGNMENT)) {
+                    branchIsStmt = true;
+                }
+            }
+        }
+        if (branchIsStmt) {
+            MlirBlock moduleBody = findModuleBody(block);
+            return lowerStatementEither(ctx, block, loc, expr, env, moduleBody);
         }
     }
 
