@@ -1627,18 +1627,11 @@ static MlirValue buildEitherBranchClosure(MlirContext ctx, MlirBlock block, Mlir
 
     Environment bEnv;
     env_init(&bEnv);
-    MlirValue bCur = (active_count == 0) ? mlirOperationGetResult(buOp, 2) : mlirOperationGetResult(buOp, 2);
-    (void)bCur;
-    // unbundle2: env bundle
-    MlirOperationState ebu = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
-    mlirOperationStateAddAttributes(&ebu, 3, unpackAttrs);
-    mlirOperationStateAddResults(&ebu, 3, agentTypes);
-    MlirOperation ebuOp = mlirOperationCreate(&ebu);
-    mlirBlockAppendOwnedOperation(bBlock, ebuOp);
-    linkValues(bBlock, loc, mlirOperationGetResult(ebuOp, 0), mlirOperationGetResult(buOp, 1));
-    linkToEra(ctx, bBlock, loc, mlirOperationGetResult(ebuOp, 2));
-
-    MlirValue bCur2 = mlirOperationGetResult(ebuOp, 1);
+    // arg0 = pack(gamma+) wrapping cap_bundle; buOp (gamma-) peels the pack,
+    // so buOp.p1 IS cap_bundle (the per-var gamma+ chain). Unpack that chain's
+    // p2-chain directly; do NOT add an extra unpack level (that would try to
+    // unpack a value node as a pair and stall).
+    MlirValue bCur2 = mlirOperationGetResult(buOp, 1);
     for (int i = 0; i < active_count; i++) {
         MlirOperationState uu = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
         mlirOperationStateAddAttributes(&uu, 3, unpackAttrs);
@@ -1703,7 +1696,11 @@ static MlirValue lowerStatementEither(MlirContext ctx, MlirBlock block, MlirLoca
         if (!mlirValueIsNull(env->vars[i].value)) {
             active_names[vidx] = env->vars[i].name;
             active_lens[vidx] = env->vars[i].name_len;
-            active_vals[vidx] = env->vars[i].value;
+            // Capture a DUP of each live value so the branch consumes a private
+            // copy while `env` keeps the original for subsequent statements.
+            // A direct move would destructively rewire the shared cell that a
+            // trailing statement later reads (OOB at runtime).
+            active_vals[vidx] = env_fetch(ctx, block, loc, env, active_names[vidx], active_lens[vidx]);
             vidx++;
         }
     }

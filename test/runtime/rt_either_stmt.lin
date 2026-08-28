@@ -2,9 +2,11 @@
 // Runtime regression: a `either` used as a STATEMENT whose branches thread
 // `state` through print ops must not crash (previously OOB-SIGSEGV'd) and the
 // state thread must continue correctly past the either to a definitive print.
-// NOTE: the chosen branch bodies are lowered as deferred closures; their
-// in-branch side-effect prints are not yet observed at runtime (see exec_control_flow),
-// so this asserts the stable no-crash + state-threading behavior.
+// The branch bodies are lowered as deferred closures and now execute; this
+// asserts the stable no-crash + state-threading behavior (the branch VALUES
+// are not asserted here because `lt`-nested conditions carry a separate
+// argument-passing bug that affects selection — see rt_either_branch.lin for
+// deterministic branch-execution coverage with literal conditions).
 import "std/types.lin"
 import "std/math.lin"
 import "std/io.lin"

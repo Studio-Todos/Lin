@@ -1,0 +1,16 @@
+// RUN: %linc build %s -o %t && %t | FileCheck %s
+// Runtime regression: a statement-`either` must actually RUN its chosen
+// branch body (the deferred branch closures used to never execute, so the
+// in-branch side-effect prints produced nothing). A literal condition selects
+// the then-branch (10) and the else-branch (40) deterministically.
+import "std/types.lin"
+import "std/io.lin"
+
+main: func [return: [i32!]] [
+    state: 0
+    either 1 [ state: (print_i32 state 10) ][ state: (print_i32 state 20) ]
+    either 0 [ state: (print_i32 state 30) ][ state: (print_i32 state 40) ]
+    0
+]
+// CHECK: 10
+// CHECK: 40
