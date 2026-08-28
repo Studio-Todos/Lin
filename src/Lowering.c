@@ -1298,6 +1298,40 @@ static MlirValue lowerFuncDeclExpr(MlirContext ctx, MlirBlock block, MlirLocatio
         mlirBlockAppendOwnedOperation(moduleBody, funcOp);
     }
 
+    // Create the function's shared entry omega BEFORE lowering the body, so that a
+    // self-reference inside the body can bind to a closure over this SAME omega.
+    // Keeping it acyclic (bundle = era) lets recursive calls follow the normal
+    // closure-call path instead of capturing a cyclic closure (which the eager
+    // reducer cannot duplicate).
+    MlirValue selfOmegaP0 = {NULL};
+    if (expr->as.func_decl.name_len > 0) {
+        MlirAttribute symTypeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("omega"));
+        MlirNamedAttribute symTypeNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), symTypeAttr);
+        MlirAttribute symPlusPol = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("+"));
+        MlirNamedAttribute symPlusPolNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("polarity")), symPlusPol);
+        MlirAttribute symLabelAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString(funcNameStr));
+        MlirNamedAttribute symLabelNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("label")), symLabelAttr);
+        MlirOperationState selfState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+        MlirNamedAttribute selfAttrs[] = {symTypeNamed, symPlusPolNamed, symLabelNamed};
+        mlirOperationStateAddAttributes(&selfState, 3, selfAttrs);
+        MlirType selfPorts[] = {portType, portType, portType};
+        mlirOperationStateAddResults(&selfState, 3, selfPorts);
+        MlirOperation selfOp = mlirOperationCreate(&selfState);
+        mlirBlockAppendOwnedOperation(block, selfOp);
+        linkToEra(ctx, block, loc, mlirOperationGetResult(selfOp, 1));
+        linkToEra(ctx, block, loc, mlirOperationGetResult(selfOp, 2));
+        selfOmegaP0 = mlirOperationGetResult(selfOp, 0);
+    }
+
+    // Build a NON-cyclic self-closure (omega + era bundle) in the outer block. It is
+    // used in place of ERA when the closure packs a capture equal to its own name, so
+    // a recursive body can resolve and call itself through the normal closure-call path.
+    MlirValue selfClosure = {NULL};
+    if (!mlirValueIsNull(selfOmegaP0)) {
+        MlirValue selfDummyBundle = createEra(ctx, block, loc);
+        selfClosure = bundleClosure(ctx, block, loc, selfOmegaP0, selfDummyBundle);
+    }
+
     // Lower body
     Environment innerEnv;
     env_init(&innerEnv);
@@ -1474,6 +1508,10 @@ static MlirValue lowerFuncDeclExpr(MlirContext ctx, MlirBlock block, MlirLocatio
     mlirBlockAppendOwnedOperation(block, baseOp);
     linkToEra(ctx, block, loc, mlirOperationGetResult(baseOp, 1));
     linkToEra(ctx, block, loc, mlirOperationGetResult(baseOp, 2));
+    // The function's externally-visible closure gets its OWN freshly-created omega
+    // (baseOp), distinct from the selfClosure's omega. This avoids aliasing the same
+    // omega node between the external closure and the recursive self-closure, which
+    // corrupted the net when two recursive frames were live simultaneously.
     MlirValue omegaP0 = mlirOperationGetResult(baseOp, 0);
 
     MlirOperationState eraOuterState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
@@ -1485,7 +1523,14 @@ static MlirValue lowerFuncDeclExpr(MlirContext ctx, MlirBlock block, MlirLocatio
 
     for (int i = fv.count - 1; i >= 0; i--) {
         MlirValue capVal = env_fetch(ctx, block, loc, env, fv.names[i], strlen(fv.names[i]));
-        if (mlirValueIsNull(capVal)) {
+        // A self-reference (the function's own name) is not in the enclosing env yet;
+        // substitute the shared non-cyclic self-closure instead of an unbound era.
+        bool isSelfCapture = (expr->as.func_decl.name_len > 0) &&
+                             (strlen(fv.names[i]) == (size_t)expr->as.func_decl.name_len) &&
+                             (memcmp(fv.names[i], expr->as.func_decl.name, expr->as.func_decl.name_len) == 0);
+        if (mlirValueIsNull(capVal) && isSelfCapture && !mlirValueIsNull(selfClosure)) {
+            capVal = selfClosure;
+        } else if (mlirValueIsNull(capVal)) {
             MlirOperationState eraCapState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
             mlirOperationStateAddAttributes(&eraCapState, 3, eraAttrs);
             mlirOperationStateAddResults(&eraCapState, 3, agentTypes);
