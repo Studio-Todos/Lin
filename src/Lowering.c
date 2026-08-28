@@ -338,6 +338,13 @@ static void env_set(Environment *env, const char *name, int name_len, MlirValue 
 
 static MlirValue lowerExpression(MlirContext ctx, MlirBlock block, MlirLocation loc, AstNode *expr, Environment *env, bool is_top_level);
 
+// Name of the function whose body is currently being lowered, if any. Used to
+// detect a self-recursive call so it can be given a FRESH per-call-site omega
+// (instead of reusing the shared self-closure omega), avoiding principal
+// aliasing when two frames of the same closure are live simultaneously.
+static const char *g_currentFuncName = NULL;
+static int g_currentFuncNameLen = 0;
+
 static MlirValue env_fetch(MlirContext ctx, MlirBlock block, MlirLocation loc, Environment *env, const char *name, int name_len) {
     MlirValue val = env_get(env, name, name_len);
     if (mlirValueIsNull(val)) return val;
@@ -1437,6 +1444,12 @@ static MlirValue lowerFuncDeclExpr(MlirContext ctx, MlirBlock block, MlirLocatio
     // Lower all statements except the trailing identifier, then use the bound value.
     MlirValue bodyResult = {NULL};
     bool tailIsIdentifier = false;
+    const char *savedFuncName = g_currentFuncName;
+    int savedFuncNameLen = g_currentFuncNameLen;
+    if (expr->as.func_decl.name_len > 0) {
+        g_currentFuncName = expr->as.func_decl.name;
+        g_currentFuncNameLen = expr->as.func_decl.name_len;
+    }
     if (expr->as.func_decl.body && expr->as.func_decl.body->type == AST_BLOCK &&
         expr->as.func_decl.body->as.block.count > 0) {
         AstNode *tail = expr->as.func_decl.body->as.block.statements[expr->as.func_decl.body->as.block.count - 1];
@@ -1453,6 +1466,8 @@ static MlirValue lowerFuncDeclExpr(MlirContext ctx, MlirBlock block, MlirLocatio
     if (!tailIsIdentifier) {
         bodyResult = lowerExpression(ctx, innerBlock, loc, expr->as.func_decl.body, &innerEnv, true);
     }
+    g_currentFuncName = savedFuncName;
+    g_currentFuncNameLen = savedFuncNameLen;
     env_free(&innerEnv, ctx, innerBlock, loc);
 
     linkValues(innerBlock, loc, bodyResult, resultPort);
@@ -1634,8 +1649,19 @@ static MlirValue lowerCallExpr(MlirContext ctx, MlirBlock block, MlirLocation lo
         if (mlirValueIsNull(currentVal))
             currentVal = env_fetch(ctx, block, loc, env, expr->as.call.callee, expr->as.call.callee_len);
     }
-    if (!mlirValueIsNull(currentVal)) {
-        MlirType portType = getPicPortType(ctx);
+    // A self-recursive call: allocate a FRESH per-call omega for this call site
+    // instead of reusing the single shared closure-omega node. Each runtime call
+    // re-instantiates the body (via lin_<name>) and re-allocates this fresh node,
+    // so two simultaneously-live frames of the same closure never alias one omega
+    // principal (which previously caused an OOB in the reducer).
+    bool isSelfCall = (g_currentFuncNameLen > 0) &&
+                      (effectiveCalleeLen == g_currentFuncNameLen) &&
+                      (memcmp(effectiveCallee, g_currentFuncName, g_currentFuncNameLen) == 0);
+    MlirValue selfFreshOmega = {NULL};
+    if (isSelfCall) {
+        selfFreshOmega = createOmegaP0(ctx, block, loc, effectiveCallee, "+");
+    }
+    if (!mlirValueIsNull(currentVal)) {        MlirType portType = getPicPortType(ctx);
         MlirAttribute agTypeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("gamma"));
         MlirNamedAttribute agTypeNamed = mlirNamedAttributeGet(mlirIdentifierGet(ctx, mlirStringRefCreateFromCString("agentType")), agTypeAttr);
         MlirAttribute minusPol = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("-"));
@@ -1738,7 +1764,12 @@ static MlirValue lowerCallExpr(MlirContext ctx, MlirBlock block, MlirLocation lo
             MlirValue appP2 = mlirOperationGetResult(appOp, 2); // result
 
             // Link appP0 ↔ uP1 (the function pointer)
-            linkValues(block, loc, appP0, uP1);// Create the pair(env, args)
+            if (!mlirValueIsNull(selfFreshOmega)) {
+                linkValues(block, loc, appP0, selfFreshOmega);
+                linkToEra(ctx, block, loc, uP1);
+            } else {
+                linkValues(block, loc, appP0, uP1);
+            }// Create the pair(env, args)
             MlirOperationState packState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
             MlirNamedAttribute packAttrs[] = {pairTypeAttr, plusPolAttr, labelPairAttr};
             mlirOperationStateAddAttributes(&packState, 3, packAttrs);
