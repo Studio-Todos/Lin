@@ -37,7 +37,7 @@ static void emitSlotRefcountClear(OpBuilder &ob, Location loc, Value idx, Value 
     Value cZero = ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0));
     Value notSelf = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ne, oldNode, owner);
     Value nonZero = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ne, oldNode, cZero);
-    Value inBounds = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ult, oldNode, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(8000000)));
+    Value inBounds = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ult, oldNode, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(16000000)));
     Value cond = ob.create<LLVM::AndOp>(loc, ob.getI1Type(), ob.create<LLVM::AndOp>(loc, ob.getI1Type(), isLink, notSelf), ob.create<LLVM::AndOp>(loc, ob.getI1Type(), nonZero, inBounds));
     Value decIdx = ob.create<LLVM::SelectOp>(loc, cond, oldNode, cZero);
     Value decAmt = ob.create<LLVM::SelectOp>(loc, cond, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(-1)), cZero);
@@ -50,14 +50,14 @@ static void genNonBarrierLink(OpBuilder &ob, Location loc, Value p1, Value p2, V
     auto i32Type = ob.getI32Type();
     auto i64Type = ob.getI64Type();
 
-    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_net");
-    auto qGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i64Type), "__pic_queue");
-    auto refcountGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i32Type), "__pic_refcount");
-    auto slotFlagGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_slot_flag");
+    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({64000000}, i32Type), "__pic_net");
+    auto qGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i64Type), "__pic_queue");
+    auto refcountGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i32Type), "__pic_refcount");
+    auto slotFlagGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({64000000}, i32Type), "__pic_slot_flag");
     auto cZero = ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0));
     auto cOne = ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(1));
     auto cNegOne = ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(-1));
-    auto cNodePool = ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(8000000));
+    auto cNodePool = ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(16000000));
 
     auto setT = [&](Value v1, Value v2) {
         Value nIdx = ob.create<LLVM::LShrOp>(loc, i32Type, v1, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(2)));
@@ -107,17 +107,22 @@ static void genNonBarrierLink(OpBuilder &ob, Location loc, Value p1, Value p2, V
     Value curT = ob.create<memref::AtomicRMWOp>(loc, i64Type, arith::AtomicRMWKind::addi,
         ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1)),
         tailGlobal, ValueRange{});
-    Value inBounds = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ult, curT, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(16000000)));
+    // Circular queue: index with (tail mod 32000000) so a saturated queue wraps
+    // instead of overflowing. Without this the tail counter keeps growing past
+    // the buffer; the worker's head<tail test then stays true forever and it
+    // re-reads stale early slots (garbage node indices) until it OOB-crashes.
+    Value curTMod = ob.create<LLVM::URemOp>(loc, i64Type, curT,
+        ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(32000000)));
 
     Block *doStore = f.addBlock();
     Block *contPush = f.addBlock();
 
     ob.setInsertionPointToEnd(push);
-    ob.create<LLVM::CondBrOp>(loc, inBounds, doStore, contPush);
+    ob.create<LLVM::BrOp>(loc, doStore);
 
     ob.setInsertionPointToStart(doStore);
     Value r = ob.create<LLVM::OrOp>(loc, i64Type, safeZExt(ob, loc, i64Type, p1), ob.create<LLVM::ShlOp>(loc, i64Type, safeZExt(ob, loc, i64Type, p2), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(32))));
-    ob.create<memref::StoreOp>(loc, r, qGlobal, ValueRange{toIdx(ob, loc, curT)});
+    ob.create<memref::StoreOp>(loc, r, qGlobal, ValueRange{toIdx(ob, loc, curTMod)});
     ob.create<LLVM::BrOp>(loc, contPush);
 
     ob.setInsertionPointToStart(contPush);
@@ -138,7 +143,7 @@ static Value genAllocateRvecNode(OpBuilder &ob, Location loc, Value stateArg, fu
     Value storeFreeCount = ob.create<LLVM::SelectOp>(loc, hasFree, newFreeCount, freeCount);
     ob.create<memref::StoreOp>(loc, storeFreeCount, freeCountGlobal, ValueRange{});
     Value safeNewCount = ob.create<LLVM::SelectOp>(loc, hasFree, newFreeCount, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0)));
-    auto freeListGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i32Type), "__pic_free_list");
+    auto freeListGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i32Type), "__pic_free_list");
     Value freeIdx = ob.create<memref::LoadOp>(loc, i32Type, freeListGlobal, ValueRange{toIdx(ob, loc, safeNewCount)});
 
     auto alGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({}, i32Type), "__pic_allocator");
@@ -147,9 +152,9 @@ static Value genAllocateRvecNode(OpBuilder &ob, Location loc, Value stateArg, fu
         alGlobal, ValueRange{});
     Value nIdx = ob.create<LLVM::SelectOp>(loc, hasFree, freeIdx, bumpIdx);
 
-    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_net");
-    auto slotFlagGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_slot_flag");
-    auto refcountGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i32Type), "__pic_refcount");
+    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({64000000}, i32Type), "__pic_net");
+    auto slotFlagGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({64000000}, i32Type), "__pic_slot_flag");
+    auto refcountGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i32Type), "__pic_refcount");
     Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
     Value base = ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2)));
 
@@ -164,12 +169,22 @@ static Value genAllocateRvecNode(OpBuilder &ob, Location loc, Value stateArg, fu
     return port0Val;
 }
 
+// history_net is i64[16000000], indexed as (nIdx<<1)+wIdx, so nIdx must be < 4000000.
+// Clamp out-of-range node indices to 0 to avoid OOB access on corrupt ports.
+static Value guardHistoryIndex(OpBuilder &ob, Location loc, Value nIdx) {
+    auto i32Type = ob.getI32Type();
+    Value cMax = ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(7999999));
+    Value oob = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ugt, nIdx, cMax);
+    Value cZero = ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0));
+    return ob.create<LLVM::SelectOp>(loc, i32Type, oob, cZero, nIdx);
+}
+
 static void genLinkPorts(OpBuilder &ob, Location loc, Value p1, Value p2, Value stateArg, func::FuncOp &f) {
     auto i32Type = ob.getI32Type();
     auto i64Type = ob.getI64Type();
 
-    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_net");
-    auto histGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i64Type), "__pic_history_net");
+    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({64000000}, i32Type), "__pic_net");
+    auto histGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i64Type), "__pic_history_net");
 
     Value p1_32 = safeZExt(ob, loc, i32Type, p1);
     Value p2_32 = safeZExt(ob, loc, i32Type, p2);
@@ -179,6 +194,12 @@ static void genLinkPorts(OpBuilder &ob, Location loc, Value p1, Value p2, Value 
 
     Value nIdx2 = ob.create<LLVM::LShrOp>(loc, i32Type, p2_32, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(2)));
     Value pNum2 = ob.create<LLVM::AndOp>(loc, i32Type, p2_32, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(3)));
+
+    // Clamp corrupt node indices before any net read so a garbage port can never
+    // index past __pic_net (net holds 16000000 nodes; 7999999 keeps us well inside
+    // both the net and the narrower history arrays).
+    nIdx1 = guardHistoryIndex(ob, loc, nIdx1);
+    nIdx2 = guardHistoryIndex(ob, loc, nIdx2);
 
     Value offsetMeta1 = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, safeZExt(ob, loc, i64Type, nIdx1), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2))), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(3)));
     Value meta1 = ob.create<memref::LoadOp>(loc, i32Type, netGlobal, ValueRange{toIdx(ob, loc, offsetMeta1)});
@@ -208,7 +229,11 @@ static void genLinkPorts(OpBuilder &ob, Location loc, Value p1, Value p2, Value 
 
     Value isBarrier = ob.create<LLVM::OrOp>(loc, condA, condB);
 
-    Value dupNodeIdx = ob.create<LLVM::SelectOp>(loc, condA, nIdx2, nIdx1);
+    Value dupNodeIdxSel = ob.create<LLVM::SelectOp>(loc, condA, nIdx2, nIdx1);
+    // Guard: history_net is i64[16000000] indexed by (nIdx<<1)+wIdx, so a node must
+    // be < 4000000. A corrupt node index reaching the barrier path would read out
+    // of bounds; clamp so the barrier degrades into a no-op miss instead.
+    Value dupNodeIdx = guardHistoryIndex(ob, loc, dupNodeIdxSel);
     Value dupNodeIdx64 = safeZExt(ob, loc, i64Type, dupNodeIdx);
 
     Block *curr = ob.getBlock();
@@ -271,7 +296,7 @@ static Value convertAllocNodeOp(OpBuilder &ob, pic::runtime::AllocNodeOp allocOp
     Value storeFreeCount = ob.create<LLVM::SelectOp>(loc, hasFree, newFreeCount, freeCount);
     ob.create<memref::StoreOp>(loc, storeFreeCount, freeCountGlobal, ValueRange{});
     Value safeNewCount = ob.create<LLVM::SelectOp>(loc, hasFree, newFreeCount, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(0)));
-    auto freeListGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i32Type), "__pic_free_list");
+    auto freeListGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i32Type), "__pic_free_list");
     Value freeIdx = ob.create<memref::LoadOp>(loc, i32Type, freeListGlobal, ValueRange{toIdx(ob, loc, safeNewCount)});
 
     auto alGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({}, i32Type), "__pic_allocator");
@@ -280,9 +305,9 @@ static Value convertAllocNodeOp(OpBuilder &ob, pic::runtime::AllocNodeOp allocOp
         alGlobal, ValueRange{});
     Value nIdx = ob.create<LLVM::SelectOp>(loc, hasFree, freeIdx, bumpIdx);
 
-    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_net");
-    auto slotFlagGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_slot_flag");
-    auto refcountGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i32Type), "__pic_refcount");
+    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({64000000}, i32Type), "__pic_net");
+    auto slotFlagGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({64000000}, i32Type), "__pic_slot_flag");
+    auto refcountGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i32Type), "__pic_refcount");
     Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
     Value base = ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2)));
 
@@ -311,7 +336,7 @@ static Value convertAllocNodeOp(OpBuilder &ob, pic::runtime::AllocNodeOp allocOp
     store(0, makePort(0)); store(1, makePort(1)); store(2, makePort(2)); store(3, metaValueVal);
 
     if (typeVal == NODE_DUP) {
-        auto histGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i64Type), "__pic_history_net");
+        auto histGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i64Type), "__pic_history_net");
         Value hBase = ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1)));
         Value valWord0 = ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1ULL << 32));
 
@@ -334,9 +359,9 @@ static void convertSetPortOp(OpBuilder &ob, pic::runtime::SetPortOp setOp, Value
     Value nIdx = setOp.getNodeIndex();
     int pIdx = setOp.getPortIndex();
     Value val = setOp.getPortValue();
-    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_net");
-    auto slotFlagGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_slot_flag");
-    auto refcountGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i32Type), "__pic_refcount");
+    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({64000000}, i32Type), "__pic_net");
+    auto slotFlagGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({64000000}, i32Type), "__pic_slot_flag");
+    auto refcountGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i32Type), "__pic_refcount");
     Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
     Value offset = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2))), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(pIdx)));
     Value idx = toIdx(ob, loc, offset);
@@ -352,7 +377,7 @@ static Value convertGetPortOp(OpBuilder &ob, pic::runtime::GetPortOp getOp, Valu
 
     Value nIdx = getOp.getNodeIndex();
     int pIdx = getOp.getPortIndex();
-    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_net");
+    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({64000000}, i32Type), "__pic_net");
     Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
     Value offset = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2))), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(pIdx)));
     Value val32 = ob.create<memref::LoadOp>(loc, i32Type, netGlobal, ValueRange{toIdx(ob, loc, offset)});
@@ -366,7 +391,7 @@ static Value convertGetPortDynamicOp(OpBuilder &ob, pic::runtime::GetPortDynamic
 
     Value nIdx = getOp.getNodeIndex();
     Value pIdx = getOp.getPortIndex();
-    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_net");
+    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({64000000}, i32Type), "__pic_net");
     Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
     Value pIdx64 = safeZExt(ob, loc, i64Type, pIdx);
     Value offset = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2))), pIdx64);
@@ -390,25 +415,29 @@ static void convertPushRedexOp(OpBuilder &ob, pic::runtime::PushRedexOp pushOp, 
     Value curT = ob.create<memref::AtomicRMWOp>(loc, i64Type, arith::AtomicRMWKind::addi,
         ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1)),
         tailGlobal, ValueRange{});
-    Value inBounds = ob.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ult, curT, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(16000000)));
 
     Block *curr = ob.getBlock();
     Block *doStore = curr->splitBlock(pushOp.getOperation());
     Block *cont = doStore->splitBlock(doStore->begin());
 
     ob.setInsertionPointToEnd(curr);
-    ob.create<LLVM::CondBrOp>(loc, inBounds, doStore, cont);
+    ob.create<LLVM::BrOp>(loc, doStore);
 
     ob.setInsertionPointToStart(doStore);
     // Store redex pair (nodeA, nodeB) into queue buffer at the old tail index.
     // The queue stores full PORT ADDRESSES (matching what genNonBarrierLink
     // pushes and what convertPopRedexOp right-shifts by 2 to recover nodes).
     auto i32Type = ob.getI32Type();
-    auto qGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i64Type), "__pic_queue");
+    auto qGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i64Type), "__pic_queue");
+    // The head/tail counters grow without bound but only the low bits index the
+    // buffer (circular queue): an unbounded retry/redo volume can never read or
+    // write past __pic_queue, so it degrades into harmless wrap-around instead of
+    // an out-of-bounds access past the flat array.
+    Value curTMod = ob.create<LLVM::URemOp>(loc, i64Type, curT, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(32000000)));
     Value nA2 = ob.create<LLVM::ShlOp>(loc, i32Type, safeZExt(ob, loc, i32Type, pushOp.getNodeA()), ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(2)));
     Value nB2 = ob.create<LLVM::ShlOp>(loc, i32Type, safeZExt(ob, loc, i32Type, pushOp.getNodeB()), ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(2)));
     Value r = ob.create<LLVM::OrOp>(loc, i64Type, safeZExt(ob, loc, i64Type, nA2), ob.create<LLVM::ShlOp>(loc, i64Type, safeZExt(ob, loc, i64Type, nB2), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(32))));
-    ob.create<memref::StoreOp>(loc, r, qGlobal, ValueRange{toIdx(ob, loc, curT)});
+    ob.create<memref::StoreOp>(loc, r, qGlobal, ValueRange{toIdx(ob, loc, curTMod)});
     ob.create<LLVM::BrOp>(loc, cont);
 
     ob.setInsertionPointToStart(cont);
@@ -425,7 +454,7 @@ static std::array<Value, 3> convertPopRedexOp(OpBuilder &ob, pic::runtime::PopRe
     auto tailGlobal = ob.create<memref::GetGlobalOp>(loc, headTy, "__pic_queue_tail");
     auto activeGlobal = ob.create<memref::GetGlobalOp>(loc, headTy, "__pic_active_count");
     auto lockGlobal = ob.create<memref::GetGlobalOp>(loc, headTy, "__pic_lock");
-    auto qGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i64Type), "__pic_queue");
+    auto qGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i64Type), "__pic_queue");
 
     Value oneVal = ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1));
     Value zeroVal = ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(0));
@@ -502,7 +531,11 @@ static std::array<Value, 3> convertPopRedexOp(OpBuilder &ob, pic::runtime::PopRe
 
     Value popIdx = doLoad->addArgument(i64Type, loc);
     ob.setInsertionPointToStart(doLoad);
-    Value val = ob.create<memref::LoadOp>(loc, i64Type, qGlobal, ValueRange{toIdx(ob, loc, popIdx)});
+    // Circular buffer (matches the push side): popIdx grows without bound but the
+    // low bits index __pic_queue, so a queue that grows past its flat size wraps
+    // instead of reading out of bounds.
+    Value popIdxMod = ob.create<LLVM::URemOp>(loc, i64Type, popIdx, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(32000000)));
+    Value val = ob.create<memref::LoadOp>(loc, i64Type, qGlobal, ValueRange{toIdx(ob, loc, popIdxMod)});
     Value pA = ob.create<LLVM::TruncOp>(loc, i32Type, val);
     Value pB = ob.create<LLVM::TruncOp>(loc, i32Type, ob.create<LLVM::LShrOp>(loc, i64Type, val, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(32))));
     Value c2 = ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(2));
@@ -521,8 +554,8 @@ static Value convertGetHistoryOp(OpBuilder &ob, pic::runtime::GetHistoryOp histO
 
     Value nIdx = histOp.getNodeIndex();
     int wIdx = histOp.getWordIndex();
-    auto histGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i64Type), "__pic_history_net");
-    Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
+    auto histGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i64Type), "__pic_history_net");
+    Value nIdx64 = safeZExt(ob, loc, i64Type, guardHistoryIndex(ob, loc, nIdx));
     Value offset = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1))), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(wIdx)));
     Value val = ob.create<memref::LoadOp>(loc, i64Type, histGlobal, ValueRange{toIdx(ob, loc, offset)});
     return val;
@@ -535,8 +568,8 @@ static void convertSetHistoryOp(OpBuilder &ob, pic::runtime::SetHistoryOp histOp
     Value nIdx = histOp.getNodeIndex();
     int wIdx = histOp.getWordIndex();
     Value val = histOp.getWordValue();
-    auto histGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i64Type), "__pic_history_net");
-    Value nIdx64 = safeZExt(ob, loc, i64Type, nIdx);
+    auto histGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i64Type), "__pic_history_net");
+    Value nIdx64 = safeZExt(ob, loc, i64Type, guardHistoryIndex(ob, loc, nIdx));
     Value offset = ob.create<LLVM::AddOp>(loc, i64Type, ob.create<LLVM::ShlOp>(loc, i64Type, nIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(1))), ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(wIdx)));
     ob.create<memref::StoreOp>(loc, val, histGlobal, ValueRange{toIdx(ob, loc, offset)});
 }
@@ -553,7 +586,7 @@ static void convertUncomputeSweepOp(OpBuilder &ob, pic::runtime::UncomputeSweepO
         alGlobal, ValueRange{});
     Value rIdx64 = safeZExt(ob, loc, i64Type, rIdx);
     Value base = ob.create<LLVM::ShlOp>(loc, i64Type, rIdx64, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(2)));
-    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_net");
+    auto netGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({64000000}, i32Type), "__pic_net");
 
     auto makePort = [&](Value idx, int p) {
         return ob.create<LLVM::OrOp>(loc, i32Type, ob.create<LLVM::ShlOp>(loc, i32Type, idx, ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(2))), ob.create<LLVM::ConstantOp>(loc, i32Type, ob.getI32IntegerAttr(p)));
@@ -573,7 +606,7 @@ static void convertCheckpointBoundaryOp(OpBuilder &ob, pic::runtime::CheckpointB
     Location loc = cpOp.getLoc();
 
     int boundaryId = cpOp.getBoundaryId();
-    auto histGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i64Type), "__pic_history_net");
+    auto histGlobal = ob.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i64Type), "__pic_history_net");
     Value bId = ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(boundaryId));
     Value countVal = ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(cpOp.getNumOperands()));
     Value checkpointVal = ob.create<LLVM::ShlOp>(loc, i64Type, countVal, ob.create<LLVM::ConstantOp>(loc, i64Type, ob.getI64IntegerAttr(32)));

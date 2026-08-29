@@ -837,7 +837,7 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
       Value c0x3F_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0x3F));
       Value c0x979115_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(0x979115));
       Value cNegOne_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(-1));
-      Value cNodePool_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(8000000));
+      Value cNodePool_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(16000000));
 
       Value c0_i64 = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(0));
       Value c1_i64 = builder.create<arith::ConstantOp>(loc, i64Type, builder.getI64IntegerAttr(1));
@@ -951,7 +951,7 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
 
           auto freeNode = [&](Value nodeIdx) {
               // Only recycle a node whose refcount is 0 (no live inbound links remain).
-              auto refGlobal = builder.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i32Type), "__pic_refcount");
+              auto refGlobal = builder.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i32Type), "__pic_refcount");
               Value rc = builder.create<memref::LoadOp>(loc, i32Type, refGlobal, ValueRange{builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), nodeIdx)});
               Value isFree = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rc, c0_i32);
 
@@ -965,9 +965,12 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
               Value oldCount = builder.create<memref::AtomicRMWOp>(loc, i32Type, arith::AtomicRMWKind::addi,
                   builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(1)),
                   fcGlobal, ValueRange{});
-              auto flGlobal = builder.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i32Type), "__pic_free_list");
+              auto flGlobal = builder.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i32Type), "__pic_free_list");
               Value storeIdx = builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), oldCount);
               builder.create<memref::StoreOp>(loc, nodeIdx, flGlobal, ValueRange{storeIdx});
+              // Reset the retry budget so a recycled node starts fresh.
+              auto rrFreeGlobal = builder.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i32Type), "__pic_redex_retry");
+              builder.create<memref::StoreOp>(loc, c0_i32, rrFreeGlobal, ValueRange{builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), nodeIdx)});
               builder.create<cf::BranchOp>(loc, mergeB);
 
               builder.setInsertionPointToStart(skipB);
@@ -980,8 +983,8 @@ struct PicReduceLoweringPass : public PassWrapper<PicReduceLoweringPass, Operati
           // A node being erased dies along with the era; release the reference
           // contributions its link slots made to other nodes' refcounts.
           auto releaseNodeLinks = [&](Value nodeIdx) {
-              auto refGlobal = builder.create<memref::GetGlobalOp>(loc, MemRefType::get({8000000}, i32Type), "__pic_refcount");
-              auto slotFlagGlobal = builder.create<memref::GetGlobalOp>(loc, MemRefType::get({32000000}, i32Type), "__pic_slot_flag");
+              auto refGlobal = builder.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i32Type), "__pic_refcount");
+              auto slotFlagGlobal = builder.create<memref::GetGlobalOp>(loc, MemRefType::get({64000000}, i32Type), "__pic_slot_flag");
               for (int slot = 0; slot <= 2; ++slot) {
                   Value oldVal = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeIdx, builder.getI8IntegerAttr(slot));
                   Value off = builder.create<arith::ShLIOp>(loc, i32Type, nodeIdx, c2_i32);
@@ -1270,9 +1273,26 @@ builder.setInsertionPointToStart(doBinary);
       builder.create<cf::CondBranchOp>(loc, unresolved, retryBin, directDispatch);
 
       builder.setInsertionPointToStart(retryBin);
+      // Livelock safety: bound re-pushes per redex on the op node. A re-entrant
+      // recursion can leave a ghost redex whose dependency never materializes; an
+      // unbounded retry would re-push forever and overflow the flat queue buffer.
+      // Once a node has been retried REDEX_RETRY_CAP times the redex is dropped.
+      auto rrtGlobal = builder.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i32Type), "__pic_redex_retry");
+      Value rrtKey = builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), nodeA);
+      Value rrtCnt = builder.create<memref::LoadOp>(loc, i32Type, rrtGlobal, ValueRange{rrtKey});
+      Value rrtCap = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(4096));
+      Value rrtOver = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ugt, rrtCnt, rrtCap);
+      Block *retryDrop = funcOp.addBlock();
+      Block *retryPush = funcOp.addBlock();
+      builder.create<cf::CondBranchOp>(loc, rrtOver, retryDrop, retryPush);
+      builder.setInsertionPointToStart(retryPush);
+      Value rrtOne = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(1));
+      Value rrtNew = builder.create<arith::AddIOp>(loc, i32Type, rrtCnt, rrtOne);
+      builder.create<memref::StoreOp>(loc, rrtNew, rrtGlobal, ValueRange{rrtKey});
       builder.create<pic::runtime::PushRedexOp>(loc, nodeA, nodeB);
       builder.create<cf::BranchOp>(loc, lHead);
-
+      builder.setInsertionPointToStart(retryDrop);
+      builder.create<cf::BranchOp>(loc, lHead);
       builder.setInsertionPointToStart(directDispatch);
       Value resolvedStateVal = builder.create<pic::runtime::GetPortOp>(loc, i32Type, p2Node, builder.getI8IntegerAttr(1));
       Value resolvedStateVal64 = builder.create<arith::ExtUIOp>(loc, i64Type, resolvedStateVal);
@@ -1583,10 +1603,13 @@ builder.setInsertionPointToStart(doLinkBin);
           builder.create<pic::runtime::SetPortOp>(loc, valLit2, builder.getI8IntegerAttr(1), litValA);
           
           Value litValAHigh = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeA, builder.getI8IntegerAttr(2));
-          Value valLit1_selfPort2 = makePortVal(valLit1, 2);
-          Value valLit2_selfPort2 = makePortVal(valLit2, 2);
-          Value writeVal1 = builder.create<arith::SelectOp>(loc, is64A, litValAHigh, valLit1_selfPort2);
-          Value writeVal2 = builder.create<arith::SelectOp>(loc, is64A, litValAHigh, valLit2_selfPort2);
+          // Copy the source's p2 faithfully. A self-port p2 is a lie for a node
+          // that carries a materialized op-result value: a 64-bit reader combines
+          // p1 | p2<<32 and would read (selfport<<32 | value) garbage. When the
+          // value is narrow, p2 is 0 and the reader's wide-gate (p2!=0) reads
+          // just p1, which stays correct. (setT to p2 does the refcount churn.)
+          Value writeVal1 = builder.create<arith::SelectOp>(loc, i32Type, is64A, litValAHigh, c0_i32);
+          Value writeVal2 = builder.create<arith::SelectOp>(loc, i32Type, is64A, litValAHigh, c0_i32);
           builder.create<pic::runtime::SetPortOp>(loc, valLit1, builder.getI8IntegerAttr(2), writeVal1);
           builder.create<pic::runtime::SetPortOp>(loc, valLit2, builder.getI8IntegerAttr(2), writeVal2);
 
@@ -1621,10 +1644,10 @@ builder.setInsertionPointToStart(doLinkBin);
           builder.create<pic::runtime::SetPortOp>(loc, opLit2, builder.getI8IntegerAttr(1), litValB);
           
           Value litValBHigh = builder.create<pic::runtime::GetPortOp>(loc, i32Type, nodeB, builder.getI8IntegerAttr(2));
-          Value opLit1_selfPort2 = makePortVal(opLit1, 2);
-          Value opLit2_selfPort2 = makePortVal(opLit2, 2);
-          Value writeValOp1 = builder.create<arith::SelectOp>(loc, is64B, litValBHigh, opLit1_selfPort2);
-          Value writeValOp2 = builder.create<arith::SelectOp>(loc, is64B, litValBHigh, opLit2_selfPort2);
+          // Copy the source's p2 faithfully (see valLitCase): a self-port would
+          // make a 64-bit reader combine (selfport<<32 | value) garbage.
+          Value writeValOp1 = builder.create<arith::SelectOp>(loc, i32Type, is64B, litValBHigh, c0_i32);
+          Value writeValOp2 = builder.create<arith::SelectOp>(loc, i32Type, is64B, litValBHigh, c0_i32);
           builder.create<pic::runtime::SetPortOp>(loc, opLit1, builder.getI8IntegerAttr(2), writeValOp1);
           builder.create<pic::runtime::SetPortOp>(loc, opLit2, builder.getI8IntegerAttr(2), writeValOp2);
 
@@ -1713,9 +1736,23 @@ builder.setInsertionPointToStart(doLinkBin);
           builder.create<cf::CondBranchOp>(loc, condUnresolved, selRetry, selResolved);
 
           builder.setInsertionPointToStart(selRetry);
+          // Livelock safety: bound select-retries on the either node (see retryBin).
+          auto srGlobal = builder.create<memref::GetGlobalOp>(loc, MemRefType::get({16000000}, i32Type), "__pic_redex_retry");
+          Value srKey = builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), nodeA);
+          Value srCnt = builder.create<memref::LoadOp>(loc, i32Type, srGlobal, ValueRange{srKey});
+          Value srCap = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(4096));
+          Value srOver = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ugt, srCnt, srCap);
+          Block *srDrop = funcOp.addBlock();
+          Block *srPush = funcOp.addBlock();
+          builder.create<cf::CondBranchOp>(loc, srOver, srDrop, srPush);
+          builder.setInsertionPointToStart(srPush);
+          Value srOne = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(1));
+          Value srNew = builder.create<arith::AddIOp>(loc, i32Type, srCnt, srOne);
+          builder.create<memref::StoreOp>(loc, srNew, srGlobal, ValueRange{srKey});
           builder.create<pic::runtime::PushRedexOp>(loc, nodeA, nodeB);
           builder.create<cf::BranchOp>(loc, lHead);
-
+          builder.setInsertionPointToStart(srDrop);
+          builder.create<cf::BranchOp>(loc, lHead);
           builder.setInsertionPointToStart(selResolved);
           Value condValResolved = loadLiteralVal(condP2Node, condP2Label);
           Block *selFinish = funcOp.addBlock();

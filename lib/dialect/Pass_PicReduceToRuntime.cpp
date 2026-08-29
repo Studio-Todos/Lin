@@ -62,24 +62,24 @@ static void createPicMemrefGlobals(ModuleOp module, OpBuilder &builder, TargetBa
     // C2: Arena globals — replaces state struct fields [0] net, [1] q, [4] alL, [5] history_net
     if (!module.lookupSymbol("__pic_net")) {
         OpBuilder gb(module.getBodyRegion());
-        auto netTy = MemRefType::get({32000000}, i32Type);
-        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({32000000}, i32Type), gb.getI32IntegerAttr(0));
+        auto netTy = MemRefType::get({64000000}, i32Type);
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({64000000}, i32Type), gb.getI32IntegerAttr(0));
         gb.create<memref::GlobalOp>(loc, "__pic_net",
             gb.getStringAttr("private"), netTy,
             initAttr, false, IntegerAttr{});
     }
     if (!module.lookupSymbol("__pic_history_net")) {
         OpBuilder gb(module.getBodyRegion());
-        auto histTy = MemRefType::get({8000000}, i64Type);
-        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({8000000}, i64Type), gb.getI64IntegerAttr(0));
+        auto histTy = MemRefType::get({16000000}, i64Type);
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({16000000}, i64Type), gb.getI64IntegerAttr(0));
         gb.create<memref::GlobalOp>(loc, "__pic_history_net",
             gb.getStringAttr("private"), histTy,
             initAttr, false, IntegerAttr{});
     }
     if (!module.lookupSymbol("__pic_queue")) {
         OpBuilder gb(module.getBodyRegion());
-        auto queueTy = MemRefType::get({16000000}, i64Type);
-        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({16000000}, i64Type), gb.getI64IntegerAttr(0));
+        auto queueTy = MemRefType::get({32000000}, i64Type);
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({32000000}, i64Type), gb.getI64IntegerAttr(0));
         gb.create<memref::GlobalOp>(loc, "__pic_queue",
             gb.getStringAttr("private"), queueTy,
             initAttr, false, IntegerAttr{});
@@ -95,8 +95,8 @@ static void createPicMemrefGlobals(ModuleOp module, OpBuilder &builder, TargetBa
     // Free list for node GC
     if (!module.lookupSymbol("__pic_free_list")) {
         OpBuilder gb(module.getBodyRegion());
-        auto freeListTy = MemRefType::get({8000000}, i32Type);
-        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({8000000}, i32Type), gb.getI32IntegerAttr(0));
+        auto freeListTy = MemRefType::get({16000000}, i32Type);
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({16000000}, i32Type), gb.getI32IntegerAttr(0));
         gb.create<memref::GlobalOp>(loc, "__pic_free_list",
             gb.getStringAttr("private"), freeListTy,
             initAttr, false, IntegerAttr{});
@@ -109,13 +109,24 @@ static void createPicMemrefGlobals(ModuleOp module, OpBuilder &builder, TargetBa
             gb.getStringAttr("private"), freeCountTy,
             initAttr, false, IntegerAttr{});
     }
+    // Redeploy retry budget (livelock safety). Keyed by node index; when a redex
+    // involving the node is re-pushed without progress, the count grows. Once it
+    // exceeds REDEX_RETRY_CAP the retry is dropped so the worker drains instead of
+    // spinning forever (which would otherwise overflow the flat queue buffer).
+    if (!module.lookupSymbol("__pic_redex_retry")) {
+        OpBuilder gb(module.getBodyRegion());
+        auto rTy = MemRefType::get({16000000}, i32Type);
+        auto rInit = DenseElementsAttr::get(RankedTensorType::get({16000000}, i32Type), gb.getI32IntegerAttr(0));
+        gb.create<memref::GlobalOp>(loc, "__pic_redex_retry",
+            gb.getStringAttr("private"), rTy, rInit, false, IntegerAttr{});
+    }
     // Per-node reference count (number of live net-slot pointers targeting each node).
     // EraseOp may only recycle a node when its refcount is 0, preventing reuse of nodes
     // that still have live inbound links.
     if (!module.lookupSymbol("__pic_refcount")) {
         OpBuilder gb(module.getBodyRegion());
-        auto refTy = MemRefType::get({8000000}, i32Type);
-        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({8000000}, i32Type), gb.getI32IntegerAttr(0));
+        auto refTy = MemRefType::get({16000000}, i32Type);
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({16000000}, i32Type), gb.getI32IntegerAttr(0));
         gb.create<memref::GlobalOp>(loc, "__pic_refcount",
             gb.getStringAttr("private"), refTy,
             initAttr, false, IntegerAttr{});
@@ -124,8 +135,8 @@ static void createPicMemrefGlobals(ModuleOp module, OpBuilder &builder, TargetBa
     // Lets the refcount maintenance distinguish link overwrites from value overwrites.
     if (!module.lookupSymbol("__pic_slot_flag")) {
         OpBuilder gb(module.getBodyRegion());
-        auto slotTy = MemRefType::get({32000000}, i32Type);
-        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({32000000}, i32Type), gb.getI32IntegerAttr(0));
+        auto slotTy = MemRefType::get({64000000}, i32Type);
+        auto initAttr = DenseElementsAttr::get(RankedTensorType::get({64000000}, i32Type), gb.getI32IntegerAttr(0));
         gb.create<memref::GlobalOp>(loc, "__pic_slot_flag",
             gb.getStringAttr("private"), slotTy,
             initAttr, false, IntegerAttr{});
@@ -231,6 +242,24 @@ struct PicReduceToRuntimePass : public PassWrapper<PicReduceToRuntimePass, Opera
     Value bodyNodeA = lBody->addArgument(i32Type, loc);
     Value bodyNodeB = lBody->addArgument(i32Type, loc);
     builder.setInsertionPointToStart(lBody);
+
+    // Defensive guard: a redex whose node index is out of the 16000000-node pool
+    // cannot be processed safely (the meta reads below would go out of bounds).
+    // Drop it so the worker keeps draining instead of faulting on a corrupt port.
+    c8_i32 = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(8));
+    Value cPoolMax = builder.create<arith::ConstantOp>(loc, i32Type, builder.getI32IntegerAttr(15999999));
+    Value badA = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ugt, bodyNodeA, cPoolMax);
+    Value badB = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ugt, bodyNodeB, cPoolMax);
+Value badPair = builder.create<arith::OrIOp>(loc, badA, badB);
+    Block *bodyOk = wFunc.addBlock();
+    Value okNodeA = bodyOk->addArgument(i32Type, loc);
+    Value okNodeB = bodyOk->addArgument(i32Type, loc);
+    builder.create<cf::CondBranchOp>(loc, badPair, lHead, ValueRange{},
+                                     bodyOk, ValueRange{bodyNodeA, bodyNodeB});
+    lBody = bodyOk;
+    bodyNodeA = okNodeA;
+    bodyNodeB = okNodeB;
+    builder.setInsertionPointToStart(bodyOk);
 
     auto makePortVal = [&](Value idx, int p) {
         Value sh = builder.create<arith::ShLIOp>(loc, i32Type, idx, c2_i32);
