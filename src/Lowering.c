@@ -886,8 +886,10 @@ static MlirValue lowerWhileExpr(MlirContext ctx, MlirBlock block, MlirLocation l
         MlirValue exitEnvBundle = mlirOperationGetResult(exitUnpackOp, 1);
         MlirValue exitMainArg = mlirOperationGetResult(exitUnpackOp, 2);
 
-        linkToEra(ctx, exitBlock, loc, exitEnvBundle);
-        linkValues(exitBlock, loc, exitMainArg, exitResultPort);
+        linkToEra(ctx, exitBlock, loc, exitMainArg);
+        // The exit closure's env IS the final state bundle (the v_falses
+        // chain). Return it as the loop result so the parent unpacks the finals.
+        linkValues(exitBlock, loc, exitEnvBundle, exitResultPort);
 
         MlirOperationState exitRetState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
         mlirOperationStateAddOperands(&exitRetState, 1, &exitResultPort);
@@ -922,11 +924,13 @@ static MlirValue lowerWhileExpr(MlirContext ctx, MlirBlock block, MlirLocation l
 
         MlirValue loop_macro_closure = mlirOperationGetResult(capUnpackOp, 1);
         MlirValue capRemaining = mlirOperationGetResult(capUnpackOp, 2);
-        linkToEra(ctx, bodyBlock, loc, capRemaining);
+        // The body's live vars are delivered via the closure env (the v_trues
+        // chain captured by the macro's true branch), NOT via the main arg.
+        linkToEra(ctx, bodyBlock, loc, bodyMainArg);
 
         Environment bodyEnv;
         env_init(&bodyEnv);
-        MlirValue bodyCurrentBundle = bodyMainArg;
+        MlirValue bodyCurrentBundle = capRemaining;
         for (int i = 0; i < active_count; i++) {
             MlirOperationState unpackState = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
             mlirOperationStateAddAttributes(&unpackState, 3, bodyUnpackAttrs);
@@ -1160,12 +1164,40 @@ static MlirValue lowerWhileExpr(MlirContext ctx, MlirBlock block, MlirLocation l
 
         MlirValue branches_pair = createPair(ctx, macroBlock, loc, true_branch, false_branch);
 
+        // Correct either port mapping (same as lowerStatementEither):
+        // p1=cond(principal), p0=branches(pair), p2=result.
         MlirValue eitherP0, eitherP1, eitherP2;
         createOmega(ctx, macroBlock, loc, "either", "-", &eitherP0, &eitherP1, &eitherP2);
 
         linkValues(macroBlock, loc, eitherP1, cond);
-        linkValues(macroBlock, loc, eitherP2, branches_pair);
-        linkValues(macroBlock, loc, eitherP0, macroResultPort);
+        linkValues(macroBlock, loc, eitherP0, branches_pair);
+        MlirValue eitherResult = eitherP2;
+
+        // Call-after-select: unpack the chosen closure (body or exit) and invoke
+        // it via omega-(call). pack(envOfClosure, era) — the body/exit closures
+        // receive their live vars through the closure env, not the main arg.
+        MlirOperationState macCu = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+        mlirOperationStateAddAttributes(&macCu, 3, macroUnpackAttrs);
+        mlirOperationStateAddResults(&macCu, 3, agentTypes);
+        MlirOperation macCuOp = mlirOperationCreate(&macCu);
+        mlirBlockAppendOwnedOperation(macroBlock, macCuOp);
+        linkValues(macroBlock, loc, mlirOperationGetResult(macCuOp, 0), eitherResult);
+        MlirValue macFVal = mlirOperationGetResult(macCuOp, 1);
+        MlirValue macEnv = mlirOperationGetResult(macCuOp, 2);
+
+        MlirValue macAP0, macAP1, macAP2;
+        createOmega(ctx, macroBlock, loc, "call", "-", &macAP0, &macAP1, &macAP2);
+        linkValues(macroBlock, loc, macAP0, macFVal);
+
+        MlirOperationState macCP = mlirOperationStateGet(mlirStringRefCreateFromCString("pic_graph.agent"), loc);
+        mlirOperationStateAddAttributes(&macCP, 3, macroPackAttrs);
+        mlirOperationStateAddResults(&macCP, 3, agentTypes);
+        MlirOperation macCPOp = mlirOperationCreate(&macCP);
+        mlirBlockAppendOwnedOperation(macroBlock, macCPOp);
+        linkValues(macroBlock, loc, mlirOperationGetResult(macCPOp, 1), macEnv);
+        linkValues(macroBlock, loc, mlirOperationGetResult(macCPOp, 2), createEra(ctx, macroBlock, loc));
+        linkValues(macroBlock, loc, macAP1, mlirOperationGetResult(macCPOp, 0));
+        linkValues(macroBlock, loc, macAP2, macroResultPort);
 
         MlirOperationState macroRetState = mlirOperationStateGet(mlirStringRefCreateFromCString("func.return"), loc);
         mlirOperationStateAddOperands(&macroRetState, 1, &macroResultPort);
@@ -1600,7 +1632,8 @@ static MlirValue buildEitherBranchClosure(MlirContext ctx, MlirBlock block, Mlir
                                           MlirBlock moduleBody, const char *funcName,
                                           const char *prefixedName, AstNode *brBlock,
                                           const char **active_names, int *active_lens,
-                                          int active_count, MlirValue cap_bundle) {
+                                          int active_count, MlirValue cap_bundle,
+                                          bool valueMode) {
     MlirType portType = getPicPortType(ctx);
     MlirType agentTypes[] = {portType, portType, portType};
 
@@ -1645,13 +1678,17 @@ static MlirValue buildEitherBranchClosure(MlirContext ctx, MlirBlock block, Mlir
     linkToEra(ctx, bBlock, loc, bCur2);
 
     MlirValue brRes = lowerExpression(ctx, bBlock, loc, brBlock, &bEnv, true);
-    (void)brRes;
     MlirValue stVal = {NULL};
-    for (int j = bEnv.count - 1; j >= 0; j--) {
-        if (bEnv.vars[j].name_len == 5 && strncmp(bEnv.vars[j].name, "state", 5) == 0) {
-            stVal = bEnv.vars[j].value;
-            bEnv.vars[j].value = (MlirValue){NULL};
-            break;
+    if (valueMode) {
+        // Value branch: the block's single expression value IS the result.
+        stVal = brRes;
+    } else {
+        for (int j = bEnv.count - 1; j >= 0; j--) {
+            if (bEnv.vars[j].name_len == 5 && strncmp(bEnv.vars[j].name, "state", 5) == 0) {
+                stVal = bEnv.vars[j].value;
+                bEnv.vars[j].value = (MlirValue){NULL};
+                break;
+            }
         }
     }
     if (mlirValueIsNull(stVal)) stVal = createEra(ctx, bBlock, loc);
@@ -1670,8 +1707,12 @@ static MlirValue buildEitherBranchClosure(MlirContext ctx, MlirBlock block, Mlir
 // after selectCase links the either's result to the chosen closure, a
 // closure-call invokes that branch (running its side effects) and yields the
 // new state value. This is the same primitive `while` needs.
+// When valueMode is set, each branch block is a single VALUE expression and
+// the closure returns that value (instead of threading a "state" variable);
+// the resulting closure-call result carries the selected branch's value.
 static MlirValue lowerStatementEither(MlirContext ctx, MlirBlock block, MlirLocation loc,
-                                      AstNode *expr, Environment *env, MlirBlock moduleBody) {
+                                      AstNode *expr, Environment *env, MlirBlock moduleBody,
+                                      bool valueMode) {
     MlirType portType = getPicPortType(ctx);
     MlirType agentTypes[] = {portType, portType, portType};
 
@@ -1728,8 +1769,8 @@ static MlirValue lowerStatementEither(MlirContext ctx, MlirBlock block, MlirLoca
     AstNode *thenB = expr->as.call.args[1]->as.pair.left;
     AstNode *elseB = expr->as.call.args[1]->as.pair.right;
 
-    MlirValue thenClosure = buildEitherBranchClosure(ctx, block, loc, moduleBody, t_name, p_t, thenB, active_names, active_lens, active_count, cap_bundle);
-    MlirValue elseClosure = buildEitherBranchClosure(ctx, block, loc, moduleBody, f_name, p_f, elseB, active_names, active_lens, active_count, cap_bundle);
+    MlirValue thenClosure = buildEitherBranchClosure(ctx, block, loc, moduleBody, t_name, p_t, thenB, active_names, active_lens, active_count, cap_bundle, valueMode);
+    MlirValue elseClosure = buildEitherBranchClosure(ctx, block, loc, moduleBody, f_name, p_f, elseB, active_names, active_lens, active_count, cap_bundle, valueMode);
     MlirValue branches_pair = createPair(ctx, block, loc, thenClosure, elseClosure);
 
     MlirValue cond = lowerExpression(ctx, block, loc, expr->as.call.args[0], env, false);
@@ -1820,26 +1861,33 @@ static MlirValue lowerCallExpr(MlirContext ctx, MlirBlock block, MlirLocation lo
         }
     }
 
-    // Statement-either: (either cond [thenStmts][elseStmts]) where the branch
-    // blocks contain side-effecting statements (assignments/calls). These must
+    // Statement-either / value-either: (either cond [then][else]) where the
+    // branch blocks contain either side-effecting statements (assignments/calls)
+    // or NON-LITERAL single expressions (identifiers, nested calls). These must
     // be lowered as DEFERRED closures so only the chosen branch runs (the eager
     // lowerPairExpr path would execute both branches and crash selectCase).
-    // Pure-value branches ([1][0]) stay on the fast value-either path.
+    // Pure-literal value branches ([1][0]) stay on the fast value-either path.
     if (effectiveCalleeLen == 6 && memcmp(effectiveCallee, "either", 6) == 0 && expr->as.call.arg_count == 2) {
         AstNode *branchPair = expr->as.call.args[1];
         bool branchIsStmt = false;
+        bool branchIsValue = false;
         if (branchPair && branchPair->type == AST_PAIR) {
-            AstNode *b = branchPair->as.pair.left;
-            if (b && b->type == AST_BLOCK && b->as.block.count > 0) {
-                AstNode *s0 = b->as.block.statements[0];
-                if (b->as.block.count != 1 || (s0 && s0->type == AST_ASSIGNMENT)) {
-                    branchIsStmt = true;
+            AstNode *branches[2] = {branchPair->as.pair.left, branchPair->as.pair.right};
+            for (int bi = 0; bi < 2; bi++) {
+                AstNode *b = branches[bi];
+                if (b && b->type == AST_BLOCK && b->as.block.count > 0) {
+                    AstNode *s0 = b->as.block.statements[0];
+                    if (b->as.block.count != 1 || (s0 && s0->type == AST_ASSIGNMENT)) {
+                        branchIsStmt = true;
+                    } else if (s0 && s0->type != AST_NUMBER && s0->type != AST_BOOL && s0->type != AST_FLOAT) {
+                        branchIsValue = true;
+                    }
                 }
             }
         }
-        if (branchIsStmt) {
+        if (branchIsStmt || branchIsValue) {
             MlirBlock moduleBody = findModuleBody(block);
-            return lowerStatementEither(ctx, block, loc, expr, env, moduleBody);
+            return lowerStatementEither(ctx, block, loc, expr, env, moduleBody, branchIsValue && !branchIsStmt);
         }
     }
 
@@ -1864,7 +1912,13 @@ static MlirValue lowerCallExpr(MlirContext ctx, MlirBlock block, MlirLocation lo
                       (memcmp(effectiveCallee, g_currentFuncName, g_currentFuncNameLen) == 0);
     MlirValue selfFreshOmega = {NULL};
     if (isSelfCall) {
-        selfFreshOmega = createOmegaP0(ctx, block, loc, effectiveCallee, "+");
+        // Label the fresh omega with the function's registered name (a proper
+        // NUL-terminated string). effectiveCallee is a length-prefixed slice
+        // into the source and would otherwise be read past its end by the
+        // NUL-terminated label builders, corrupting the dispatch label.
+        char selfName[256];
+        snprintf(selfName, sizeof(selfName), "%.*s", (int)g_currentFuncNameLen, g_currentFuncName);
+        selfFreshOmega = createOmegaP0(ctx, block, loc, selfName, "+");
     }
     if (!mlirValueIsNull(currentVal)) {        MlirType portType = getPicPortType(ctx);
         MlirAttribute agTypeAttr = mlirStringAttrGet(ctx, mlirStringRefCreateFromCString("gamma"));
